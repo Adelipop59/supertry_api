@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vérification de compte</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; overflow: hidden;">
+          <tr>
+            <td style="background-color: #4F46E5; padding: 40px; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px;">{{fromName}}</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 40px;">
+              <h2 style="color: #333333; margin-top: 0;">Bonjour {{username}} 👋</h2>
+              <p style="color: #666666; line-height: 1.6; font-size: 16px;">
+                Bienvenue sur SuperTry ! Pour activer votre compte, utilisez le code de vérification ci-dessous :
+              </p>
+              <div style="background-color: #F3F4F6; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0;">
+                <span style="font-size: 32px; font-weight: bold; color: #4F46E5; letter-spacing: 5px;">{{verificationCode}}</span>
+              </div>
+              <p style="color: #666666; line-height: 1.6; font-size: 14px;">
+                Ce code expire dans <strong>{{expiresIn}}</strong>.
+              </p>
+              <p style="color: #666666; line-height: 1.6; font-size: 14px;">
+                Si vous n'avez pas créé de compte, ignorez cet email.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #F9FAFB; padding: 20px; text-align: center; color: #9CA3AF; font-size: 12px;">
+              © 2026 SuperTry. Tous droits réservés.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

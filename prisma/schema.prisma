@@ -1,0 +1,1182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+// Enum pour les rôles utilisateur
+enum UserRole {
+  USER // Testeur
+  PRO // Vendeur/Professionnel
+  ADMIN // Administrateur
+}
+
+// Enum pour statut campagne
+enum CampaignStatus {
+  DRAFT // Brouillon
+  PENDING_PAYMENT // En attente de paiement par le vendeur
+  PENDING_ACTIVATION // Grace period < 1h après paiement (invisible aux testeurs)
+  ACTIVE // Active et visible par les testeurs (payée)
+  COMPLETED // Terminée (délai dépassé ou stock épuisé)
+  CANCELLED // Annulée par le vendeur
+}
+
+// Enum pour mode marketplace campagne
+enum CampaignMarketplaceMode {
+  PROCEDURES // Mode procédures classiques avec steps
+  PRODUCT_LINK // Mode lien produit direct sans procédures
+}
+
+// Enum pour types de steps de test
+enum StepType {
+  TEXT // Instructions texte simple
+  PHOTO // Demander une photo
+  VIDEO // Demander une vidéo
+  CHECKLIST // Liste de vérification
+  RATING // Notation (1-5 étoiles)
+}
+
+// Enum pour types de notification
+enum NotificationType {
+  SESSION_APPLIED // Nouvelle candidature
+  SESSION_ACCEPTED // Candidature acceptée
+  SESSION_REJECTED // Candidature refusée
+  PURCHASE_SUBMITTED // Preuve d'achat soumise
+  TEST_SUBMITTED // Test soumis
+  TEST_VALIDATED // Test validé
+  SESSION_CANCELLED // Session annulée
+  DISPUTE_CREATED // Litige créé
+  MESSAGE_RECEIVED // Nouveau message
+  PAYMENT_RECEIVED // Paiement reçu
+  CAMPAIGN_CREATED // Nouvelle campagne
+  CAMPAIGN_ENDING_SOON // Campagne se termine bientôt
+  SYSTEM_ALERT // Alerte système
+  UGC_REQUESTED // UGC demandé par PRO
+  UGC_SUBMITTED // UGC soumis par testeur
+  TIP_RECEIVED // Tip reçu
+}
+
+// Enum pour canaux de notification
+enum NotificationChannel {
+  EMAIL // Email
+  SMS // SMS
+  PUSH // Push notification
+  IN_APP // Notification in-app
+}
+
+// Enum pour statut de session de test
+enum SessionStatus {
+  // Flow principal
+  PENDING // 1. En attente d'acceptation par le vendeur
+  ACCEPTED // 2. Acceptée par le vendeur, testeur peut valider le prix
+  PRICE_VALIDATED // 3. Prix validé par le testeur, peut commander
+  PURCHASE_SUBMITTED // 4. Commande passée, numéro soumis, attente validation PRO
+  PURCHASE_VALIDATED // 5. Commande validée par PRO, peut commencer procédures
+  IN_PROGRESS // 6. Test en cours (procédures en cours)
+  PROCEDURES_COMPLETED // 7. Toutes procédures complétées, peut soumettre
+  SUBMITTED // 8. Test soumis, en attente validation PRO
+  COMPLETED // 9. Session terminée et payée
+
+  // Statuts d'exception
+  REJECTED // Refusée par le vendeur
+  CANCELLED // Annulée par le testeur
+  DISPUTED // En litige (besoin intervention admin)
+}
+
+// Enum pour types de distribution
+enum DistributionType {
+  RECURRING // Jours récurrents (tous les lundis, mercredis, etc.)
+  SPECIFIC_DATE // Date spécifique (3 novembre, 15 novembre, etc.)
+}
+
+// Enum pour types d'UGC
+enum UGCType {
+  VIDEO
+  PHOTO
+  TEXT_REVIEW
+  EXTERNAL_REVIEW
+}
+
+// Enum pour statut UGC
+enum UGCStatus {
+  REQUESTED // Demandé par le PRO
+  SUBMITTED // Soumis par le testeur
+  VALIDATED // Validé par le PRO
+  REJECTED // Rejeté par le PRO (peut être resoumis)
+  DECLINED // Refusé par le testeur
+}
+
+// Enum pour types de transaction
+enum TransactionType {
+  CAMPAIGN_PAYMENT // Paiement par le vendeur pour une campagne
+  CAMPAIGN_REFUND // Remboursement au vendeur (campagne annulée)
+  TEST_REWARD // Récompense testeur (produit + shipping + bonus)
+  COMMISSION // Commission SuperTry
+  UGC_PAYMENT // Paiement UGC au testeur
+  UGC_COMMISSION // Commission SuperTry sur UGC
+  TIP // Tip (pourboire) du PRO au testeur
+  TIP_COMMISSION // Commission SuperTry sur tip
+  CANCELLATION_FEE // Frais d'annulation
+  TESTER_CANCELLATION_REFUND // Remboursement au testeur suite à son annulation post-achat
+  TESTER_COMPENSATION // Compensation 5€ suite annulation PRO
+  CANCELLATION_COMMISSION // Commission SuperTry sur annulations
+  DISPUTE_RESOLUTION // Transaction suite résolution de litige
+  WITHDRAWAL // Retrait testeur
+  REFUND // Remboursement général
+}
+
+// Enum pour statut transaction
+enum TransactionStatus {
+  PENDING // En attente de traitement
+  COMPLETED // Transaction complétée
+  FAILED // Transaction échouée
+  REFUNDED // Transaction remboursée
+  CANCELLED // Transaction annulée
+}
+
+// Enum pour méthodes de retrait
+enum WithdrawalMethod {
+  BANK_TRANSFER // Virement bancaire
+  GIFT_CARD // Carte cadeau
+}
+
+// Enum pour statut retrait
+enum WithdrawalStatus {
+  PENDING // En attente de traitement
+  PROCESSING // En cours de traitement
+  COMPLETED // Retrait complété
+  FAILED // Retrait échoué
+  CANCELLED // Retrait annulé
+}
+
+// ==================== MODELS ====================
+
+// Modèle Profile - Table principale des utilisateurs
+model Profile {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String?   @map("password_hash") // Nullable pour OAuth users
+  role         UserRole? // Nullable - sera défini pendant onboarding pour OAuth
+
+  firstName String? @map("first_name")
+  lastName  String? @map("last_name")
+  phone     String?
+  avatar    String?
+
+  // Push notification device token
+  deviceToken String? @map("device_token") // FCM device token for push notifications
+
+  // Stripe Connect integration (pour PRO et USER)
+  stripeConnectAccountId    String?  @unique @map("stripe_connect_account_id") // Stripe Connect Account ID
+  stripeOnboardingCompleted Boolean  @default(false) @map("stripe_onboarding_completed") // Onboarding Stripe complété
+  stripeIdentityVerified    Boolean  @default(false) @map("stripe_identity_verified") // Stripe Identity KYC complété (TESTEUR)
+
+  // Info spécifique testeur (USER)
+  birthDate              DateTime? @map("birth_date") // Date de naissance pour calculer l'âge
+  gender                 String? // M, F, Other
+  location               String? // Ville/région
+  country                String? // Code pays ISO (ex: FR, US)
+  averageRating          Decimal?  @default(0) @map("average_rating") @db.Decimal(3, 2) // Note moyenne (0-5)
+  completedSessionsCount Int       @default(0) @map("completed_sessions_count") // Nombre de tests complétés
+  preferredCategories    String[]  @map("preferred_categories") // IDs des catégories préférées
+
+  // Performance statistics (for eligibility criteria)
+  cancelledSessionsCount Int       @default(0) @map("cancelled_sessions_count") // Nombre de sessions annulées
+  totalSessionsCount     Int       @default(0) @map("total_sessions_count") // Nombre total de sessions
+  lastActiveAt           DateTime? @map("last_active_at") // Dernière activité
+
+  // Règles d'annulation testeur (temporal bans)
+  bannedUntil        DateTime? @map("banned_until") // Banni jusqu'à cette date
+  cancellationCount  Int       @default(0) @map("cancellation_count") // Nombre d'annulations post-acceptation
+  lastCancellationAt DateTime? @map("last_cancellation_at") // Dernière annulation
+
+  // Premium status (future feature)
+  isPrime Boolean @default(false) @map("is_prime") // Statut premium
+
+  // Info spécifique PRO
+  companyName String? @map("company_name")
+  siret       String?
+
+  // Statut compte
+  isActive    Boolean @default(true) @map("is_active")
+  isVerified  Boolean @default(false) @map("is_verified")
+  isOnboarded Boolean @default(true) @map("is_onboarded") // false pour OAuth jusqu'à finalisation
+
+  // OAuth provider tracking
+  authProvider String? @map("auth_provider") // 'google', 'github', 'azure', null pour email/password
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  authSessions            LuciaSession[] // Sessions d'authentification Lucia
+  oauthAccounts           OAuthAccount[] // Comptes OAuth liés
+  countries               ProfileCountry[] // Pays sélectionnés (pour PRO)
+  auditLogs               AuditLog[] // Logs d'audit de l'utilisateur
+  products                Product[] // Produits créés (PRO)
+  campaigns               Campaign[] // Campagnes créées (PRO)
+  testSessions            TestSession[] // Sessions de test (USER)
+  messages                Message[] // Messages envoyés
+  notifications           Notification[] // Notifications reçues
+  notificationPreferences NotificationPreference? // Préférences de notification
+  reviews                 Review[] // Avis créés (USER)
+  wallet                  Wallet? // Portefeuille financier (PRO et USER)
+  withdrawals             Withdrawal[] // Demandes de retrait
+  procedureTemplates      ProcedureTemplate[] // Templates de procédures (PRO)
+  criteriaTemplates       CriteriaTemplate[] // Templates de critères (PRO)
+  ugcsRequested           UGC[]                   @relation("UGCRequester") // UGC demandés (PRO)
+  ugcsSubmitted           UGC[]                   @relation("UGCSubmitter") // UGC soumis (USER)
+  tipsGiven               Tip[]                   @relation("TipGiver") // Tips donnés (PRO)
+  tipsReceived            Tip[]                   @relation("TipReceiver") // Tips reçus (USER)
+
+  @@index([email])
+  @@index([role])
+  @@index([isOnboarded])
+  @@index([stripeConnectAccountId])
+  @@index([bannedUntil])
+  @@map("profiles")
+}
+
+// Table Category - Catégories de produits
+model Category {
+  id String @id @default(uuid())
+
+  name        String  @unique
+  slug        String  @unique // URL-friendly (ex: "electronique")
+  description String? @db.Text
+  icon        String? // Optional icon/emoji
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  products  Product[]
+  campaigns Campaign[]
+
+  @@index([slug])
+  @@index([isActive])
+  @@map("categories")
+}
+
+// Table Product - Catalogue produits du PRO
+model Product {
+  id String @id @default(uuid())
+
+  sellerId String  @map("seller_id")
+  seller   Profile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  categoryId String?   @map("category_id")
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  name        String
+  description String  @db.Text
+  asin        String? // Amazon Standard Identification Number
+  productUrl  String? @map("product_url")
+  images      Json? // Array: [{ url, order, isPrimary }]
+
+  price        Decimal @default(0) @db.Decimal(10, 2)
+  shippingCost Decimal @default(0) @map("shipping_cost") @db.Decimal(10, 2)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  offers  Offer[]
+  reviews Review[]
+
+  @@index([sellerId])
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("products")
+}
+
+// Table Campaign - Campagnes de test créées par les PRO
+model Campaign {
+  id String @id @default(uuid())
+
+  sellerId String  @map("seller_id")
+  seller   Profile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  categoryId String?   @map("category_id")
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String @db.Text
+
+  startDate DateTime  @map("start_date")
+  endDate   DateTime? @map("end_date") // Optional
+
+  totalSlots     Int @map("total_slots")
+  availableSlots Int @map("available_slots")
+
+  status CampaignStatus @default(DRAFT)
+
+  autoAcceptApplications Boolean @default(false) @map("auto_accept_applications")
+
+  marketplaceMode CampaignMarketplaceMode @default(PROCEDURES) @map("marketplace_mode")
+  marketplaces    String[]                @default([]) // Codes pays Amazon: ["FR", "DE", "UK", "US", "ES", "IT"]
+  amazonLink      String?                 @map("amazon_link") @db.Text
+
+  keywords String[] @default([])
+
+  escrowAmount          Decimal @default(0) @map("escrow_amount") @db.Decimal(10, 2)
+  stripePaymentIntentId String? @unique @map("stripe_payment_intent_id")
+
+  // Manual Capture tracking
+  paymentAuthorizedAt DateTime? @map("payment_authorized_at")
+  paymentCapturedAt   DateTime? @map("payment_captured_at")
+
+  // Cancellation tracking
+  activationGracePeriodEndsAt DateTime? @map("activation_grace_period_ends_at")
+  cancelledAt                 DateTime? @map("cancelled_at")
+  cancelledBy                 String?   @map("cancelled_by") // userId
+  cancellationReason          String?   @map("cancellation_reason") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  offers        Offer[]
+  procedures    Procedure[]
+  distributions Distribution[]
+  testSessions  TestSession[]
+  reviews       Review[]
+  criteria      CampaignCriteria?
+  transactions  Transaction[]
+
+  @@index([sellerId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([marketplaceMode])
+  @@index([activationGracePeriodEndsAt])
+  @@map("campaigns")
+}
+
+// Table Offer - Produit dans une campagne avec données financières
+model Offer {
+  id String @id @default(uuid())
+
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  productName String @map("product_name")
+
+  expectedPrice   Decimal @map("expected_price") @db.Decimal(10, 2)
+  shippingCost    Decimal @default(0) @map("shipping_cost") @db.Decimal(10, 2)
+  priceRangeMin   Decimal @map("price_range_min") @db.Decimal(10, 2)
+  priceRangeMax   Decimal @map("price_range_max") @db.Decimal(10, 2)
+  isPriceRevealed Boolean @default(false) @map("is_price_revealed")
+
+  reimbursedPrice    Boolean @default(true) @map("reimbursed_price")
+  reimbursedShipping Boolean @default(true) @map("reimbursed_shipping")
+
+  maxReimbursedPrice    Decimal? @map("max_reimbursed_price") @db.Decimal(10, 2)
+  maxReimbursedShipping Decimal? @map("max_reimbursed_shipping") @db.Decimal(10, 2)
+
+  bonus Decimal @default(0) @db.Decimal(10, 2) // Bonus testeur (minimum 5€)
+
+  quantity Int @default(1)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([campaignId, productId])
+  @@index([campaignId])
+  @@index([productId])
+  @@map("offers")
+}
+
+// Table CampaignCriteria - Critères d'éligibilité des testeurs
+model CampaignCriteria {
+  id String @id @default(uuid())
+
+  campaignId String   @unique @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  minAge Int? @map("min_age")
+  maxAge Int? @map("max_age")
+
+  minRating Decimal? @map("min_rating") @db.Decimal(3, 2)
+  maxRating Decimal? @map("max_rating") @db.Decimal(3, 2)
+
+  minCompletedSessions Int? @map("min_completed_sessions")
+
+  requiredGender String? @map("required_gender")
+
+  requiredCountries String[] @map("required_countries")
+  requiredLocations String[] @map("required_locations")
+  excludedLocations String[] @map("excluded_locations")
+
+  requiredCategories String[] @map("required_categories")
+
+  noActiveSessionWithSeller Boolean @default(false) @map("no_active_session_with_seller")
+
+  maxSessionsPerWeek  Int? @map("max_sessions_per_week")
+  maxSessionsPerMonth Int? @map("max_sessions_per_month")
+
+  minCompletionRate   Decimal? @map("min_completion_rate") @db.Decimal(5, 2)
+  maxCancellationRate Decimal? @map("max_cancellation_rate") @db.Decimal(5, 2)
+
+  minAccountAge        Int? @map("min_account_age")
+  lastActiveWithinDays Int? @map("last_active_within_days")
+
+  requireVerified Boolean @default(false) @map("require_verified")
+  requirePrime    Boolean @default(false) @map("require_prime")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([campaignId])
+  @@map("campaign_criteria")
+}
+
+// Table Procedure - Procédures d'une campagne
+model Procedure {
+  id String @id @default(uuid())
+
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String  @db.Text
+  order       Int
+  isRequired  Boolean @default(true) @map("is_required")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  steps Step[]
+
+  @@index([campaignId])
+  @@index([order])
+  @@map("procedures")
+}
+
+// Table Step - Étapes d'une procédure
+model Step {
+  id String @id @default(uuid())
+
+  procedureId String    @map("procedure_id")
+  procedure   Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?  @db.Text
+  type        StepType @default(TEXT)
+  order       Int
+  isRequired  Boolean  @default(true) @map("is_required")
+
+  checklistItems Json? @map("checklist_items") // Pour type CHECKLIST
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  progressTracking SessionStepProgress[]
+
+  @@index([procedureId])
+  @@index([order])
+  @@map("steps")
+}
+
+// Table ProcedureTemplate - Templates réutilisables
+model ProcedureTemplate {
+  id String @id @default(uuid())
+
+  sellerId String  @map("seller_id")
+  seller   Profile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  name        String
+  title       String
+  description String @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  steps StepTemplate[]
+
+  @@index([sellerId])
+  @@map("procedure_templates")
+}
+
+// Table StepTemplate - Étapes d'un template
+model StepTemplate {
+  id String @id @default(uuid())
+
+  procedureTemplateId String            @map("procedure_template_id")
+  procedureTemplate   ProcedureTemplate @relation(fields: [procedureTemplateId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?  @db.Text
+  type        StepType @default(TEXT)
+  order       Int
+  isRequired  Boolean  @default(true) @map("is_required")
+
+  checklistItems Json? @map("checklist_items")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([procedureTemplateId])
+  @@index([order])
+  @@map("step_templates")
+}
+
+// Table CriteriaTemplate - Templates de critères
+model CriteriaTemplate {
+  id String @id @default(uuid())
+
+  sellerId String  @map("seller_id")
+  seller   Profile @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  name String
+
+  minAge Int? @map("min_age")
+  maxAge Int? @map("max_age")
+
+  minRating Decimal? @map("min_rating") @db.Decimal(3, 2)
+  maxRating Decimal? @map("max_rating") @db.Decimal(3, 2)
+
+  minCompletedSessions Int? @map("min_completed_sessions")
+
+  requiredGender String? @map("required_gender")
+
+  requiredCountries String[] @map("required_countries")
+  requiredLocations String[] @map("required_locations")
+  excludedLocations String[] @map("excluded_locations")
+
+  requiredCategories String[] @map("required_categories")
+
+  noActiveSessionWithSeller Boolean @default(false) @map("no_active_session_with_seller")
+
+  maxSessionsPerWeek  Int? @map("max_sessions_per_week")
+  maxSessionsPerMonth Int? @map("max_sessions_per_month")
+
+  minCompletionRate   Decimal? @map("min_completion_rate") @db.Decimal(5, 2)
+  maxCancellationRate Decimal? @map("max_cancellation_rate") @db.Decimal(5, 2)
+
+  minAccountAge        Int? @map("min_account_age")
+  lastActiveWithinDays Int? @map("last_active_within_days")
+
+  requireVerified Boolean @default(false) @map("require_verified")
+  requirePrime    Boolean @default(false) @map("require_prime")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sellerId])
+  @@map("criteria_templates")
+}
+
+// Table Distribution - Calendrier de distribution
+model Distribution {
+  id String @id @default(uuid())
+
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  type DistributionType
+
+  dayOfWeek    Int?      @map("day_of_week") // 0-6 pour RECURRING
+  specificDate DateTime? @map("specific_date") // Pour SPECIFIC_DATE
+
+  maxUnits Int     @default(10) @map("max_units")
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([campaignId])
+  @@index([type])
+  @@index([dayOfWeek])
+  @@index([specificDate])
+  @@map("distributions")
+}
+
+// Table TestSession - Session de test entre testeur et campagne
+model TestSession {
+  id String @id @default(uuid())
+
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  testerId String  @map("tester_id")
+  tester   Profile @relation(fields: [testerId], references: [id], onDelete: Cascade)
+
+  status SessionStatus @default(PENDING)
+
+  // Application
+  applicationMessage String?  @map("application_message") @db.Text
+  appliedAt          DateTime @default(now()) @map("applied_at")
+
+  // Acceptance/Rejection
+  acceptedAt      DateTime? @map("accepted_at")
+  rejectedAt      DateTime? @map("rejected_at")
+  rejectionReason String?   @map("rejection_reason") @db.Text
+
+  // Scheduled purchase
+  scheduledPurchaseDate DateTime? @map("scheduled_purchase_date")
+
+  // Price validation
+  validatedProductPrice   Decimal?  @map("validated_product_price") @db.Decimal(10, 2)
+  priceValidatedAt        DateTime? @map("price_validated_at")
+  priceValidationAttempts Int       @default(0) @map("price_validation_attempts")
+  productTitleSubmitted   String?   @map("product_title_submitted")
+  productTitleSubmittedAt DateTime? @map("product_title_submitted_at")
+
+  // Purchase proof
+  orderNumber            String?   @map("order_number")
+  purchaseProofUrl       String?   @map("purchase_proof_url")
+  purchasedAt            DateTime? @map("purchased_at")
+  orderNumberValidatedAt DateTime? @map("order_number_validated_at")
+
+  // Purchase validation (PRO)
+  purchaseValidatedAt       DateTime? @map("purchase_validated_at")
+  purchaseValidationComment String?   @map("purchase_validation_comment") @db.Text
+  purchaseRejectedAt        DateTime? @map("purchase_rejected_at")
+  purchaseRejectionReason   String?   @map("purchase_rejection_reason") @db.Text
+
+  // Test submission
+  submittedAt    DateTime? @map("submitted_at")
+  submissionData Json?     @map("submission_data")
+
+  // Completion & Payment
+  completedAt  DateTime? @map("completed_at")
+  productPrice Decimal?  @map("product_price") @db.Decimal(10, 2)
+  shippingCost Decimal?  @map("shipping_cost") @db.Decimal(10, 2)
+  rewardAmount Decimal?  @map("reward_amount") @db.Decimal(10, 2)
+
+  // Cancellation
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancellationReason String?   @map("cancellation_reason") @db.Text
+
+  // Dispute
+  disputedAt        DateTime? @map("disputed_at")
+  disputeReason     String?   @map("dispute_reason") @db.Text
+  disputeResolvedAt DateTime? @map("dispute_resolved_at")
+  disputeResolution String?   @map("dispute_resolution") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  stepProgress SessionStepProgress[]
+  messages     Message[]
+  review       Review?
+  ugcs         UGC[]
+  tips         Tip[]
+  transactions Transaction[]
+
+  @@index([campaignId])
+  @@index([testerId])
+  @@index([status])
+  @@index([appliedAt])
+  @@map("test_sessions")
+}
+
+// Table SessionStepProgress - Progression dans les steps
+model SessionStepProgress {
+  id String @id @default(uuid())
+
+  sessionId String      @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  stepId String @map("step_id")
+  step   Step   @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  isCompleted Boolean   @default(false) @map("is_completed")
+  completedAt DateTime? @map("completed_at")
+
+  submissionData Json? @map("submission_data")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([sessionId, stepId])
+  @@index([sessionId])
+  @@index([stepId])
+  @@map("session_step_progress")
+}
+
+// Table UGC - User Generated Content
+model UGC {
+  id String @id @default(uuid())
+
+  type        UGCType
+  contentUrl  String? @map("content_url") @db.Text
+  description String  @db.Text
+  comment     String? @db.Text
+
+  requestedBonus Decimal? @map("requested_bonus") @db.Decimal(10, 2)
+  paidBonus      Decimal? @map("paid_bonus") @db.Decimal(10, 2)
+
+  deadline DateTime?
+
+  status UGCStatus @default(REQUESTED)
+
+  validatedAt       DateTime? @map("validated_at")
+  validatedBy       String?   @map("validated_by")
+  validationComment String?   @map("validation_comment") @db.Text
+
+  rejectedAt      DateTime? @map("rejected_at")
+  rejectionReason String?   @map("rejection_reason") @db.Text
+
+  declinedAt    DateTime? @map("declined_at")
+  declineReason String?   @map("decline_reason") @db.Text
+
+  submittedAt DateTime? @map("submitted_at")
+
+  // Relations
+  sessionId String?      @map("session_id")
+  session   TestSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  requestedBy String  @map("requested_by")
+  requester   Profile @relation("UGCRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+
+  submittedBy String?  @map("submitted_by")
+  submitter   Profile? @relation("UGCSubmitter", fields: [submittedBy], references: [id], onDelete: Restrict)
+
+  transactions Transaction[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([status])
+  @@index([requestedBy])
+  @@index([submittedBy])
+  @@map("ugcs")
+}
+
+// Table Tip - Pourboires PRO → Testeur
+model Tip {
+  id String @id @default(uuid())
+
+  sessionId String      @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  giverId String  @map("giver_id") // PRO
+  giver   Profile @relation("TipGiver", fields: [giverId], references: [id], onDelete: Restrict)
+
+  receiverId String  @map("receiver_id") // Testeur
+  receiver   Profile @relation("TipReceiver", fields: [receiverId], references: [id], onDelete: Restrict)
+
+  amount     Decimal @db.Decimal(10, 2)
+  commission Decimal @db.Decimal(10, 2) // Commission SuperTry (10%)
+  message    String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([sessionId])
+  @@index([giverId])
+  @@index([receiverId])
+  @@map("tips")
+}
+
+// Table Message - Messagerie dans une session
+model Message {
+  id String @id @default(uuid())
+
+  sessionId String      @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  senderId String  @map("sender_id")
+  sender   Profile @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  content     String @db.Text
+  attachments Json?
+
+  isRead Boolean   @default(false) @map("is_read")
+  readAt DateTime? @map("read_at")
+
+  messageType     String? @default("TEXT") @map("message_type")
+  isSystemMessage Boolean @default(false) @map("is_system_message")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([senderId])
+  @@index([isRead])
+  @@map("messages")
+}
+
+// Table Notification - Notifications utilisateurs
+model Notification {
+  id String @id @default(uuid())
+
+  userId String  @map("user_id")
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    NotificationType
+  channel NotificationChannel
+  title   String
+  message String              @db.Text
+  data    Json?
+
+  isSent Boolean   @default(false) @map("is_sent")
+  sentAt DateTime? @map("sent_at")
+  isRead Boolean   @default(false) @map("is_read")
+  readAt DateTime? @map("read_at")
+
+  error   String? @db.Text
+  retries Int     @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([type])
+  @@index([channel])
+  @@index([isSent])
+  @@map("notifications")
+}
+
+// Table NotificationPreference - Préférences de notification
+model NotificationPreference {
+  id String @id @default(uuid())
+
+  userId String  @unique @map("user_id")
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  emailEnabled Boolean @default(true) @map("email_enabled")
+  smsEnabled   Boolean @default(false) @map("sms_enabled")
+  pushEnabled  Boolean @default(true) @map("push_enabled")
+  inAppEnabled Boolean @default(true) @map("in_app_enabled")
+
+  sessionNotifications  Boolean @default(true) @map("session_notifications")
+  messageNotifications  Boolean @default(true) @map("message_notifications")
+  paymentNotifications  Boolean @default(true) @map("payment_notifications")
+  campaignNotifications Boolean @default(true) @map("campaign_notifications")
+  systemNotifications   Boolean @default(true) @map("system_notifications")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_preferences")
+}
+
+// Table Review - Avis testeur sur produit/campagne/seller
+model Review {
+  id String @id @default(uuid())
+
+  sessionId String      @unique @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  campaignId String   @map("campaign_id")
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  testerId String  @map("tester_id")
+  tester   Profile @relation(fields: [testerId], references: [id], onDelete: Cascade)
+
+  productRating Int     @map("product_rating") // 1-5 stars
+  sellerRating  Int     @map("seller_rating") // 1-5 stars
+  comment       String? @db.Text
+
+  isPublic Boolean @default(true) @map("is_public")
+
+  republishProposed Boolean? @map("republish_proposed")
+  republishAccepted Boolean? @map("republish_accepted")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([campaignId])
+  @@index([productId])
+  @@index([testerId])
+  @@map("reviews")
+}
+
+// Table Wallet - Portefeuille financier (PRO et USER)
+model Wallet {
+  id String @id @default(uuid())
+
+  userId String  @unique @map("user_id")
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  balance        Decimal @default(0) @db.Decimal(10, 2)
+  pendingBalance Decimal @default(0) @map("pending_balance") @db.Decimal(10, 2)
+  currency       String  @default("EUR")
+
+  totalEarned     Decimal   @default(0) @map("total_earned") @db.Decimal(10, 2)
+  totalWithdrawn  Decimal   @default(0) @map("total_withdrawn") @db.Decimal(10, 2)
+  lastCreditedAt  DateTime? @map("last_credited_at")
+  lastWithdrawnAt DateTime? @map("last_withdrawn_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("wallets")
+}
+
+// Table PlatformWallet - Portefeuille de la plateforme (modèle "Separate Charges and Transfers")
+model PlatformWallet {
+  id String @id @default(uuid())
+
+  // Balances
+  escrowBalance      Decimal @default(0) @map("escrow_balance") @db.Decimal(10, 2) // Argent en escrow (campagnes actives)
+  commissionBalance  Decimal @default(0) @map("commission_balance") @db.Decimal(10, 2) // Commissions collectées
+  currency           String  @default("EUR")
+
+  // Cumuls
+  totalReceived    Decimal @default(0) @map("total_received") @db.Decimal(10, 2) // Total reçu (paiements PRO)
+  totalTransferred Decimal @default(0) @map("total_transferred") @db.Decimal(10, 2) // Total transféré (testeurs + refunds PRO)
+  totalCommissions Decimal @default(0) @map("total_commissions") @db.Decimal(10, 2) // Total commissions
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_wallets")
+}
+
+// Table Transaction - Historique transactions financières
+model Transaction {
+  id String @id @default(uuid())
+
+  walletId String? @map("wallet_id")
+  wallet   Wallet? @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type   TransactionType
+  amount Decimal         @db.Decimal(10, 2)
+  reason String
+
+  // Relations optionnelles
+  sessionId    String?      @map("session_id")
+  session      TestSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  campaignId   String?      @map("campaign_id")
+  campaign     Campaign?    @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  withdrawalId String?      @map("withdrawal_id")
+  withdrawal   Withdrawal?  @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+  ugcId        String?      @map("ugc_id")
+  ugc          UGC?         @relation(fields: [ugcId], references: [id], onDelete: SetNull)
+  tipId        String?      @map("tip_id")
+  tip          Tip?         @relation(fields: [tipId], references: [id], onDelete: SetNull)
+
+  // Stripe references
+  stripePaymentIntentId String? @unique @map("stripe_payment_intent_id")
+  stripeTransferId      String? @unique @map("stripe_transfer_id")
+  stripeRefundId        String? @unique @map("stripe_refund_id")
+  stripeSessionId       String? @unique @map("stripe_session_id") // Stripe Checkout Session ID
+
+  status        TransactionStatus @default(COMPLETED)
+  failureReason String?           @map("failure_reason") @db.Text
+  metadata      Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([walletId])
+  @@index([sessionId])
+  @@index([campaignId])
+  @@index([type])
+  @@index([status])
+  @@map("transactions")
+}
+
+// Table Withdrawal - Demandes de retrait
+model Withdrawal {
+  id String @id @default(uuid())
+
+  userId String  @map("user_id")
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  amount   Decimal          @db.Decimal(10, 2)
+  method   WithdrawalMethod
+  status   WithdrawalStatus @default(PENDING)
+  currency String           @default("EUR")
+
+  paymentDetails Json?   @map("payment_details")
+  stripePayoutId String? @unique @map("stripe_payout_id") // Stripe Payout ID
+
+  processedAt        DateTime? @map("processed_at")
+  completedAt        DateTime? @map("completed_at")
+  failedAt           DateTime? @map("failed_at")
+  failureReason      String?   @map("failure_reason") @db.Text
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancellationReason String?   @map("cancellation_reason") @db.Text
+
+  processedBy String? @map("processed_by")
+  notes       String? @db.Text
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("withdrawals")
+}
+
+// Table BusinessRules - Règles métier dynamiques (ADMIN uniquement)
+model BusinessRules {
+  id String @id @default(uuid())
+
+  // Tarifs de base (en euros)
+  testerBonus        Decimal @default(5.00) @map("tester_bonus") @db.Decimal(10, 2)
+  supertryCommission Decimal @default(5.00) @map("supertry_commission") @db.Decimal(10, 2)
+
+  // Commission hybride: fixe + couverture Stripe
+  commissionFixedFee  Decimal @default(5.00) @map("commission_fixed_fee") @db.Decimal(10, 2) // Commission SuperTry fixe par produit
+  stripeFeePercent    Decimal @default(0.035) @map("stripe_fee_percent") @db.Decimal(5, 4)   // % couverture frais Stripe (3.5%)
+
+  // Manual Capture: delai avant auto-capture
+  captureDelayMinutes Int @default(60) @map("capture_delay_minutes")
+
+  // Tarifs UGC
+  ugcVideoPrice      Decimal @default(20.00) @map("ugc_video_price") @db.Decimal(10, 2)
+  ugcVideoCommission Decimal @default(5.00) @map("ugc_video_commission") @db.Decimal(10, 2)
+  ugcPhotoPrice      Decimal @default(10.00) @map("ugc_photo_price") @db.Decimal(10, 2)
+  ugcPhotoCommission Decimal @default(3.00) @map("ugc_photo_commission") @db.Decimal(10, 2)
+
+  // Tips
+  enableTips           Boolean @default(true) @map("enable_tips")
+  tipCommissionPercent Decimal @default(10.00) @map("tip_commission_percent") @db.Decimal(5, 2)
+
+  // Règles d'annulation PRO
+  campaignActivationGracePeriodMinutes Int     @default(60) @map("campaign_activation_grace_period_minutes")
+  campaignCancellationFeePercent       Decimal @default(10.00) @map("campaign_cancellation_fee_percent") @db.Decimal(5, 2)
+
+  // Règles d'annulation TESTEUR
+  testerCancellationBanDays            Int     @default(14) @map("tester_cancellation_ban_days") // Ban uniforme de 14 jours
+  testerCancellationCommissionPercent  Decimal @default(50.00) @map("tester_cancellation_commission_percent") @db.Decimal(5, 2) // 50% de commission
+
+  // Compensation testeur sur annulation PRO
+  testerCompensationOnProCancellation  Decimal @default(5.00) @map("tester_compensation_on_pro_cancellation") @db.Decimal(10, 2)
+
+  // KYC testeur : nombre de tests réussis avant obligation KYC Identity
+  kycRequiredAfterTests Int @default(3) @map("kyc_required_after_tests")
+
+  // Metadata
+  version   Int      @default(1)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("business_rules")
+}
+
+// Table Country - Pays disponibles
+model Country {
+  id        String   @id @default(uuid())
+  code      String   @unique // ISO 3166-1 alpha-2 (FR, DE, etc.)
+  name      String
+  nameEn    String   @map("name_en")
+  nameFr    String   @map("name_fr")
+  isActive  Boolean  @default(false) @map("is_active")
+  region    String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  profileCountries ProfileCountry[]
+
+  @@index([isActive])
+  @@index([code])
+  @@map("countries")
+}
+
+// Table ProfileCountry - Pays sélectionnés par les PRO
+model ProfileCountry {
+  id          String   @id @default(uuid())
+  profileId   String   @map("profile_id")
+  countryCode String   @map("country_code")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  country Country @relation(fields: [countryCode], references: [code], onDelete: Cascade)
+
+  @@unique([profileId, countryCode])
+  @@index([profileId])
+  @@index([countryCode])
+  @@map("profile_countries")
+}
+
+// Table LuciaSession - Sessions d'authentification Lucia
+model LuciaSession {
+  id        String   @id
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+
+  profile Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("lucia_sessions")
+}
+
+// Table OAuthAccount - Comptes OAuth liés
+model OAuthAccount {
+  id         String @id @default(uuid())
+  provider   String // "google", "github", "azure"
+  providerId String @map("provider_id")
+
+  userId String  @map("user_id")
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([provider, providerId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+// Enum pour catégories d'audit
+enum AuditCategory {
+  AUTH // Authentification (login, logout, signup)
+  USER // Actions utilisateur (update profile, etc.)
+  ADMIN // Actions administrateur
+  PRODUCT // Actions sur produits
+  CAMPAIGN // Actions sur campagnes
+  SESSION // Actions sur sessions
+  WALLET // Actions sur portefeuilles
+  MESSAGE // Actions sur messages
+  SYSTEM // Actions système
+  OTHER // Autres actions
+}
+
+// Table AuditLog - Journal d'audit de tous les mouvements
+model AuditLog {
+  id        String        @id @default(uuid())
+  userId    String?       @map("user_id") // Nullable pour actions système sans user
+  category  AuditCategory
+  action    String // Description de l'action (ex: "LOGIN_SUCCESS", "PROFILE_UPDATED")
+  details   Json? // Données additionnelles (paramètres, résultats, etc.)
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  // Relation optionnelle avec Profile
+  user Profile? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([category])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}

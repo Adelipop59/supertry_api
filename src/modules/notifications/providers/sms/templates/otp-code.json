@@ -1,0 +1,3 @@
+{
+  "template": "Votre code de vérification: {{code}}"
+}
