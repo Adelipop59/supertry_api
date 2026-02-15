@@ -35,44 +35,11 @@ export class CancellationsService {
     campaignId: string,
     sellerId: string,
     dto: CancelCampaignDto,
-  ): Promise<{
-    campaign: any;
-    refundToPro: number;
-    cancellationFee: number;
-    compensationPerTester: number;
-    acceptedTestersCount: number;
-  }> {
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
-      include: {
-        testSessions: {
-          where: {
-            status: {
-              in: [
-                SessionStatus.PENDING,
-                SessionStatus.ACCEPTED,
-                SessionStatus.PRICE_VALIDATED,
-                SessionStatus.PURCHASE_VALIDATED,
-              ],
-            },
-          },
-          include: {
-            tester: true,
-          },
-        },
-      },
-    });
-
-    if (!campaign) {
-      throw new NotFoundException('Campaign not found');
-    }
+  ) {
+    const campaign = await this.findCampaignForCancellation(campaignId);
 
     if (campaign.sellerId !== sellerId) {
       throw new ForbiddenException('You can only cancel your own campaigns');
-    }
-
-    if (campaign.status === CampaignStatus.CANCELLED) {
-      throw new BadRequestException('Campaign is already cancelled');
     }
 
     if (campaign.status === CampaignStatus.COMPLETED) {
@@ -83,89 +50,7 @@ export class CancellationsService {
       throw new BadRequestException('Campaign has no payment to refund');
     }
 
-    // Calculer le temps écoulé depuis le paiement (activation)
-    const activatedAt = campaign.paymentCapturedAt || campaign.paymentAuthorizedAt || campaign.createdAt;
-    const hoursElapsed = (Date.now() - activatedAt.getTime()) / (1000 * 60 * 60);
-
-    // Récupérer les testeurs acceptés
-    const acceptedTesters = campaign.testSessions.filter(
-      (session) =>
-        session.status === SessionStatus.ACCEPTED ||
-        session.status === SessionStatus.PRICE_VALIDATED ||
-        session.status === SessionStatus.PURCHASE_VALIDATED,
-    );
-
-    const acceptedTesterIds = acceptedTesters.map((s) => s.testerId);
-
-    this.logger.log(
-      `PRO ${sellerId} cancelling campaign ${campaignId}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}`,
-    );
-
-    // Traiter le remboursement
-    const {
-      refundToPro,
-      cancellationFee,
-      compensationPerTester,
-    } = await this.paymentsService.processCampaignCancellationRefund(campaignId, {
-      hoursElapsed,
-      acceptedTestersCount: acceptedTesters.length,
-      acceptedTesterIds,
-    });
-
-    // Mettre à jour la campagne
-    const updatedCampaign = await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: {
-        status: CampaignStatus.CANCELLED,
-        cancelledAt: new Date(),
-        cancelledBy: sellerId,
-        cancellationReason: dto.cancellationReason,
-      },
-    });
-
-    // Annuler toutes les sessions actives
-    await this.prisma.testSession.updateMany({
-      where: {
-        campaignId,
-        status: {
-          in: [
-            SessionStatus.PENDING,
-            SessionStatus.ACCEPTED,
-            SessionStatus.PRICE_VALIDATED,
-            SessionStatus.PURCHASE_VALIDATED,
-          ],
-        },
-      },
-      data: {
-        status: SessionStatus.CANCELLED,
-      },
-    });
-
-    // Audit
-    await this.auditService.log(
-      sellerId,
-      AuditCategory.CAMPAIGN,
-      'CAMPAIGN_CANCELLED_BY_PRO',
-      {
-        campaignId,
-        reason: dto.cancellationReason,
-        hoursElapsed,
-        refundToPro,
-        cancellationFee,
-        compensationPerTester,
-        acceptedTestersCount: acceptedTesters.length,
-      },
-    );
-
-    this.logger.log(`Campaign ${campaignId} cancelled by PRO ${sellerId}`);
-
-    return {
-      campaign: updatedCampaign,
-      refundToPro,
-      cancellationFee,
-      compensationPerTester,
-      acceptedTestersCount: acceptedTesters.length,
-    };
+    return this.executeCancellation(campaign, sellerId, dto, 'CAMPAIGN_CANCELLED_BY_PRO');
   }
 
   /**
@@ -175,13 +60,7 @@ export class CancellationsService {
     campaignId: string,
     adminId: string,
     dto: CancelCampaignDto,
-  ): Promise<{
-    campaign: any;
-    refundToPro: number;
-    cancellationFee: number;
-    compensationPerTester: number;
-    acceptedTestersCount: number;
-  }> {
+  ) {
     const admin = await this.prisma.profile.findUnique({
       where: { id: adminId },
     });
@@ -190,31 +69,7 @@ export class CancellationsService {
       throw new ForbiddenException('Only admins can force cancel campaigns');
     }
 
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: campaignId },
-      include: {
-        testSessions: {
-          where: {
-            status: {
-              in: [
-                SessionStatus.PENDING,
-                SessionStatus.ACCEPTED,
-                SessionStatus.PRICE_VALIDATED,
-                SessionStatus.PURCHASE_VALIDATED,
-              ],
-            },
-          },
-        },
-      },
-    });
-
-    if (!campaign) {
-      throw new NotFoundException('Campaign not found');
-    }
-
-    if (campaign.status === CampaignStatus.CANCELLED) {
-      throw new BadRequestException('Campaign is already cancelled');
-    }
+    const campaign = await this.findCampaignForCancellation(campaignId);
 
     // Les ADMIN peuvent forcer l'annulation même sans paiement
     if (!campaign.stripePaymentIntentId) {
@@ -248,46 +103,96 @@ export class CancellationsService {
       };
     }
 
-    // Si paiement existe, appliquer les mêmes règles que PRO
+    return this.executeCancellation(campaign, adminId, dto, 'CAMPAIGN_CANCELLED_BY_ADMIN');
+  }
+
+  /**
+   * Shared: find campaign with active sessions for cancellation
+   */
+  private async findCampaignForCancellation(campaignId: string) {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      include: {
+        testSessions: {
+          where: {
+            status: {
+              in: [
+                SessionStatus.PENDING,
+                SessionStatus.ACCEPTED,
+                SessionStatus.PRICE_VALIDATED,
+                SessionStatus.PURCHASE_VALIDATED,
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    if (!campaign) {
+      throw new NotFoundException('Campaign not found');
+    }
+
+    if (campaign.status === CampaignStatus.CANCELLED) {
+      throw new BadRequestException('Campaign is already cancelled');
+    }
+
+    return campaign;
+  }
+
+  /**
+   * Shared: execute cancellation with refund processing
+   */
+  private async executeCancellation(
+    campaign: any,
+    userId: string,
+    dto: CancelCampaignDto,
+    auditAction: string,
+  ): Promise<{
+    campaign: any;
+    refundToPro: number;
+    cancellationFee: number;
+    compensationPerTester: number;
+    acceptedTestersCount: number;
+  }> {
     const activatedAt = campaign.paymentCapturedAt || campaign.paymentAuthorizedAt || campaign.createdAt;
     const hoursElapsed = (Date.now() - activatedAt.getTime()) / (1000 * 60 * 60);
 
     const acceptedTesters = campaign.testSessions.filter(
-      (session) =>
+      (session: any) =>
         session.status === SessionStatus.ACCEPTED ||
         session.status === SessionStatus.PRICE_VALIDATED ||
         session.status === SessionStatus.PURCHASE_VALIDATED,
     );
 
-    const acceptedTesterIds = acceptedTesters.map((s) => s.testerId);
+    const acceptedTesterIds = acceptedTesters.map((s: any) => s.testerId);
 
     this.logger.log(
-      `ADMIN ${adminId} cancelling campaign ${campaignId}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}`,
+      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}`,
     );
 
     const {
       refundToPro,
       cancellationFee,
       compensationPerTester,
-    } = await this.paymentsService.processCampaignCancellationRefund(campaignId, {
+    } = await this.paymentsService.processCampaignCancellationRefund(campaign.id, {
       hoursElapsed,
       acceptedTestersCount: acceptedTesters.length,
       acceptedTesterIds,
     });
 
     const updatedCampaign = await this.prisma.campaign.update({
-      where: { id: campaignId },
+      where: { id: campaign.id },
       data: {
         status: CampaignStatus.CANCELLED,
         cancelledAt: new Date(),
-        cancelledBy: adminId,
+        cancelledBy: userId,
         cancellationReason: dto.cancellationReason,
       },
     });
 
     await this.prisma.testSession.updateMany({
       where: {
-        campaignId,
+        campaignId: campaign.id,
         status: {
           in: [
             SessionStatus.PENDING,
@@ -303,11 +208,11 @@ export class CancellationsService {
     });
 
     await this.auditService.log(
-      adminId,
+      userId,
       AuditCategory.CAMPAIGN,
-      'CAMPAIGN_CANCELLED_BY_ADMIN',
+      auditAction,
       {
-        campaignId,
+        campaignId: campaign.id,
         reason: dto.cancellationReason,
         hoursElapsed,
         refundToPro,
@@ -317,7 +222,7 @@ export class CancellationsService {
       },
     );
 
-    this.logger.log(`Campaign ${campaignId} cancelled by ADMIN ${adminId}`);
+    this.logger.log(`Campaign ${campaign.id} cancelled by ${userId}`);
 
     return {
       campaign: updatedCampaign,

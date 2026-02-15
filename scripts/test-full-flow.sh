@@ -48,6 +48,7 @@ CHECKOUT_URL=""
 VERIFICATION_URL=""
 REWARD_AMOUNT=""
 BALANCE=""
+UGC_VIDEO_ID=""
 
 # ============================================================================
 # Fonctions Utilitaires
@@ -566,7 +567,7 @@ test_free_cancellation() {
 # ============================================================================
 
 setup_testeur() {
-    print_header "👤 PHASE 2: CRÉATION COMPTE TESTEUR + KYC"
+    print_header "👤 PHASE 2: CRÉATION COMPTE TESTEUR + ONBOARDING"
 
     # 1. Signup TESTEUR
     print_step "Création compte TESTEUR ($TESTEUR_EMAIL)..."
@@ -597,113 +598,10 @@ setup_testeur() {
         }')
 
     check_response "$TESTEUR_CONNECT_RESPONSE" "Stripe Connect TESTEUR" || exit 1
-    print_success "Stripe Connect TESTEUR créé (avec metadata platform=supertry)"
-
-    # 3. Tentative de postuler (sera bloquée par KYC)
-    print_step "Tentative d'application à la campagne..."
-    APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
-        -H "Content-Type: application/json" \
-        -b "$TESTEUR_COOKIE_FILE" \
-        -d '{
-            "applicationMessage": "Je suis très intéressé par ce test!"
-        }')
-
-    # Vérifier si KYC requis
-    IDENTITY_REQUIRED=$(echo "$APPLICATION_RESPONSE" | jq -r '.identityRequired // false')
-
-    if [ "$IDENTITY_REQUIRED" = "true" ]; then
-        ERROR_MESSAGE=$(echo "$APPLICATION_RESPONSE" | jq -r '.message')
-        VERIFICATION_URL=$(echo "$APPLICATION_RESPONSE" | jq -r '.verificationUrl')
-        CLIENT_SECRET=$(echo "$APPLICATION_RESPONSE" | jq -r '.clientSecret')
-
-        echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo -e "${RED}${BOLD}🔒 KYC STRIPE IDENTITY REQUIS${NC}"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo -e "${YELLOW}Message:${NC} $ERROR_MESSAGE"
-        echo ""
-        echo -e "${BLUE}🔗 Lien de vérification Stripe Identity:${NC}"
-        echo -e "${GREEN}${BOLD}$VERIFICATION_URL${NC}"
-        echo ""
-        echo -e "${MAGENTA}Metadata Identity enrichies: platform=supertry, verificationType=tester_kyc${NC}"
-        echo ""
-        echo -e "${YELLOW}➜ 1. ${BOLD}Ouvrez ce lien dans votre navigateur${NC}"
-        echo -e "${YELLOW}➜ 2. ${BOLD}Complétez la vérification Identity (CNI/Passeport + selfie)${NC}"
-        echo -e "${YELLOW}➜ 3. ${BOLD}Revenez ici et appuyez sur ENTRÉE${NC}"
-        echo ""
-        read -p "Appuyez sur ENTRÉE après avoir validé l'Identity..."
-
-        # Polling Identity status
-        print_step "Vérification du statut Identity..."
-
-        IDENTITY_SESSION_ID=$(echo "$CLIENT_SECRET" | grep -o 'vs_[^_]*')
-        echo -e "${YELLOW}   Session ID: $IDENTITY_SESSION_ID${NC}"
-
-        if [ -z "$IDENTITY_SESSION_ID" ] || [ "$IDENTITY_SESSION_ID" = "null" ]; then
-            print_error "Impossible d'extraire le session ID"
-            echo "$APPLICATION_RESPONSE" | jq '.'
-            exit 1
-        fi
-
-        for i in {1..60}; do
-            sleep 2
-
-            IDENTITY_STATUS_RESPONSE=$(curl -s -X GET "$API_URL/stripe/identity/status/$IDENTITY_SESSION_ID" \
-                -b "$TESTEUR_COOKIE_FILE")
-
-            STATUS=$(echo "$IDENTITY_STATUS_RESPONSE" | jq -r '.status')
-
-            if [ "$STATUS" = "verified" ]; then
-                print_success "Identity vérifiée !"
-                break
-            elif [ "$STATUS" = "requires_input" ]; then
-                print_warning "Informations supplémentaires requises"
-                echo "$IDENTITY_STATUS_RESPONSE" | jq '.lastError'
-                break
-            elif [ "$STATUS" = "processing" ]; then
-                if [ $((i % 5)) -eq 0 ]; then
-                    echo -e "${BLUE}   ⏳ En cours... ($i/60)${NC}"
-                fi
-            else
-                echo -e "${YELLOW}   Status: $STATUS ($i/60)${NC}"
-                if [ $i -eq 60 ]; then
-                    print_error "Timeout: Identity non vérifiée après 2 minutes"
-                    exit 1
-                fi
-            fi
-        done
-
-        # Attendre webhook Identity verified
-        print_step "Attente webhook identity.verification_session.verified..."
-
-        for j in {1..10}; do
-            sleep 3
-
-            APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
-                -H "Content-Type: application/json" \
-                -b "$TESTEUR_COOKIE_FILE" \
-                -d '{
-                    "applicationMessage": "Je suis très intéressé par ce test!"
-                }')
-
-            IDENTITY_STILL_REQUIRED=$(echo "$APPLICATION_RESPONSE" | jq -r '.identityRequired // false')
-            HAS_SESSION_ID=$(echo "$APPLICATION_RESPONSE" | jq -r '.id // "null"')
-
-            if [ "$IDENTITY_STILL_REQUIRED" = "false" ] && [ "$HAS_SESSION_ID" != "null" ]; then
-                print_success "Webhook traité ! Application réussie"
-                SESSION_ID="$HAS_SESSION_ID"
-                break
-            elif [ $j -eq 10 ]; then
-                print_error "Timeout: webhook Identity non reçu après 30s"
-                exit 1
-            else
-                echo -e "${BLUE}   ⏳ Attente webhook... ($j/10)${NC}"
-            fi
-        done
-    fi
+    print_success "Stripe Connect TESTEUR créé"
 
     # ============================================================================
-    # ONBOARDING STRIPE CONNECT
+    # 3. ONBOARDING STRIPE CONNECT (requis AVANT de postuler)
     # ============================================================================
 
     echo ""
@@ -722,7 +620,7 @@ setup_testeur() {
     if [ "$CHARGES_ENABLED" = "true" ] && [ "$DETAILS_SUBMITTED" = "true" ]; then
         print_success "Onboarding déjà complété !"
     else
-        echo -e "${YELLOW}L'onboarding Stripe Connect est requis pour recevoir les transferts${NC}"
+        echo -e "${YELLOW}L'onboarding Stripe Connect est requis AVANT de postuler${NC}"
         echo ""
 
         print_step "Génération du lien d'onboarding..."
@@ -774,22 +672,105 @@ setup_testeur() {
         done
     fi
 
-    # Application (si pas déjà fait)
-    if [ -z "$SESSION_ID" ]; then
-        echo ""
-        print_step "Application à la campagne..."
-        APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
-            -H "Content-Type: application/json" \
-            -b "$TESTEUR_COOKIE_FILE" \
-            -d '{
-                "applicationMessage": "Je suis très intéressé par ce test!"
-            }')
+    # ============================================================================
+    # 4. APPLICATION À LA CAMPAGNE
+    # ============================================================================
 
-        check_response "$APPLICATION_RESPONSE" "Application à campagne" || exit 1
-        SESSION_ID=$(echo "$APPLICATION_RESPONSE" | jq -r '.id')
+    echo ""
+    print_step "Application à la campagne..."
+    APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
+        -H "Content-Type: application/json" \
+        -b "$TESTEUR_COOKIE_FILE" \
+        -d '{
+            "applicationMessage": "Je suis très intéressé par ce test!"
+        }')
+
+    # Debug : afficher la réponse si erreur
+    SESSION_ID=$(echo "$APPLICATION_RESPONSE" | jq -r '.id // empty')
+
+    if [ -z "$SESSION_ID" ]; then
+        # Vérifier si KYC Identity requis (après N tests complétés)
+        IDENTITY_REQUIRED=$(echo "$APPLICATION_RESPONSE" | jq -r '.identityRequired // false')
+        ONBOARDING_REQUIRED=$(echo "$APPLICATION_RESPONSE" | jq -r '.onboardingRequired // false')
+
+        if [ "$IDENTITY_REQUIRED" = "true" ]; then
+            VERIFICATION_URL=$(echo "$APPLICATION_RESPONSE" | jq -r '.verificationUrl')
+            CLIENT_SECRET=$(echo "$APPLICATION_RESPONSE" | jq -r '.clientSecret')
+
+            echo ""
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo -e "${RED}${BOLD}🔒 KYC STRIPE IDENTITY REQUIS${NC}"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo -e "${BLUE}🔗 Lien:${NC} ${GREEN}${BOLD}$VERIFICATION_URL${NC}"
+            echo ""
+            echo -e "${YELLOW}➜ Complétez la vérification Identity (CNI/Passeport + selfie)${NC}"
+            echo ""
+            read -p "Appuyez sur ENTRÉE après avoir validé l'Identity..."
+
+            # Polling + retry application
+            for j in {1..20}; do
+                sleep 3
+
+                APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
+                    -H "Content-Type: application/json" \
+                    -b "$TESTEUR_COOKIE_FILE" \
+                    -d '{
+                        "applicationMessage": "Je suis très intéressé par ce test!"
+                    }')
+
+                SESSION_ID=$(echo "$APPLICATION_RESPONSE" | jq -r '.id // empty')
+
+                if [ -n "$SESSION_ID" ]; then
+                    print_success "Application réussie après vérification Identity !"
+                    break
+                fi
+
+                if [ $((j % 5)) -eq 0 ]; then
+                    echo -e "${BLUE}   ⏳ Attente webhook Identity... ($j/20)${NC}"
+                fi
+
+                if [ $j -eq 20 ]; then
+                    print_error "Timeout: Impossible de postuler après 60s"
+                    echo "$APPLICATION_RESPONSE" | jq '.' 2>/dev/null
+                    exit 1
+                fi
+            done
+        elif [ "$ONBOARDING_REQUIRED" = "true" ]; then
+            print_error "L'onboarding Stripe Connect n'est pas détecté comme complété par l'API."
+            echo -e "${YELLOW}Réponse API:${NC}"
+            echo "$APPLICATION_RESPONSE" | jq '.' 2>/dev/null
+            echo ""
+            echo -e "${YELLOW}Vérifiez que le webhook account.updated a été traité.${NC}"
+            echo ""
+            read -p "Appuyez sur ENTRÉE pour réessayer..."
+
+            # Retry
+            for j in {1..10}; do
+                sleep 3
+                APPLICATION_RESPONSE=$(curl -s -X POST "$API_URL/test-sessions/$CAMPAIGN_ID/apply" \
+                    -H "Content-Type: application/json" \
+                    -b "$TESTEUR_COOKIE_FILE" \
+                    -d '{"applicationMessage": "Je suis très intéressé par ce test!"}')
+                SESSION_ID=$(echo "$APPLICATION_RESPONSE" | jq -r '.id // empty')
+                if [ -n "$SESSION_ID" ]; then
+                    print_success "Application réussie !"
+                    break
+                fi
+                echo -e "${BLUE}   ⏳ Retry... ($j/10)${NC}"
+                if [ $j -eq 10 ]; then
+                    print_error "Impossible de postuler. Réponse:"
+                    echo "$APPLICATION_RESPONSE" | jq '.' 2>/dev/null
+                    exit 1
+                fi
+            done
+        else
+            print_error "Application échouée. Réponse:"
+            echo "$APPLICATION_RESPONSE" | jq '.' 2>/dev/null
+            exit 1
+        fi
     fi
 
-    print_success "Application envoyée: $SESSION_ID"
+    print_success "Application envoyée ! Session ID: $SESSION_ID"
 }
 
 # ============================================================================
@@ -863,11 +844,245 @@ run_test_flow() {
 }
 
 # ============================================================================
-# Phase 4: Vérifications
+# Phase 4: UGC VIDEO (payant: 20€ testeur + 5€ commission SuperTry)
+# ============================================================================
+
+test_ugc_video() {
+    print_header "🎬 PHASE 4: UGC VIDEO (20€ + 5€ commission)"
+
+    echo -e "${YELLOW}Flow UGC VIDEO payant:${NC}"
+    echo -e "  ${BLUE}1.${NC} PRO demande un UGC VIDEO → PI manual capture (25€)"
+    echo -e "  ${BLUE}2.${NC} TESTEUR soumet → PRO rejette (1ère fois)"
+    echo -e "  ${BLUE}3.${NC} TESTEUR resoumet → PRO valide → capture PI → paiement testeur"
+    echo ""
+
+    # 1. PRO demande UGC VIDEO
+    print_step "PRO demande un UGC VIDEO..."
+
+    # Récupérer paymentMethodId du PRO (via Stripe)
+    print_step "Récupération méthode de paiement du PRO..."
+    PM_RESPONSE=$(curl -s -X GET "$API_URL/stripe/payment-methods" \
+        -b "$PRO_COOKIE_FILE")
+
+    PAYMENT_METHOD_ID=$(echo "$PM_RESPONSE" | jq -r '.[0].id // empty')
+
+    if [ -z "$PAYMENT_METHOD_ID" ]; then
+        print_warning "Aucune méthode de paiement trouvée. Tentative de récupération du customer..."
+        # Essayer avec le customer Stripe
+        CUSTOMER_RESPONSE=$(curl -s -X GET "$API_URL/stripe/customer" \
+            -b "$PRO_COOKIE_FILE")
+        PAYMENT_METHOD_ID=$(echo "$CUSTOMER_RESPONSE" | jq -r '.defaultPaymentMethod // empty')
+    fi
+
+    if [ -z "$PAYMENT_METHOD_ID" ]; then
+        print_warning "Pas de méthode de paiement trouvée. UGC VIDEO sera créé sans PI (mode test)."
+        print_step "Demande UGC VIDEO sans paymentMethodId..."
+        UGC_VIDEO_RESPONSE=$(curl -s -X POST "$API_URL/ugc/request" \
+            -H "Content-Type: application/json" \
+            -b "$PRO_COOKIE_FILE" \
+            -d '{
+                "sessionId": "'"$SESSION_ID"'",
+                "type": "VIDEO",
+                "description": "Faites une vidéo de 30s montrant le produit en action"
+            }')
+    else
+        print_step "Demande UGC VIDEO avec paymentMethodId: $PAYMENT_METHOD_ID..."
+        UGC_VIDEO_RESPONSE=$(curl -s -X POST "$API_URL/ugc/request" \
+            -H "Content-Type: application/json" \
+            -b "$PRO_COOKIE_FILE" \
+            -d '{
+                "sessionId": "'"$SESSION_ID"'",
+                "type": "VIDEO",
+                "description": "Faites une vidéo de 30s montrant le produit en action",
+                "paymentMethodId": "'"$PAYMENT_METHOD_ID"'"
+            }')
+    fi
+
+    if echo "$UGC_VIDEO_RESPONSE" | jq -e '.statusCode >= 400' >/dev/null 2>&1; then
+        ERROR_MSG=$(echo "$UGC_VIDEO_RESPONSE" | jq -r '.message')
+        print_error "Erreur UGC VIDEO: $ERROR_MSG"
+        echo "$UGC_VIDEO_RESPONSE" | jq '.' 2>/dev/null
+        echo ""
+        echo -e "${YELLOW}Skipping UGC VIDEO test (paiement requis mais pas de PM).${NC}"
+        echo ""
+        return
+    fi
+
+    UGC_VIDEO_ID=$(echo "$UGC_VIDEO_RESPONSE" | jq -r '.id')
+    UGC_VIDEO_STATUS=$(echo "$UGC_VIDEO_RESPONSE" | jq -r '.status')
+    UGC_VIDEO_PI=$(echo "$UGC_VIDEO_RESPONSE" | jq -r '.stripePaymentIntentId // "null"')
+
+    print_success "UGC VIDEO créé: $UGC_VIDEO_ID (status: $UGC_VIDEO_STATUS)"
+    if [ "$UGC_VIDEO_PI" != "null" ]; then
+        print_money "PaymentIntent manual capture: $UGC_VIDEO_PI (25€ autorisé, 0 capturé)"
+    fi
+
+    # 2. TESTEUR soumet (1ère soumission - sera rejetée)
+    echo ""
+    print_step "TESTEUR soumet le UGC VIDEO (1ère tentative)..."
+    SUBMIT_1_RESPONSE=$(curl -s -X POST "$API_URL/ugc/$UGC_VIDEO_ID/submit" \
+        -H "Content-Type: application/json" \
+        -b "$TESTEUR_COOKIE_FILE" \
+        -d '{
+            "comment": "Voici ma première vidéo de test",
+            "contentUrl": "https://example.com/video-test-v1-'$TIMESTAMP'.mp4"
+        }')
+
+    check_response "$SUBMIT_1_RESPONSE" "Soumission UGC VIDEO v1" || {
+        print_warning "Soumission échouée (upload fichier peut-être requis). Skip."
+        return
+    }
+    print_success "UGC VIDEO soumis (v1)"
+
+    # 3. PRO rejette (test du flow rejet)
+    print_step "PRO rejette le UGC VIDEO..."
+    REJECT_RESPONSE=$(curl -s -X POST "$API_URL/ugc/$UGC_VIDEO_ID/reject" \
+        -H "Content-Type: application/json" \
+        -b "$PRO_COOKIE_FILE" \
+        -d '{
+            "rejectionReason": "La vidéo est trop sombre, refaites avec un meilleur éclairage"
+        }')
+
+    check_response "$REJECT_RESPONSE" "Rejet UGC VIDEO" || return
+    REJECTION_COUNT=$(echo "$REJECT_RESPONSE" | jq -r '.rejectionCount // 1')
+    print_success "UGC VIDEO rejeté (rejet $REJECTION_COUNT/3)"
+
+    # 4. TESTEUR resoumet (2ème tentative)
+    print_step "TESTEUR resoumet le UGC VIDEO (v2 améliorée)..."
+    SUBMIT_2_RESPONSE=$(curl -s -X POST "$API_URL/ugc/$UGC_VIDEO_ID/submit" \
+        -H "Content-Type: application/json" \
+        -b "$TESTEUR_COOKIE_FILE" \
+        -d '{
+            "comment": "Voici la vidéo améliorée avec meilleur éclairage",
+            "contentUrl": "https://example.com/video-test-v2-'$TIMESTAMP'.mp4"
+        }')
+
+    check_response "$SUBMIT_2_RESPONSE" "Soumission UGC VIDEO v2" || return
+    print_success "UGC VIDEO resoumis (v2)"
+
+    # 5. PRO valide → capture PI → paiement testeur
+    print_step "PRO valide le UGC VIDEO → capture PI + paiement testeur..."
+    VALIDATE_RESPONSE=$(curl -s -X POST "$API_URL/ugc/$UGC_VIDEO_ID/validate" \
+        -H "Content-Type: application/json" \
+        -b "$PRO_COOKIE_FILE" \
+        -d '{
+            "validationComment": "Parfait, vidéo de qualité!"
+        }')
+
+    check_response "$VALIDATE_RESPONSE" "Validation UGC VIDEO" || return
+    UGC_VIDEO_PAID=$(echo "$VALIDATE_RESPONSE" | jq -r '.paidBonus // "0"')
+    print_success "UGC VIDEO validé et payé!"
+    print_money "Testeur reçoit: ${UGC_VIDEO_PAID}€ | Commission SuperTry: 5€"
+
+    # 6. Vérifier détail UGC
+    print_step "Vérification détail UGC VIDEO..."
+    UGC_DETAIL=$(curl -s -X GET "$API_URL/ugc/$UGC_VIDEO_ID" \
+        -b "$PRO_COOKIE_FILE")
+    UGC_FINAL_STATUS=$(echo "$UGC_DETAIL" | jq -r '.status')
+    echo -e "   ${CYAN}Statut final:${NC} $UGC_FINAL_STATUS"
+    echo -e "   ${CYAN}Bonus payé:${NC} $(echo "$UGC_DETAIL" | jq -r '.paidBonus // "0"')€"
+    echo -e "   ${CYAN}Rejets:${NC} $(echo "$UGC_DETAIL" | jq -r '.rejectionCount // 0')"
+}
+
+# ============================================================================
+# Phase 5: RATINGS (TESTEUR rate PRO+Product, PRO rate TESTEUR)
+# ============================================================================
+
+test_ratings() {
+    print_header "⭐ PHASE 5: RATINGS (TESTEUR→PRO/Product + PRO→TESTEUR)"
+
+    echo -e "${YELLOW}Flow Rating:${NC}"
+    echo -e "  ${BLUE}1.${NC} TESTEUR laisse un avis (product + seller rating)"
+    echo -e "  ${BLUE}2.${NC} PRO note le TESTEUR"
+    echo -e "  ${BLUE}3.${NC} Vérification moyennes mises à jour"
+    echo ""
+
+    # 1. TESTEUR crée une review (product + seller)
+    print_step "TESTEUR laisse un avis (product 5/5, seller 4/5)..."
+    REVIEW_RESPONSE=$(curl -s -X POST "$API_URL/ratings/review" \
+        -H "Content-Type: application/json" \
+        -b "$TESTEUR_COOKIE_FILE" \
+        -d '{
+            "sessionId": "'"$SESSION_ID"'",
+            "productRating": 5,
+            "sellerRating": 4,
+            "comment": "Excellent produit, le PRO était très réactif et professionnel. Je recommande vivement!",
+            "isPublic": true
+        }')
+
+    if echo "$REVIEW_RESPONSE" | jq -e '.statusCode >= 400' >/dev/null 2>&1; then
+        ERROR_MSG=$(echo "$REVIEW_RESPONSE" | jq -r '.message')
+        print_warning "Review échouée: $ERROR_MSG"
+    else
+        REVIEW_ID=$(echo "$REVIEW_RESPONSE" | jq -r '.id')
+        print_success "Review créée: $REVIEW_ID (product: 5/5, seller: 4/5)"
+    fi
+
+    # 2. PRO note le TESTEUR
+    echo ""
+    print_step "PRO note le TESTEUR (5/5)..."
+    TESTER_RATING_RESPONSE=$(curl -s -X POST "$API_URL/ratings/tester" \
+        -H "Content-Type: application/json" \
+        -b "$PRO_COOKIE_FILE" \
+        -d '{
+            "sessionId": "'"$SESSION_ID"'",
+            "rating": 5,
+            "comment": "Testeur sérieux et ponctuel, UGC de qualité"
+        }')
+
+    if echo "$TESTER_RATING_RESPONSE" | jq -e '.statusCode >= 400' >/dev/null 2>&1; then
+        ERROR_MSG=$(echo "$TESTER_RATING_RESPONSE" | jq -r '.message')
+        print_warning "Rating testeur échoué: $ERROR_MSG"
+    else
+        TESTER_RATING_ID=$(echo "$TESTER_RATING_RESPONSE" | jq -r '.id')
+        print_success "Testeur noté: $TESTER_RATING_ID (5/5)"
+    fi
+
+    # 3. Vérifier les reviews du produit
+    echo ""
+    print_step "Vérification reviews du produit..."
+    PRODUCT_REVIEWS=$(curl -s -X GET "$API_URL/ratings/product/$PRODUCT_ID" \
+        -b "$PRO_COOKIE_FILE")
+    PRODUCT_REVIEW_COUNT=$(echo "$PRODUCT_REVIEWS" | jq -r '.meta.total // 0')
+    print_success "Produit a $PRODUCT_REVIEW_COUNT review(s)"
+
+    # 4. Vérifier les ratings du testeur
+    print_step "Vérification ratings du testeur..."
+    TESTEUR_ID=$(echo "$TESTER_RATING_RESPONSE" | jq -r '.tester.id // empty')
+    if [ -n "$TESTEUR_ID" ]; then
+        TESTER_SUMMARY=$(curl -s -X GET "$API_URL/ratings/profile/$TESTEUR_ID/summary")
+        TESTER_AVG=$(echo "$TESTER_SUMMARY" | jq -r '.averageRating // "N/A"')
+        TESTER_TOTAL=$(echo "$TESTER_SUMMARY" | jq -r '.totalRatings // 0')
+        echo -e "   ${CYAN}Testeur avg:${NC} $TESTER_AVG/5 ($TESTER_TOTAL rating(s))"
+    fi
+
+    # 5. Vérifier review de la session
+    print_step "Vérification review de la session..."
+    SESSION_REVIEW=$(curl -s -X GET "$API_URL/ratings/session/$SESSION_ID/review")
+    if [ "$(echo "$SESSION_REVIEW" | jq -r '.id // empty')" != "" ]; then
+        echo -e "   ${CYAN}Product rating:${NC} $(echo "$SESSION_REVIEW" | jq -r '.productRating')/5"
+        echo -e "   ${CYAN}Seller rating:${NC} $(echo "$SESSION_REVIEW" | jq -r '.sellerRating')/5"
+        echo -e "   ${CYAN}Comment:${NC} $(echo "$SESSION_REVIEW" | jq -r '.comment // "Aucun"')"
+    else
+        print_warning "Pas de review pour cette session"
+    fi
+
+    print_step "Vérification tester rating de la session..."
+    SESSION_TESTER_RATING=$(curl -s -X GET "$API_URL/ratings/session/$SESSION_ID/tester-rating")
+    if [ "$(echo "$SESSION_TESTER_RATING" | jq -r '.id // empty')" != "" ]; then
+        echo -e "   ${CYAN}Tester rating:${NC} $(echo "$SESSION_TESTER_RATING" | jq -r '.rating')/5"
+        echo -e "   ${CYAN}Comment:${NC} $(echo "$SESSION_TESTER_RATING" | jq -r '.comment // "Aucun"')"
+    else
+        print_warning "Pas de tester rating pour cette session"
+    fi
+}
+
+# ============================================================================
+# Phase 6: Vérifications
 # ============================================================================
 
 verify_results() {
-    print_header "✅ PHASE 4: VÉRIFICATIONS"
+    print_header "✅ PHASE 6: VÉRIFICATIONS"
 
     print_step "Attente traitement webhooks (5s)..."
     sleep 5
@@ -899,7 +1114,34 @@ verify_results() {
         echo -e "   ${CYAN}Montant:${NC} $TX_AMOUNT EUR"
     fi
 
-    # 3. Vérifier Stripe Dashboard
+    # 3. Vérifier UGCs
+    echo ""
+    print_step "Vérification UGCs..."
+    if [ -n "$UGC_VIDEO_ID" ]; then
+        UGC_VIDEO_DETAIL=$(curl -s -X GET "$API_URL/ugc/$UGC_VIDEO_ID" -b "$PRO_COOKIE_FILE")
+        UGC_V_STATUS=$(echo "$UGC_VIDEO_DETAIL" | jq -r '.status // "N/A"')
+        UGC_V_PAID=$(echo "$UGC_VIDEO_DETAIL" | jq -r '.paidBonus // "0"')
+        echo -e "   ${CYAN}UGC VIDEO:${NC} $UGC_V_STATUS | Bonus: ${UGC_V_PAID}€"
+    fi
+    # Vérifier les UGCs de la session
+    SESSION_UGCS=$(curl -s -X GET "$API_URL/ugc/session/$SESSION_ID" -b "$PRO_COOKIE_FILE")
+    UGC_COUNT=$(echo "$SESSION_UGCS" | jq 'length' 2>/dev/null)
+    if [ -n "$UGC_COUNT" ] && [ "$UGC_COUNT" != "null" ]; then
+        echo -e "   ${CYAN}Total UGCs session:${NC} $UGC_COUNT"
+        echo "$SESSION_UGCS" | jq -r '.[] | "   → \(.type) : \(.status) (bonus: \(.paidBonus // "N/A"))"' 2>/dev/null
+    fi
+
+    # Vérifier les demandes PRO
+    MY_REQUESTS=$(curl -s -X GET "$API_URL/ugc/my-requests" -b "$PRO_COOKIE_FILE")
+    TOTAL_REQUESTS=$(echo "$MY_REQUESTS" | jq -r '.meta.total // 0')
+    print_success "PRO a $TOTAL_REQUESTS demande(s) UGC"
+
+    # Vérifier les soumissions TESTEUR
+    MY_SUBMISSIONS=$(curl -s -X GET "$API_URL/ugc/my-submissions" -b "$TESTEUR_COOKIE_FILE")
+    TOTAL_SUBMISSIONS=$(echo "$MY_SUBMISSIONS" | jq -r '.meta.total // 0')
+    print_success "TESTEUR a $TOTAL_SUBMISSIONS soumission(s) UGC"
+
+    # 4. Vérifier Stripe Dashboard
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "${MAGENTA}${BOLD}📊 VÉRIFICATIONS STRIPE DASHBOARD${NC}"
@@ -907,19 +1149,28 @@ verify_results() {
     echo ""
     echo -e "${YELLOW}Vérifiez dans votre Stripe Dashboard (https://dashboard.stripe.com/test):${NC}"
     echo ""
-    echo -e "${BOLD}1. Payment (Checkout Session):${NC}"
+    echo -e "${BOLD}1. Payment Campaign (Checkout Session):${NC}"
     echo -e "   ${BLUE}→ Metadata: platform=supertry, transactionType=CAMPAIGN_PAYMENT${NC}"
-    echo -e "   ${BLUE}→ campaignTitle, sellerEmail, breakdown complet (productCost, stripeCoverage...)${NC}"
+    echo -e "   ${BLUE}→ campaignTitle, sellerEmail, breakdown complet${NC}"
     echo -e "   ${BLUE}→ captureMethod=manual${NC}"
     echo ""
     echo -e "${BOLD}2. Transfer (Reward Testeur):${NC}"
     echo -e "   ${BLUE}→ Metadata: transactionType=TEST_REWARD${NC}"
     echo -e "   ${BLUE}→ testerEmail, campaignTitle, commissionRetained=5.00${NC}"
     echo ""
-    echo -e "${BOLD}3. Connect Account (Testeur):${NC}"
+    echo -e "${BOLD}3. Payment UGC VIDEO:${NC}"
+    echo -e "   ${BLUE}→ Metadata: transactionType=UGC_PAYMENT, ugcType=VIDEO${NC}"
+    echo -e "   ${BLUE}→ PaymentIntent manual capture → capturé après validation${NC}"
+    echo -e "   ${BLUE}→ Montant: 25€ (20€ testeur + 5€ commission)${NC}"
+    echo ""
+    echo -e "${BOLD}4. Transfer UGC (Paiement Testeur):${NC}"
+    echo -e "   ${BLUE}→ Metadata: transactionType=UGC_PAYMENT, ugcType=VIDEO${NC}"
+    echo -e "   ${BLUE}→ Montant: 20€ vers compte Connect testeur${NC}"
+    echo ""
+    echo -e "${BOLD}5. Connect Account (Testeur):${NC}"
     echo -e "   ${BLUE}→ Metadata: platform=supertry, userRole=TESTER${NC}"
     echo ""
-    echo -e "${BOLD}4. Identity Session:${NC}"
+    echo -e "${BOLD}6. Identity Session:${NC}"
     echo -e "   ${BLUE}→ Metadata: platform=supertry, verificationType=tester_kyc${NC}"
     echo ""
 }
@@ -966,15 +1217,22 @@ print_summary() {
     echo -e "  ${BLUE}Balance finale:${NC} ${GREEN}${BALANCE:-0} EUR${NC}"
     echo -e "  ${BLUE}Commission SuperTry:${NC} ${GREEN}5 EUR (fixe)${NC}"
     echo ""
-    echo -e "${CYAN}Metadata Stripe (8 points):${NC}"
+    echo -e "${CYAN}UGC:${NC}"
+    echo -e "  ${BLUE}UGC VIDEO:${NC} ${GREEN}20€ testeur + 5€ commission (manual capture)${NC}"
+    echo -e "  ${BLUE}UGC PHOTO:${NC} ${GREEN}10€ testeur + 3€ commission (manual capture)${NC}"
+    echo -e "  ${BLUE}UGC VIDEO ID:${NC} ${UGC_VIDEO_ID:-N/A}"
+    echo ""
+    echo -e "${CYAN}Metadata Stripe (10 points):${NC}"
     echo -e "  ${BLUE}1.${NC} Checkout Session → CAMPAIGN_PAYMENT + breakdown"
-    echo -e "  ${BLUE}2.${NC} PaymentIntent → mêmes metadata"
+    echo -e "  ${BLUE}2.${NC} PaymentIntent Campaign → mêmes metadata"
     echo -e "  ${BLUE}3.${NC} Transfer → TEST_REWARD + reward detail"
     echo -e "  ${BLUE}4.${NC} Refund → UNUSED_SLOTS_REFUND ou PRO_CANCELLATION_REFUND"
     echo -e "  ${BLUE}5.${NC} Connect Account → platform=supertry"
     echo -e "  ${BLUE}6.${NC} Identity Session → verificationType=tester_kyc"
     echo -e "  ${BLUE}7.${NC} Payout → TESTER_WITHDRAWAL"
     echo -e "  ${BLUE}8.${NC} PRO Cancellation Refund → withinGracePeriod, fee details"
+    echo -e "  ${BLUE}9.${NC} PaymentIntent UGC → UGC_PAYMENT, ugcType, manual capture"
+    echo -e "  ${BLUE}10.${NC} Transfer UGC → UGC_PAYMENT testeur, commission retained"
     echo ""
     echo -e "${YELLOW}💡 Vous pouvez vous connecter avec ces comptes:${NC}"
     echo -e "   ${FRONTEND_URL}"
@@ -990,8 +1248,8 @@ main() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════╗"
     echo "║                                                              ║"
-    echo "║      🧪 SCRIPT DE TEST - FLOW COMPLET SUPERTRY v2           ║"
-    echo "║      Commission 5€ fixe + 3.5% Stripe + Manual Capture      ║"
+    echo "║      🧪 SCRIPT DE TEST - FLOW COMPLET SUPERTRY v3           ║"
+    echo "║      Campaign + UGC + Commission 5€ + Manual Capture        ║"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo ""
@@ -1010,11 +1268,13 @@ main() {
     echo ""
 
     # Exécution des phases
-    setup_pro
-    test_free_cancellation
-    setup_testeur
-    run_test_flow
-    verify_results
+    setup_pro                  # Phase 1: PRO + campagne + paiement
+    test_free_cancellation     # Phase 1b: Test annulation gratuite (optionnel)
+    setup_testeur              # Phase 2: TESTEUR + KYC + onboarding
+    run_test_flow              # Phase 3: Flux de test → session COMPLETED
+    test_ugc_video             # Phase 4: UGC VIDEO payant (20€ + 5€ commission)
+    test_ratings               # Phase 5: Ratings (TESTEUR→PRO/Product + PRO→TESTEUR)
+    verify_results             # Phase 6: Vérifications finales
     cleanup
     print_summary
 }

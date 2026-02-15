@@ -100,6 +100,19 @@ export class CreateBusinessRulesDto {
   @Min(1)
   captureDelayMinutes: number;
 
+  // Règles UGC
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  maxUgcRejections: number;
+
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  ugcDefaultDeadlineDays: number;
+
   // KYC testeur : nombre de tests réussis avant obligation KYC Identity
   @IsNotEmpty()
   @Type(() => Number)

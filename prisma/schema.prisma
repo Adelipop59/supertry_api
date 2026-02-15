@@ -56,9 +56,15 @@ enum NotificationType {
   CAMPAIGN_CREATED // Nouvelle campagne
   CAMPAIGN_ENDING_SOON // Campagne se termine bientôt
   SYSTEM_ALERT // Alerte système
-  UGC_REQUESTED // UGC demandé par PRO
-  UGC_SUBMITTED // UGC soumis par testeur
-  TIP_RECEIVED // Tip reçu
+  UGC_REQUESTED        // UGC demandé par PRO
+  UGC_SUBMITTED        // UGC soumis par testeur
+  UGC_VALIDATED        // UGC validé par PRO
+  UGC_REJECTED         // UGC rejeté par PRO
+  UGC_DECLINED         // UGC décliné par testeur
+  UGC_CANCELLED        // UGC annulé par PRO
+  UGC_DISPUTED         // UGC escaladé en litige
+  UGC_DISPUTE_RESOLVED // Litige UGC résolu par admin
+  TIP_RECEIVED         // Tip reçu
 }
 
 // Enum pour canaux de notification
@@ -104,11 +110,13 @@ enum UGCType {
 
 // Enum pour statut UGC
 enum UGCStatus {
-  REQUESTED // Demandé par le PRO
-  SUBMITTED // Soumis par le testeur
-  VALIDATED // Validé par le PRO
-  REJECTED // Rejeté par le PRO (peut être resoumis)
-  DECLINED // Refusé par le testeur
+  REQUESTED  // Demandé par le PRO
+  SUBMITTED  // Soumis par le testeur
+  VALIDATED  // Validé par le PRO
+  REJECTED   // Rejeté par le PRO (peut être resoumis)
+  DECLINED   // Refusé par le testeur
+  CANCELLED  // Annulé par le PRO avant soumission
+  DISPUTED   // Escaladé en litige (après max rejets ou manuellement)
 }
 
 // Enum pour types de transaction
@@ -233,6 +241,8 @@ model Profile {
   ugcsSubmitted           UGC[]                   @relation("UGCSubmitter") // UGC soumis (USER)
   tipsGiven               Tip[]                   @relation("TipGiver") // Tips donnés (PRO)
   tipsReceived            Tip[]                   @relation("TipReceiver") // Tips reçus (USER)
+  testerRatingsGiven      TesterRating[]          @relation("TesterRatingGiver") // Notes données aux testeurs (PRO)
+  testerRatingsReceived   TesterRating[]          @relation("TesterRatingReceiver") // Notes reçues (USER)
 
   @@index([email])
   @@index([role])
@@ -677,8 +687,9 @@ model TestSession {
   // Relations
   stepProgress SessionStepProgress[]
   messages     Message[]
-  review       Review?
-  ugcs         UGC[]
+  review        Review?
+  testerRating  TesterRating?
+  ugcs          UGC[]
   tips         Tip[]
   transactions Transaction[]
 
@@ -740,6 +751,24 @@ model UGC {
   declineReason String?   @map("decline_reason") @db.Text
 
   submittedAt DateTime? @map("submitted_at")
+
+  // Compteur de rejets (pour auto-escalade en litige)
+  rejectionCount Int @default(0) @map("rejection_count")
+
+  // Annulation
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelledBy        String?   @map("cancelled_by")
+  cancellationReason String?   @map("cancellation_reason") @db.Text
+
+  // Litige
+  disputedAt        DateTime? @map("disputed_at")
+  disputeReason     String?   @map("dispute_reason") @db.Text
+  disputeResolvedAt DateTime? @map("dispute_resolved_at")
+  disputeResolution String?   @map("dispute_resolution") @db.Text
+  disputeResolvedBy String?   @map("dispute_resolved_by")
+
+  // Paiement Stripe (manual capture pour VIDEO/PHOTO)
+  stripePaymentIntentId String? @unique @map("stripe_payment_intent_id")
 
   // Relations
   sessionId String?      @map("session_id")
@@ -909,6 +938,31 @@ model Review {
   @@map("reviews")
 }
 
+// Table TesterRating - Note donnée par le PRO au TESTEUR après une session
+model TesterRating {
+  id String @id @default(uuid())
+
+  sessionId String      @unique @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  raterId String  @map("rater_id") // PRO qui note
+  rater   Profile @relation("TesterRatingGiver", fields: [raterId], references: [id], onDelete: Cascade)
+
+  testerId String  @map("tester_id") // TESTEUR noté
+  tester   Profile @relation("TesterRatingReceiver", fields: [testerId], references: [id], onDelete: Cascade)
+
+  rating  Int     // 1-5 stars
+  comment String? @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([raterId])
+  @@index([testerId])
+  @@map("tester_ratings")
+}
+
 // Table Wallet - Portefeuille financier (PRO et USER)
 model Wallet {
   id String @id @default(uuid())
@@ -1072,6 +1126,10 @@ model BusinessRules {
 
   // Compensation testeur sur annulation PRO
   testerCompensationOnProCancellation  Decimal @default(5.00) @map("tester_compensation_on_pro_cancellation") @db.Decimal(10, 2)
+
+  // Règles UGC
+  maxUgcRejections       Int @default(3) @map("max_ugc_rejections")          // Nombre max de rejets avant auto-litige
+  ugcDefaultDeadlineDays Int @default(7) @map("ugc_default_deadline_days")   // Deadline par défaut en jours
 
   // KYC testeur : nombre de tests réussis avant obligation KYC Identity
   kycRequiredAfterTests Int @default(3) @map("kyc_required_after_tests")

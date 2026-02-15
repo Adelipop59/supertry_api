@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { UGCType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateBusinessRulesDto } from './dto/create-business-rules.dto';
 import { UpdateBusinessRulesDto } from './dto/update-business-rules.dto';
@@ -26,6 +27,8 @@ export class BusinessRulesService {
       commissionFixedFee: Number(rules.commissionFixedFee),
       stripeFeePercent: Number(rules.stripeFeePercent),
       captureDelayMinutes: rules.captureDelayMinutes,
+      maxUgcRejections: rules.maxUgcRejections,
+      ugcDefaultDeadlineDays: rules.ugcDefaultDeadlineDays,
       kycRequiredAfterTests: rules.kycRequiredAfterTests,
     };
   }
@@ -203,6 +206,35 @@ export class BusinessRulesService {
       cancellationFee,
       compensationPerTester,
     };
+  }
+
+  /**
+   * Retourne le prix et la commission UGC selon le type
+   * VIDEO/PHOTO = payant, TEXT_REVIEW/EXTERNAL_REVIEW = gratuit
+   */
+  async getUgcPricing(type: UGCType): Promise<{ price: number; commission: number; isPaid: boolean }> {
+    const rules = await this.findLatest();
+    switch (type) {
+      case 'VIDEO':
+        return { price: rules.ugcVideoPrice, commission: rules.ugcVideoCommission, isPaid: true };
+      case 'PHOTO':
+        return { price: rules.ugcPhotoPrice, commission: rules.ugcPhotoCommission, isPaid: true };
+      case 'TEXT_REVIEW':
+      case 'EXTERNAL_REVIEW':
+        return { price: 0, commission: 0, isPaid: false };
+      default:
+        throw new BadRequestException(`Unknown UGC type: ${type}`);
+    }
+  }
+
+  async getMaxUgcRejections(): Promise<number> {
+    const rules = await this.findLatest();
+    return rules.maxUgcRejections;
+  }
+
+  async getUgcDefaultDeadlineDays(): Promise<number> {
+    const rules = await this.findLatest();
+    return rules.ugcDefaultDeadlineDays;
   }
 
   /**

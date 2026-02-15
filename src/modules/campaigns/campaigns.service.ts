@@ -24,6 +24,46 @@ import { CampaignMarketplaceMode, CampaignStatus, AuditCategory, NotificationTyp
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
 
+const CAMPAIGN_FULL_INCLUDE = {
+  seller: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      companyName: true,
+      avatar: true,
+    },
+  },
+  category: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      icon: true,
+    },
+  },
+  offers: true,
+  procedures: {
+    include: {
+      steps: {
+        orderBy: { order: 'asc' as const },
+      },
+    },
+    orderBy: { order: 'asc' as const },
+  },
+  distributions: true,
+  criteria: true,
+} as const;
+
+const CAMPAIGN_LIST_INCLUDE = {
+  ...CAMPAIGN_FULL_INCLUDE,
+  _count: {
+    select: {
+      testSessions: true,
+    },
+  },
+} as const;
+
 @Injectable()
 export class CampaignsService {
   private readonly logger = new Logger(CampaignsService.name);
@@ -151,36 +191,7 @@ export class CampaignsService {
             })),
           },
         },
-        include: {
-          seller: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              companyName: true,
-              avatar: true,
-            },
-          },
-          category: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              icon: true,
-            },
-          },
-          offers: true,
-          procedures: {
-            include: {
-              steps: {
-                orderBy: { order: 'asc' },
-              },
-            },
-            orderBy: { order: 'asc' },
-          },
-          distributions: true,
-          criteria: true,
-        },
+        include: CAMPAIGN_FULL_INCLUDE,
       });
 
       return createdCampaign;
@@ -241,41 +252,7 @@ export class CampaignsService {
         where,
         skip,
         take: limit,
-        include: {
-          seller: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              companyName: true,
-              avatar: true,
-            },
-          },
-          category: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              icon: true,
-            },
-          },
-          offers: true,
-          procedures: {
-            include: {
-              steps: {
-                orderBy: { order: 'asc' },
-              },
-            },
-            orderBy: { order: 'asc' },
-          },
-          distributions: true,
-          criteria: true,
-          _count: {
-            select: {
-              testSessions: true,
-            },
-          },
-        },
+        include: CAMPAIGN_LIST_INCLUDE,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.campaign.count({ where }),
@@ -316,41 +293,7 @@ export class CampaignsService {
         where,
         skip,
         take: limit,
-        include: {
-          seller: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              companyName: true,
-              avatar: true,
-            },
-          },
-          category: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-              icon: true,
-            },
-          },
-          offers: true,
-          procedures: {
-            include: {
-              steps: {
-                orderBy: { order: 'asc' },
-              },
-            },
-            orderBy: { order: 'asc' },
-          },
-          distributions: true,
-          criteria: true,
-          _count: {
-            select: {
-              testSessions: true,
-            },
-          },
-        },
+        include: CAMPAIGN_LIST_INCLUDE,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.campaign.count({ where }),
@@ -367,41 +310,7 @@ export class CampaignsService {
   async findOne(id: string): Promise<CampaignResponseDto> {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            icon: true,
-          },
-        },
-        offers: true,
-        procedures: {
-          include: {
-            steps: {
-              orderBy: { order: 'asc' },
-            },
-          },
-          orderBy: { order: 'asc' },
-        },
-        distributions: true,
-        criteria: true,
-        _count: {
-          select: {
-            testSessions: true,
-          },
-        },
-      },
+      include: CAMPAIGN_LIST_INCLUDE,
     });
 
     if (!campaign) {
@@ -596,36 +505,7 @@ export class CampaignsService {
     const updatedCampaign = await this.prisma.campaign.update({
       where: { id },
       data: updateData,
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            icon: true,
-          },
-        },
-        offers: true,
-        procedures: {
-          include: {
-            steps: {
-              orderBy: { order: 'asc' },
-            },
-          },
-          orderBy: { order: 'asc' },
-        },
-        distributions: true,
-        criteria: true,
-      },
+      include: CAMPAIGN_FULL_INCLUDE,
     });
 
     return updatedCampaign as any;
@@ -940,36 +820,7 @@ export class CampaignsService {
     // Return updated campaign
     const updatedCampaign = await this.prisma.campaign.findUnique({
       where: { id },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            icon: true,
-          },
-        },
-        offers: true,
-        procedures: {
-          include: {
-            steps: {
-              orderBy: { order: 'asc' },
-            },
-          },
-          orderBy: { order: 'asc' },
-        },
-        distributions: true,
-        criteria: true,
-      },
+      include: CAMPAIGN_FULL_INCLUDE,
     });
 
     return updatedCampaign as any;

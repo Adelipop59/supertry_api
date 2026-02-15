@@ -24,6 +24,10 @@ export class BusinessRulesResponseDto {
   stripeFeePercent: number;
   captureDelayMinutes: number;
 
+  // Règles UGC
+  maxUgcRejections: number;
+  ugcDefaultDeadlineDays: number;
+
   // KYC testeur
   kycRequiredAfterTests: number;
 

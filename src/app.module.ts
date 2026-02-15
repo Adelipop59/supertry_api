@@ -25,6 +25,9 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { WithdrawalsModule } from './modules/withdrawals/withdrawals.module';
 import { CancellationsModule } from './modules/cancellations/cancellations.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
+import { UgcModule } from './modules/ugc/ugc.module';
+import { RatingsModule } from './modules/ratings/ratings.module';
+import { HealthModule } from './modules/health/health.module';
 import { LuciaAuthGuard } from './common/guards/lucia-auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -63,6 +66,9 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     WithdrawalsModule,
     CancellationsModule,
     DisputesModule,
+    UgcModule,
+    RatingsModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [

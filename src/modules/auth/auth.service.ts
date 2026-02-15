@@ -40,51 +40,8 @@ export class AuthService {
   async signup(signupDto: SignupDto): Promise<AuthResponseDto & { sessionId: string }> {
     const { email, password, role, country, countries, ...profileData } = signupDto;
 
-    // Security: Prevent ADMIN creation
-    if (role === 'ADMIN') {
-      throw new BadRequestException('Cannot create ADMIN users via signup.');
-    }
-
-    // Validate PRO requirements
-    if (role === 'PRO') {
-      if (!profileData.firstName || !profileData.lastName) {
-        throw new BadRequestException('Prénom et nom obligatoires pour PRO');
-      }
-
-      if (!countries || countries.length === 0) {
-        throw new BadRequestException('Au moins 1 pays obligatoire pour PRO');
-      }
-
-      // Validate countries exist
-      const validCountries = await this.prismaService.country.findMany({
-        where: { code: { in: countries } },
-      });
-
-      if (validCountries.length !== countries.length) {
-        throw new BadRequestException('Code(s) pays invalide(s)');
-      }
-
-      // Check availability
-      const availableCountries = await this.checkCountriesAvailability(countries);
-      if (availableCountries.length === 0) {
-        throw new BadRequestException('Aucun pays sélectionné disponible');
-      }
-    }
-
-    // Validate USER requirements
-    if (!role || role === 'USER') {
-      if (!country) {
-        throw new BadRequestException('Code pays obligatoire pour USER');
-      }
-
-      const countryData = await this.prismaService.country.findUnique({
-        where: { code: country },
-      });
-
-      if (!countryData) {
-        throw new BadRequestException('Code pays invalide');
-      }
-    }
+    // Validate role-specific requirements
+    await this.validateRoleRequirements(role, { ...profileData, country, countries });
 
     // Check if email exists
     const existingProfile = await this.prismaService.profile.findUnique({
@@ -170,20 +127,7 @@ export class AuthService {
       token_type: 'bearer',
       expires_in: 3600 * 24 * 30, // 30 days
       sessionId: session.id,
-      profile: {
-        id: profile.id,
-        email: profile.email,
-        role: profile.role as any,
-        firstName: profile.firstName || undefined,
-        lastName: profile.lastName || undefined,
-        phone: profile.phone || undefined,
-        companyName: profile.companyName || undefined,
-        siret: profile.siret || undefined,
-        isActive: profile.isActive,
-        isVerified: profile.isVerified,
-        createdAt: profile.createdAt,
-        updatedAt: profile.updatedAt,
-      },
+      profile: this.mapProfileToResponse(profile),
     };
   }
 
@@ -228,20 +172,7 @@ export class AuthService {
       token_type: 'bearer',
       expires_in: 3600 * 24 * 30,
       sessionId: session.id,
-      profile: {
-        id: profile.id,
-        email: profile.email,
-        role: profile.role as any,
-        firstName: profile.firstName || undefined,
-        lastName: profile.lastName || undefined,
-        phone: profile.phone || undefined,
-        companyName: profile.companyName || undefined,
-        siret: profile.siret || undefined,
-        isActive: profile.isActive,
-        isVerified: profile.isVerified,
-        createdAt: profile.createdAt,
-        updatedAt: profile.updatedAt,
-      },
+      profile: this.mapProfileToResponse(profile),
     };
   }
 
@@ -475,20 +406,7 @@ export class AuthService {
       token_type: 'bearer',
       expires_in: 3600 * 24 * 30,
       sessionId: session.id,
-      profile: {
-        id: profile.id,
-        email: profile.email,
-        role: profile.role as any,
-        firstName: profile.firstName || undefined,
-        lastName: profile.lastName || undefined,
-        phone: profile.phone || undefined,
-        companyName: profile.companyName || undefined,
-        siret: profile.siret || undefined,
-        isActive: profile.isActive,
-        isVerified: profile.isVerified,
-        createdAt: profile.createdAt,
-        updatedAt: profile.updatedAt,
-      },
+      profile: this.mapProfileToResponse(profile),
     };
   }
 
@@ -513,48 +431,8 @@ export class AuthService {
       throw new BadRequestException('Profil déjà complété');
     }
 
-    if (role === 'ADMIN') {
-      throw new BadRequestException('Cannot set ADMIN role');
-    }
-
-    // Validate PRO
-    if (role === 'PRO') {
-      if (!profileData.firstName || !profileData.lastName) {
-        throw new BadRequestException('Prénom et nom obligatoires pour PRO');
-      }
-
-      if (!countries || countries.length === 0) {
-        throw new BadRequestException('Au moins 1 pays obligatoire pour PRO');
-      }
-
-      const validCountries = await this.prismaService.country.findMany({
-        where: { code: { in: countries } },
-      });
-
-      if (validCountries.length !== countries.length) {
-        throw new BadRequestException('Code(s) pays invalide(s)');
-      }
-
-      const availableCountries = await this.checkCountriesAvailability(countries);
-      if (availableCountries.length === 0) {
-        throw new BadRequestException('Aucun pays disponible');
-      }
-    }
-
-    // Validate USER
-    if (role === 'USER') {
-      if (!country) {
-        throw new BadRequestException('Code pays obligatoire pour USER');
-      }
-
-      const countryData = await this.prismaService.country.findUnique({
-        where: { code: country },
-      });
-
-      if (!countryData) {
-        throw new BadRequestException('Code pays invalide');
-      }
-    }
+    // Validate role-specific requirements
+    await this.validateRoleRequirements(role, { ...profileData, country, countries });
 
     // Update profile
     const updatedProfile = await this.prismaService.profile.update({
@@ -632,37 +510,79 @@ export class AuthService {
   }
 
   /**
-   * Helper: Check countries availability
+   * Helper: Validate role-specific requirements (PRO/USER)
+   */
+  private async validateRoleRequirements(
+    role: string | undefined,
+    data: { firstName?: string; lastName?: string; country?: string; countries?: string[] },
+  ): Promise<void> {
+    if (role === 'ADMIN') {
+      throw new BadRequestException('Cannot create ADMIN users via signup.');
+    }
+
+    if (role === 'PRO') {
+      if (!data.firstName || !data.lastName) {
+        throw new BadRequestException('Prénom et nom obligatoires pour PRO');
+      }
+
+      if (!data.countries || data.countries.length === 0) {
+        throw new BadRequestException('Au moins 1 pays obligatoire pour PRO');
+      }
+
+      const validCountries = await this.prismaService.country.findMany({
+        where: { code: { in: data.countries } },
+      });
+
+      if (validCountries.length !== data.countries.length) {
+        throw new BadRequestException('Code(s) pays invalide(s)');
+      }
+
+      const availableCountries = await this.checkCountriesAvailability(data.countries);
+      if (availableCountries.length === 0) {
+        throw new BadRequestException('Aucun pays sélectionné disponible');
+      }
+    }
+
+    if (!role || role === 'USER') {
+      if (!data.country) {
+        throw new BadRequestException('Code pays obligatoire pour USER');
+      }
+
+      const countryData = await this.prismaService.country.findUnique({
+        where: { code: data.country },
+      });
+
+      if (!countryData) {
+        throw new BadRequestException('Code pays invalide');
+      }
+    }
+  }
+
+  /**
+   * Helper: Map profile to auth response format
+   */
+  private mapProfileToResponse(profile: any) {
+    return {
+      id: profile.id,
+      email: profile.email,
+      role: profile.role as any,
+      firstName: profile.firstName || undefined,
+      lastName: profile.lastName || undefined,
+      phone: profile.phone || undefined,
+      companyName: profile.companyName || undefined,
+      siret: profile.siret || undefined,
+      isActive: profile.isActive,
+      isVerified: profile.isVerified,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
+    };
+  }
+
+  /**
+   * Helper: Check countries availability (delegates to UsersService)
    */
   private async checkCountriesAvailability(countries: string[]): Promise<string[]> {
-    const priorityCountriesEnv = process.env.PRIORITY_COUNTRIES || 'FR';
-    const priorityCountries = priorityCountriesEnv.split(',').map((c) => c.trim());
-    const minTestersPerCountry = parseInt(
-      process.env.MIN_TESTERS_PER_COUNTRY || '10',
-      10,
-    );
-
-    const testerCounts = await this.prismaService.profile.groupBy({
-      by: ['country'],
-      where: {
-        role: 'USER',
-        country: { in: countries },
-      },
-      _count: { country: true },
-    });
-
-    const testerCountMap = new Map<string, number>();
-    testerCounts.forEach((item) => {
-      if (item.country) {
-        testerCountMap.set(item.country, item._count.country);
-      }
-    });
-
-    return countries.filter((code) => {
-      const isPriority = priorityCountries.includes(code);
-      const testerCount = testerCountMap.get(code) || 0;
-      return isPriority || testerCount >= minTestersPerCountry;
-    });
+    return this.usersService.checkCountriesAvailability(countries);
   }
 
   /**

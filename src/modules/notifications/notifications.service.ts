@@ -6,8 +6,8 @@ import { NodemailerProvider } from './providers/email/nodemailer.provider';
 import { TwilioProvider } from './providers/sms/twilio.provider';
 import { SendEmailDto, SendSmsDto } from './dto';
 import { NotificationResult } from './interfaces/notification-result.interface';
-import { NotificationStatus, NotificationType } from './enums';
-import { NotificationType as PrismaNotificationType } from '@prisma/client';
+import { NotificationStatus, NotificationChannel } from './enums';
+import { NotificationType } from '@prisma/client';
 import { NOTIFICATION_QUEUES } from './constants/notification.constants';
 
 @Injectable()
@@ -29,7 +29,7 @@ export class NotificationsService {
     this.logger.log(`Sending email to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationType.EMAIL,
+      type: NotificationChannel.EMAIL,
       recipient: dto.to,
       template: dto.template,
       subject: dto.subject,
@@ -57,7 +57,7 @@ export class NotificationsService {
     this.logger.log(`Queueing email to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: dto.metadata?.type || PrismaNotificationType.SYSTEM_ALERT,
+      type: dto.metadata?.type || NotificationType.SYSTEM_ALERT,
       recipient: dto.to,
       template: dto.template,
       subject: dto.subject,
@@ -84,7 +84,7 @@ export class NotificationsService {
     this.logger.log(`Sending SMS to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationType.SMS,
+      type: NotificationChannel.SMS,
       recipient: dto.to,
       template: dto.template,
       variables: dto.variables,
@@ -111,7 +111,7 @@ export class NotificationsService {
     this.logger.log(`Queueing SMS to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationType.SMS,
+      type: NotificationChannel.SMS,
       recipient: dto.to,
       template: dto.template,
       variables: dto.variables,
@@ -140,10 +140,10 @@ export class NotificationsService {
 
     for (const notification of notifications) {
       try {
-        if (notification.type === NotificationType.EMAIL) {
+        if (notification.type === NotificationChannel.EMAIL) {
           const result = await this.sendEmail(notification as unknown as SendEmailDto);
           results.push(result);
-        } else if (notification.type === NotificationType.SMS) {
+        } else if (notification.type === NotificationChannel.SMS) {
           const result = await this.sendSMS(notification as unknown as SendSmsDto);
           results.push(result);
         }
@@ -152,7 +152,7 @@ export class NotificationsService {
         results.push({
           success: false,
           provider: 'unknown',
-          type: notification.type as NotificationType,
+          type: notification.type as NotificationChannel,
           error: error.message,
           sentAt: new Date(),
         });
@@ -205,7 +205,7 @@ export class NotificationsService {
       data: {
         userId,
         type: data.type,
-        channel: data.channel || (data.type === NotificationType.EMAIL ? 'EMAIL' : 'SMS'),
+        channel: data.channel || (data.type === NotificationChannel.EMAIL ? 'EMAIL' : 'SMS'),
         title: data.subject || data.title || '',
         message: data.template || data.message || '',
         data: data.variables || data.metadata || {},

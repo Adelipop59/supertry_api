@@ -16,6 +16,25 @@ import {
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
 
+const PRODUCT_INCLUDE = {
+  seller: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      companyName: true,
+      avatar: true,
+    },
+  },
+  category: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  },
+} as const;
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -55,24 +74,7 @@ export class ProductsService {
         sellerId,
         images,
       },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     return this.toResponseDto(product);
@@ -199,24 +201,7 @@ export class ProductsService {
   async findOne(id: string): Promise<ProductResponseDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     if (!product) {
@@ -241,24 +226,7 @@ export class ProductsService {
     const updatedProduct = await this.prisma.product.update({
       where: { id },
       data: updateProductDto,
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     return this.toResponseDto(updatedProduct);
@@ -298,24 +266,7 @@ export class ProductsService {
           push: addImagesDto.images,
         },
       },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     return this.toResponseDto(updatedProduct);
@@ -342,24 +293,7 @@ export class ProductsService {
       data: {
         images: newImages,
       },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     return this.toResponseDto(updatedProduct);
@@ -407,24 +341,7 @@ export class ProductsService {
       data: {
         images: updatedImages,
       },
-      include: {
-        seller: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            companyName: true,
-            avatar: true,
-          },
-        },
-        category: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-          },
-        },
-      },
+      include: PRODUCT_INCLUDE,
     });
 
     return this.toResponseDto(updatedProduct);

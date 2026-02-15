@@ -8,7 +8,7 @@ import * as path from 'path';
 import { INotificationProvider } from '../../interfaces/notification-provider.interface';
 import { NotificationOptions } from '../../interfaces/notification-options.interface';
 import { NotificationResult } from '../../interfaces/notification-result.interface';
-import { NotificationType, NotificationTemplate } from '../../enums';
+import { NotificationChannel, NotificationTemplate } from '../../enums';
 import { NOTIFICATION_PROVIDERS } from '../../constants/notification.constants';
 
 @Injectable()
@@ -93,7 +93,7 @@ export class NodemailerProvider implements INotificationProvider {
         success: true,
         messageId: info.messageId,
         provider: this.getProviderName(),
-        type: NotificationType.EMAIL,
+        type: NotificationChannel.EMAIL,
         sentAt: new Date(),
       };
     } catch (error) {
@@ -106,7 +106,7 @@ export class NodemailerProvider implements INotificationProvider {
       return {
         success: false,
         provider: this.getProviderName(),
-        type: NotificationType.EMAIL,
+        type: NotificationChannel.EMAIL,
         error: error.message,
         sentAt: new Date(),
       };

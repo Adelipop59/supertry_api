@@ -26,6 +26,79 @@ import {
 } from '../../common/dto/pagination.dto';
 import { SessionStatus, CampaignMarketplaceMode, AuditCategory } from '@prisma/client';
 
+const SESSION_INCLUDE = {
+  campaign: {
+    select: {
+      id: true,
+      title: true,
+      marketplaceMode: true,
+      seller: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+  },
+  tester: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      avatar: true,
+    },
+  },
+  stepProgress: {
+    include: {
+      step: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          order: true,
+        },
+      },
+    },
+  },
+} as const;
+
+const SESSION_BASIC_INCLUDE = {
+  campaign: {
+    select: {
+      id: true,
+      title: true,
+      seller: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+  },
+  tester: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      avatar: true,
+    },
+  },
+  stepProgress: {
+    include: {
+      step: {
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          order: true,
+        },
+      },
+    },
+  },
+} as const;
+
 @Injectable()
 export class TestSessionsService {
   private readonly logger = new Logger(TestSessionsService.name);
@@ -155,41 +228,7 @@ export class TestSessionsService {
           scheduledPurchaseDate,
           acceptedAt: campaign.autoAcceptApplications ? new Date() : null,
         },
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              seller: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          tester: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true,
-            },
-          },
-          stepProgress: {
-            include: {
-              step: {
-                select: {
-                  id: true,
-                  title: true,
-                  type: true,
-                  order: true,
-                },
-              },
-            },
-          },
-        },
+        include: SESSION_BASIC_INCLUDE,
       });
 
       return createdSession;
@@ -274,42 +313,7 @@ export class TestSessionsService {
         status: SessionStatus.ACCEPTED,
         acceptedAt: new Date(),
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -351,41 +355,7 @@ export class TestSessionsService {
           rejectedAt: new Date(),
           rejectionReason: dto.rejectionReason,
         },
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              seller: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          tester: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true,
-            },
-          },
-          stepProgress: {
-            include: {
-              step: {
-                select: {
-                  id: true,
-                  title: true,
-                  type: true,
-                  order: true,
-                },
-              },
-            },
-          },
-        },
+        include: SESSION_BASIC_INCLUDE,
       });
     });
 
@@ -419,9 +389,7 @@ export class TestSessionsService {
     }
 
     // Get business rules
-    const businessRules = await this.prisma.businessRules.findFirst({
-      orderBy: { createdAt: 'desc' },
-    });
+    const businessRules = await this.businessRulesService.findLatest();
 
     const gracePeriodMinutes =
       businessRules?.campaignActivationGracePeriodMinutes || 60;
@@ -484,41 +452,7 @@ export class TestSessionsService {
           cancelledAt: now,
           cancellationReason: dto.cancellationReason,
         },
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              seller: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          tester: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true,
-            },
-          },
-          stepProgress: {
-            include: {
-              step: {
-                select: {
-                  id: true,
-                  title: true,
-                  type: true,
-                  order: true,
-                },
-              },
-            },
-          },
-        },
+        include: SESSION_BASIC_INCLUDE,
       });
     });
 
@@ -595,41 +529,7 @@ export class TestSessionsService {
           validatedProductPrice: dto.productPrice,
           priceValidatedAt: new Date(),
         },
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              seller: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          tester: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true,
-            },
-          },
-          stepProgress: {
-            include: {
-              step: {
-                select: {
-                  id: true,
-                  title: true,
-                  type: true,
-                  order: true,
-                },
-              },
-            },
-          },
-        },
+        include: SESSION_BASIC_INCLUDE,
       });
 
       return updatedSession as any;
@@ -717,42 +617,7 @@ export class TestSessionsService {
         purchaseProofUrl: dto.purchaseProofUrl,
         purchasedAt: new Date(),
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -803,42 +668,7 @@ export class TestSessionsService {
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
       data: updateData,
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -872,42 +702,7 @@ export class TestSessionsService {
         purchaseRejectionReason: dto.purchaseRejectionReason,
         status: SessionStatus.ACCEPTED, // Go back to ACCEPTED so tester can resubmit
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -1013,42 +808,7 @@ export class TestSessionsService {
       data: {
         status: newStatus,
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -1080,42 +840,7 @@ export class TestSessionsService {
         status: SessionStatus.SUBMITTED,
         submittedAt: new Date(),
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     return updatedSession as any;
@@ -1166,42 +891,7 @@ export class TestSessionsService {
         completedAt: new Date(),
         rewardAmount,
       },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     // Incrémenter le compteur de tests réussis du testeur
@@ -1263,41 +953,7 @@ export class TestSessionsService {
         where,
         skip,
         take: limit,
-        include: {
-          campaign: {
-            select: {
-              id: true,
-              title: true,
-              seller: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                },
-              },
-            },
-          },
-          tester: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              avatar: true,
-            },
-          },
-          stepProgress: {
-            include: {
-              step: {
-                select: {
-                  id: true,
-                  title: true,
-                  type: true,
-                  order: true,
-                },
-              },
-            },
-          },
-        },
+        include: SESSION_BASIC_INCLUDE,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.testSession.count({ where }),
@@ -1309,42 +965,7 @@ export class TestSessionsService {
   async findOne(id: string): Promise<TestSessionResponseDto> {
     const session = await this.prisma.testSession.findUnique({
       where: { id },
-      include: {
-        campaign: {
-          select: {
-            id: true,
-            title: true,
-            marketplaceMode: true,
-            seller: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-              },
-            },
-          },
-        },
-        tester: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatar: true,
-          },
-        },
-        stepProgress: {
-          include: {
-            step: {
-              select: {
-                id: true,
-                title: true,
-                type: true,
-                order: true,
-              },
-            },
-          },
-        },
-      },
+      include: SESSION_INCLUDE,
     });
 
     if (!session) {

@@ -33,6 +33,8 @@ async function main() {
       testerCancellationCommissionPercent: 50.0,
       testerCompensationOnProCancellation: 5.0,
       kycRequiredAfterTests: 3,
+      maxUgcRejections: 3,
+      ugcDefaultDeadlineDays: 7,
     },
   });
   console.log('✅ Business rules créées');

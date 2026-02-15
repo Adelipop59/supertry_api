@@ -1,10 +1,10 @@
-import { NotificationType } from '../enums';
+import { NotificationChannel } from '../enums';
 
 export interface NotificationResult {
   success: boolean;
   messageId?: string;
   provider: string;
-  type: NotificationType;
+  type: NotificationChannel;
   error?: string;
   sentAt: Date;
 }

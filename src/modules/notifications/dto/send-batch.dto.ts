@@ -1,10 +1,10 @@
 import { IsArray, IsEnum, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import { NotificationType } from '../enums';
+import { NotificationChannel } from '../enums';
 
 class BatchNotificationItem {
-  @IsEnum(NotificationType)
-  type: NotificationType;
+  @IsEnum(NotificationChannel)
+  type: NotificationChannel;
 
   to: string | string[];
   subject?: string;

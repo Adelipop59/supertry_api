@@ -157,7 +157,7 @@ export class StripeController {
   ): Promise<KycStatusResponseDto | KycRequiredResponseDto> {
     const profile = await this.prisma.profile.findUnique({
       where: { id: userId },
-      select: { stripeConnectAccountId: true },
+      select: { stripeConnectAccountId: true, stripeOnboardingCompleted: true },
     });
 
     if (!profile?.stripeConnectAccountId) {
@@ -168,7 +168,19 @@ export class StripeController {
       };
     }
 
-    return this.stripeService.getKycStatus(profile.stripeConnectAccountId);
+    const kycStatus = await this.stripeService.getKycStatus(profile.stripeConnectAccountId);
+
+    // Sync DB si Stripe confirme onboarding complété mais DB pas encore à jour
+    // (cas où le webhook account.updated n'est pas encore arrivé)
+    if (!profile.stripeOnboardingCompleted && kycStatus.chargesEnabled && kycStatus.detailsSubmitted) {
+      await this.prisma.profile.update({
+        where: { id: userId },
+        data: { stripeOnboardingCompleted: true },
+      });
+      this.logger.log(`Synced stripeOnboardingCompleted=true for user ${userId} (from kyc-status check)`);
+    }
+
+    return kycStatus;
   }
 
   @Get('connect/balance')
@@ -258,7 +270,7 @@ export class StripeController {
       throw new BadRequestException('Missing stripe-signature header');
     }
 
-    const event = this.stripeService.constructEvent(req.body, signature);
+    const event = this.stripeService.constructEvent((req as any).rawBody, signature);
 
     this.logger.log(`Webhook received: ${event.type} - ${event.id}`);
 

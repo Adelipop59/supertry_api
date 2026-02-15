@@ -57,6 +57,37 @@ export class UsersService {
     });
   }
 
+  async checkCountriesAvailability(countries: string[]): Promise<string[]> {
+    const priorityCountriesEnv = process.env.PRIORITY_COUNTRIES || 'FR';
+    const priorityCountries = priorityCountriesEnv.split(',').map((c) => c.trim());
+    const minTestersPerCountry = parseInt(
+      process.env.MIN_TESTERS_PER_COUNTRY || '10',
+      10,
+    );
+
+    const testerCounts = await this.prismaService.profile.groupBy({
+      by: ['country'],
+      where: {
+        role: 'USER',
+        country: { in: countries },
+      },
+      _count: { country: true },
+    });
+
+    const testerCountMap = new Map<string, number>();
+    testerCounts.forEach((item) => {
+      if (item.country) {
+        testerCountMap.set(item.country, item._count.country);
+      }
+    });
+
+    return countries.filter((code) => {
+      const isPriority = priorityCountries.includes(code);
+      const testerCount = testerCountMap.get(code) || 0;
+      return isPriority || testerCount >= minTestersPerCountry;
+    });
+  }
+
   async getAvailableCountries(): Promise<any[]> {
     const priorityCountriesEnv = process.env.PRIORITY_COUNTRIES || 'FR';
     const priorityCountries = priorityCountriesEnv.split(',').map((c) => c.trim());
