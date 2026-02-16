@@ -124,6 +124,10 @@ export class PaymentsService {
       sellerId: userId,
       totalSlots: campaign.totalSlots.toString(),
       perTester: escrow.perTester.toString(),
+    }, {
+      description: `SuperTry campaign: ${campaign.title} (${campaign.totalSlots} testers)`,
+      statementDescriptor: 'SUPERTRY CAMPAIGN',
+      transferGroup: `campaign_${campaignId}`,
     });
 
     // Confirm payment
@@ -380,6 +384,8 @@ export class PaymentsService {
           sourceChargeId: sourceChargeId || 'N/A',
           createdAt: new Date().toISOString(),
         },
+        `Test reward: ${session.campaign.title} - ${testerProfile?.firstName || 'Tester'}`,
+        `campaign_${session.campaignId}`,
       );
       this.logger.log(`✅ Transfer créé: ${testerTransfer.id} - ${rewardAmount}€ → ${testerStripeAccount}`);
     } catch (error) {
@@ -883,6 +889,9 @@ export class PaymentsService {
             testerId,
             transactionType: 'PRO_CANCELLATION_COMPENSATION',
           },
+          undefined, // sourceTransaction
+          `campaign_${campaignId}`, // transferGroup
+          `Compensation: ${campaign.title} - annulation PRO`, // description
         );
 
         // Trouver le wallet du testeur
@@ -1211,6 +1220,9 @@ export class PaymentsService {
         campaignId: session.campaignId,
         transactionType: 'PRO_SESSION_CANCELLATION_COMPENSATION',
       },
+      undefined, // sourceTransaction
+      `campaign_${session.campaignId}`, // transferGroup
+      `Compensation session: ${session.campaign.title} - annulation PRO`, // description
     );
 
     // Trouver le wallet du testeur

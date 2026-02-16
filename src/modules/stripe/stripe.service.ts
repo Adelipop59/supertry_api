@@ -139,16 +139,27 @@ export class StripeService {
     amount: number,
     currency: string = 'eur',
     metadata: Record<string, any> = {},
+    options: {
+      description?: string;
+      statementDescriptor?: string;
+      transferGroup?: string;
+    } = {},
   ): Promise<Stripe.PaymentIntent> {
     try {
-      const paymentIntent = await this.stripe.paymentIntents.create({
+      const params: Stripe.PaymentIntentCreateParams = {
         amount: Math.round(amount * 100), // Convert to cents
         currency,
         metadata,
         automatic_payment_methods: {
           enabled: true,
         },
-      });
+      };
+
+      if (options.description) params.description = options.description;
+      if (options.statementDescriptor) params.statement_descriptor = options.statementDescriptor;
+      if (options.transferGroup) params.transfer_group = options.transferGroup;
+
+      const paymentIntent = await this.stripe.paymentIntents.create(params);
 
       this.logger.log(`PaymentIntent created: ${paymentIntent.id} for ${amount}${currency.toUpperCase()}`);
       return paymentIntent;
@@ -168,12 +179,16 @@ export class StripeService {
       captureMethod?: 'automatic' | 'manual';
       productName?: string;
       productDescription?: string;
+      statementDescriptor?: string;
+      transferGroup?: string;
     } = {},
   ): Promise<Stripe.Checkout.Session> {
     const {
       captureMethod = 'automatic',
       productName = 'Campaign Payment',
       productDescription = `Payment for campaign ${metadata.campaignId}`,
+      statementDescriptor,
+      transferGroup,
     } = options;
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
@@ -198,6 +213,8 @@ export class StripeService {
       payment_intent_data: {
         capture_method: captureMethod,
         metadata, // Metadata aussi sur le PaymentIntent pour le Dashboard Stripe
+        ...(statementDescriptor && { statement_descriptor: statementDescriptor }),
+        ...(transferGroup && { transfer_group: transferGroup }),
       },
     };
 
@@ -300,6 +317,7 @@ export class StripeService {
     metadata: Record<string, any> = {},
     sourceTransaction?: string,
     transferGroup?: string,
+    description?: string,
   ): Promise<Stripe.Transfer> {
     try {
       const transferParams: Stripe.TransferCreateParams = {
@@ -308,6 +326,10 @@ export class StripeService {
         destination,
         metadata,
       };
+
+      if (description) {
+        transferParams.description = description;
+      }
 
       // Add source_transaction if provided (links to specific charge)
       if (sourceTransaction) {
@@ -481,6 +503,8 @@ export class StripeService {
     destinationAccount: string,
     currency: string = 'eur',
     metadata: Record<string, any> = {},
+    description?: string,
+    transferGroup?: string,
   ): Promise<Stripe.Transfer> {
     try {
       // 1. Vérifier compte destination AVANT transfer
@@ -546,6 +570,12 @@ export class StripeService {
       if (sourceTransaction) {
         transferParams.source_transaction = sourceTransaction;
       }
+      if (description) {
+        transferParams.description = description;
+      }
+      if (transferGroup) {
+        transferParams.transfer_group = transferGroup;
+      }
 
       const transfer = await this.stripe.transfers.create(
         transferParams,
@@ -604,6 +634,44 @@ export class StripeService {
     } catch (error) {
       this.logger.error(`Failed to create Payout: ${error.message}`, error.stack);
       throw new InternalServerErrorException(`Payout failed: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // Balance & Reporting
+  // ============================================================================
+
+  async listBalanceTransactions(params: {
+    limit?: number;
+    startingAfter?: string;
+    endingBefore?: string;
+    created?: { gte?: number; lte?: number };
+    type?: string;
+  } = {}): Promise<Stripe.ApiList<Stripe.BalanceTransaction>> {
+    try {
+      const listParams: Stripe.BalanceTransactionListParams = {
+        limit: params.limit || 25,
+        expand: ['data.source'],
+      };
+
+      if (params.startingAfter) listParams.starting_after = params.startingAfter;
+      if (params.endingBefore) listParams.ending_before = params.endingBefore;
+      if (params.created) listParams.created = params.created;
+      if (params.type) listParams.type = params.type;
+
+      return await this.stripe.balanceTransactions.list(listParams);
+    } catch (error) {
+      this.logger.error(`Failed to list balance transactions: ${error.message}`);
+      throw new InternalServerErrorException('Failed to list balance transactions');
+    }
+  }
+
+  async getPlatformBalance(): Promise<Stripe.Balance> {
+    try {
+      return await this.stripe.balance.retrieve();
+    } catch (error) {
+      this.logger.error(`Failed to retrieve platform balance: ${error.message}`);
+      throw new InternalServerErrorException('Failed to retrieve platform balance');
     }
   }
 

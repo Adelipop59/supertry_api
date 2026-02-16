@@ -28,6 +28,7 @@ import { DisputesModule } from './modules/disputes/disputes.module';
 import { UgcModule } from './modules/ugc/ugc.module';
 import { RatingsModule } from './modules/ratings/ratings.module';
 import { HealthModule } from './modules/health/health.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { LuciaAuthGuard } from './common/guards/lucia-auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { RolesGuard } from './common/guards/roles.guard';
@@ -69,6 +70,7 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     UgcModule,
     RatingsModule,
     HealthModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [
