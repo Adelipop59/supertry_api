@@ -43,12 +43,11 @@ COPY package.json pnpm-lock.yaml ./
 COPY prisma/schema.prisma ./prisma/schema.prisma
 
 RUN corepack enable && corepack prepare pnpm@latest --activate && \
-    pnpm install --frozen-lockfile --prod
+    pnpm install --frozen-lockfile --prod && \
+    pnpm add prisma@5.22.0
 
 COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client ./node_modules/@prisma/client
-COPY --from=builder /app/node_modules/.pnpm/prisma@5.22.0/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/.pnpm/@prisma+engines@5.22.0/node_modules/@prisma/engines ./node_modules/@prisma/engines
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma/migrations ./prisma/migrations
 
