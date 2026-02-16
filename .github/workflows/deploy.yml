@@ -139,7 +139,7 @@ jobs:
           echo "host=${HOST}" >> $GITHUB_OUTPUT
           echo "replicas=${REPLICAS}" >> $GITHUB_OUTPUT
           echo "frontend_url=${FRONTEND_URL}" >> $GITHUB_OUTPUT
-          echo "env_name=${ENV}" >> $GITHUB_OUTPUT
+          echo "env_name=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
 
       - name: Replace placeholders in manifests
         run: |
