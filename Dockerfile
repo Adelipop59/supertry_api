@@ -45,8 +45,8 @@ COPY prisma/schema.prisma ./prisma/schema.prisma
 RUN corepack enable && corepack prepare pnpm@latest --activate && \
     pnpm install --frozen-lockfile --prod
 
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/client
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/.pnpm/@prisma+client@5.22.0_prisma@5.22.0/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma/migrations ./prisma/migrations
 
