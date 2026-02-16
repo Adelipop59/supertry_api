@@ -31,6 +31,27 @@ spec:
         - protocol: TCP
           port: 3000
 ---
+# Allow ingress to cert-manager ACME solver pods from Traefik
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-acme-solver
+  namespace: __NAMESPACE__
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8089
+---
 # Allow API pods to access Redis
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
