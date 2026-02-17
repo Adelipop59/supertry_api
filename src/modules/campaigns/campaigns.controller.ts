@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -18,6 +19,7 @@ import { CampaignFilterDto } from './dto/campaign-filter.dto';
 import { CheckEligibilityResponseDto } from './dto/check-eligibility-response.dto';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
@@ -26,6 +28,7 @@ import { PaymentsService } from '../payments/payments.service';
 import { StripeService } from '../stripe/stripe.service';
 import { PrismaService } from '../../database/prisma.service';
 
+@ApiTags('Campaigns')
 @Controller('campaigns')
 export class CampaignsController {
   constructor(
@@ -38,6 +41,10 @@ export class CampaignsController {
   @Post()
   @Roles(UserRole.PRO, UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Créer une campagne' })
+  @ApiResponse({ status: 201, description: 'Campagne créée avec succès' })
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async create(
     @CurrentUser('id') userId: string,
     @Body() createDto: CreateCampaignDto,
@@ -46,6 +53,9 @@ export class CampaignsController {
   }
 
   @Get()
+  @ApiOperation({ summary: 'Lister les campagnes' })
+  @ApiResponse({ status: 200, description: 'Liste des campagnes' })
+  @ApiAuthResponses()
   async findAll(
     @Query() filterDto: CampaignFilterDto,
   ): Promise<PaginatedResponse<CampaignResponseDto>> {
@@ -54,6 +64,9 @@ export class CampaignsController {
 
   @Get('my-campaigns')
   @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Mes campagnes (PRO)' })
+  @ApiResponse({ status: 200, description: 'Liste des campagnes du vendeur' })
+  @ApiAuthResponses()
   async findMyCampaigns(
     @CurrentUser('id') userId: string,
     @Query() filterDto: CampaignFilterDto,
@@ -62,11 +75,19 @@ export class CampaignsController {
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Détail d une campagne' })
+  @ApiResponse({ status: 200, description: 'Détail de la campagne' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async findOne(@Param('id') id: string): Promise<CampaignResponseDto> {
     return this.campaignsService.findOne(id);
   }
 
   @Post(':id/check-eligibility')
+  @ApiOperation({ summary: 'Vérifier l éligibilité d un testeur' })
+  @ApiResponse({ status: 200, description: 'Résultat de l éligibilité' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async checkEligibility(
     @Param('id') campaignId: string,
     @CurrentUser('id') userId: string,
@@ -76,6 +97,11 @@ export class CampaignsController {
 
   @Patch(':id')
   @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Modifier une campagne' })
+  @ApiResponse({ status: 200, description: 'Campagne modifiée avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
   async update(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
@@ -87,6 +113,10 @@ export class CampaignsController {
   @Delete(':id')
   @Roles(UserRole.PRO, UserRole.ADMIN)
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Supprimer une campagne' })
+  @ApiResponse({ status: 204, description: 'Campagne supprimée avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async remove(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
@@ -97,6 +127,11 @@ export class CampaignsController {
   @Post(':id/checkout-session')
   @Roles(UserRole.PRO, UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Créer une session de paiement Stripe' })
+  @ApiResponse({ status: 200, description: 'Session de paiement créée' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
   async createCheckoutSession(
     @Param('id') campaignId: string,
     @CurrentUser('id') userId: string,
@@ -188,6 +223,10 @@ export class CampaignsController {
 
   @Post(':id/activate')
   @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Activer une campagne' })
+  @ApiResponse({ status: 200, description: 'Campagne activée avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async activate(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,

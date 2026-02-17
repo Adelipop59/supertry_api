@@ -20,7 +20,7 @@ export class OnboardingGuard implements CanActivate {
     }
 
     if (!user.isOnboarded) {
-      throw new ForbiddenException('Veuillez compléter votre profil');
+      throw new ForbiddenException('Please complete your profile');
     }
 
     return true;

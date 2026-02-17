@@ -22,13 +22,13 @@ export class LuciaAuthGuard implements CanActivate {
     const sessionId = request.cookies?.['auth_session'] || '';
 
     if (!sessionId) {
-      throw new UnauthorizedException('Session manquante');
+      throw new UnauthorizedException('Missing session');
     }
 
     const result = await this.luciaService.validateSession(sessionId);
 
     if (!result.session || !result.user) {
-      throw new UnauthorizedException('Session invalide');
+      throw new UnauthorizedException('Invalid session');
     }
 
     // Attach user to request
@@ -37,7 +37,7 @@ export class LuciaAuthGuard implements CanActivate {
     });
 
     if (!profile || !profile.isActive) {
-      throw new UnauthorizedException('Utilisateur inactif');
+      throw new UnauthorizedException('Account is inactive');
     }
 
     request.user = profile;

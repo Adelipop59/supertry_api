@@ -1,5 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiAuthResponses, ApiNotFoundErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { AdminFinanceService } from './admin-finance.service';
@@ -21,12 +22,14 @@ export class AdminFinanceController {
 
   @Get('stripe-transactions')
   @ApiOperation({ summary: 'Balance transactions Stripe enrichies avec données locales' })
+  @ApiAuthResponses()
   async listBalanceTransactions(@Query() query: BalanceTransactionsQueryDto) {
     return this.adminFinanceService.listBalanceTransactions(query);
   }
 
   @Get('stripe-balance')
   @ApiOperation({ summary: 'Balance plateforme Stripe (available + pending)' })
+  @ApiAuthResponses()
   async getStripeBalance() {
     return this.adminFinanceService.getStripeBalance();
   }
@@ -38,6 +41,7 @@ export class AdminFinanceController {
   @Get('dashboard')
   @ApiOperation({ summary: 'Dashboard financier: KPIs, commissions, escrow' })
   @ApiResponse({ status: 200, type: DashboardResponseDto })
+  @ApiAuthResponses()
   async getDashboard(
     @Query('period') period?: 'day' | 'week' | 'month',
   ): Promise<DashboardResponseDto> {
@@ -47,6 +51,8 @@ export class AdminFinanceController {
   @Get('campaigns/:id/breakdown')
   @ApiOperation({ summary: 'Breakdown financier par campagne (P&L, transactions)' })
   @ApiResponse({ status: 200, type: CampaignBreakdownResponseDto })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async getCampaignBreakdown(
     @Param('id') campaignId: string,
   ): Promise<CampaignBreakdownResponseDto> {
@@ -56,6 +62,7 @@ export class AdminFinanceController {
   @Get('revenue')
   @ApiOperation({ summary: 'Revenue par période avec breakdown par type' })
   @ApiResponse({ status: 200, type: RevenueResponseDto })
+  @ApiAuthResponses()
   async getRevenue(@Query() query: RevenueQueryDto): Promise<RevenueResponseDto> {
     return this.adminFinanceService.getRevenue(query);
   }

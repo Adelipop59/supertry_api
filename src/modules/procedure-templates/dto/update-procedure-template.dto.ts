@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/mapped-types';
+import { PartialType } from '@nestjs/swagger';
 import { CreateProcedureTemplateDto } from './create-procedure-template.dto';
 
 export class UpdateProcedureTemplateDto extends PartialType(

@@ -512,7 +512,7 @@ export class TestSessionsService {
 
     const offer = campaign?.offers[0];
     if (!offer) {
-      throw new BadRequestException('Offer not found for this campaign');
+      throw new NotFoundException('Offer not found for this campaign');
     }
 
     // Validate price range
@@ -874,7 +874,7 @@ export class TestSessionsService {
 
     const offer = campaign?.offers[0];
     if (!offer) {
-      throw new BadRequestException('Offer not found');
+      throw new NotFoundException('Offer not found');
     }
 
     // Calculate reward amount: REAL productPrice + REAL shippingCost + bonus

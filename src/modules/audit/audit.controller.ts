@@ -12,6 +12,7 @@ import {
 import { AuditService } from './audit.service';
 import { AuditFilterDto } from './dto/audit-filter.dto';
 import { CreateAuditDto } from './dto/create-audit.dto';
+import { ApiAuthResponses, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 @Controller('audit')
 export class AuditController {
@@ -23,6 +24,8 @@ export class AuditController {
    */
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async create(@Body() createAuditDto: CreateAuditDto) {
     await this.auditService.log(
       createAuditDto.userId || null,
@@ -41,6 +44,7 @@ export class AuditController {
    * Liste tous les logs avec filtres et pagination (ADMIN only)
    */
   @Get()
+  @ApiAuthResponses()
   async findAll(@Query() filters: AuditFilterDto) {
     const { startDate, endDate, ...rest } = filters;
 
@@ -57,6 +61,7 @@ export class AuditController {
    * TODO: Extraire userId du JWT via guard/decorator
    */
   @Get('me')
+  @ApiAuthResponses()
   async findMyLogs(@Query('userId') userId: string) {
     if (!userId) {
       return {
@@ -74,6 +79,7 @@ export class AuditController {
    * Statistiques agrégées (ADMIN only)
    */
   @Get('stats')
+  @ApiAuthResponses()
   async getStats(
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
@@ -92,6 +98,7 @@ export class AuditController {
    */
   @Delete('cleanup')
   @HttpCode(HttpStatus.OK)
+  @ApiAuthResponses()
   async cleanup(@Query('days') days?: string) {
     const olderThanDays = days ? parseInt(days, 10) : 90;
     const deletedCount = await this.auditService.cleanup(olderThanDays);

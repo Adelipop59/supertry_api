@@ -2,6 +2,8 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
@@ -56,7 +58,7 @@ export class PaymentsService {
     });
 
     if (!campaign || !campaign.offers || campaign.offers.length === 0) {
-      throw new BadRequestException('Campaign or offer not found');
+      throw new NotFoundException('Campaign or offer not found');
     }
 
     const productCost = Number(campaign.offers[0].expectedPrice);
@@ -106,11 +108,11 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new BadRequestException('Campaign not found');
+      throw new NotFoundException('Campaign not found');
     }
 
     if (campaign.sellerId !== userId) {
-      throw new BadRequestException('Not authorized');
+      throw new ForbiddenException('Not authorized');
     }
 
     // Calculate escrow
@@ -291,7 +293,7 @@ export class PaymentsService {
     ]);
 
     if (!session) {
-      throw new BadRequestException('Test session not found');
+      throw new NotFoundException('Test session not found');
     }
 
     // Get business rules
@@ -599,11 +601,11 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new BadRequestException('Campaign not found');
+      throw new NotFoundException('Campaign not found');
     }
 
     if (!campaign.stripePaymentIntentId) {
-      throw new BadRequestException('No PaymentIntent found for this campaign');
+      throw new NotFoundException('No PaymentIntent found for this campaign');
     }
 
     // Get seller profile and completed sessions count
@@ -769,17 +771,17 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new BadRequestException('Campaign not found');
+      throw new NotFoundException('Campaign not found');
     }
 
     if (!campaign.stripePaymentIntentId) {
-      throw new BadRequestException('No payment found for this campaign');
+      throw new NotFoundException('No payment found for this campaign');
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new BadRequestException('No platform wallet found');
+      throw new NotFoundException('No platform wallet found');
     }
 
     const totalEscrowAmount = Number(platformWallet.escrowBalance);
@@ -1012,17 +1014,17 @@ export class PaymentsService {
     });
 
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new NotFoundException('Session not found');
     }
 
     if (!session.campaign.stripePaymentIntentId) {
-      throw new BadRequestException('No payment found for this campaign');
+      throw new NotFoundException('No payment found for this campaign');
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new BadRequestException('No platform wallet found');
+      throw new NotFoundException('No platform wallet found');
     }
 
     const productCost = Number(session.validatedProductPrice || session.campaign.offers[0].expectedPrice);
@@ -1189,17 +1191,17 @@ export class PaymentsService {
     });
 
     if (!session) {
-      throw new BadRequestException('Session not found');
+      throw new NotFoundException('Session not found');
     }
 
     if (!session.tester.stripeConnectAccountId) {
-      throw new BadRequestException('Tester has no Stripe Connect account');
+      throw new NotFoundException('Tester has no Stripe Connect account');
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new BadRequestException('No platform wallet found');
+      throw new NotFoundException('No platform wallet found');
     }
 
     // Récupérer le montant de compensation via BusinessRules
@@ -1305,7 +1307,7 @@ export class PaymentsService {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account found');
+      throw new NotFoundException('No Stripe Connect account found');
     }
 
     if (!profile.stripeOnboardingCompleted) {

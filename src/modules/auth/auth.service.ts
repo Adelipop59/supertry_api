@@ -49,7 +49,7 @@ export class AuthService {
     });
 
     if (existingProfile) {
-      throw new BadRequestException('Un compte existe déjà avec cet email');
+      throw new BadRequestException('An account already exists with this email');
     }
 
     // Hash password
@@ -142,16 +142,16 @@ export class AuthService {
     });
 
     if (!profile) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
+      throw new UnauthorizedException('Invalid email or password');
     }
 
     if (!profile.isActive) {
-      throw new UnauthorizedException('Compte désactivé');
+      throw new UnauthorizedException('Account is disabled');
     }
 
     if (!profile.passwordHash) {
       throw new UnauthorizedException(
-        'Ce compte utilise une connexion OAuth. Veuillez utiliser le provider approprié.',
+        'This account uses OAuth login. Please use the appropriate provider.',
       );
     }
 
@@ -161,7 +161,7 @@ export class AuthService {
     );
 
     if (!isValid) {
-      throw new UnauthorizedException('Email ou mot de passe incorrect');
+      throw new UnauthorizedException('Invalid email or password');
     }
 
     const session = await this.luciaService.createSession(profile.id);
@@ -182,7 +182,7 @@ export class AuthService {
   async logout(userId: string, sessionId: string): Promise<MessageResponseDto> {
     await this.luciaService.invalidateSession(sessionId);
     this.logger.log(`User ${userId} logged out`);
-    return { message: 'Déconnexion réussie' };
+    return { message: 'Logged out successfully' };
   }
 
   /**
@@ -192,7 +192,7 @@ export class AuthService {
     const result = await this.luciaService.validateSession(sessionId);
 
     if (!result.session) {
-      throw new UnauthorizedException('Session invalide');
+      throw new UnauthorizedException('Invalid session');
     }
 
     return {
@@ -214,7 +214,7 @@ export class AuthService {
     });
 
     if (!profile || !profile.passwordHash) {
-      throw new BadRequestException('Impossible de changer le mot de passe');
+      throw new BadRequestException('Cannot change password');
     }
 
     const isValid = await this.luciaService.verifyPassword(
@@ -223,7 +223,7 @@ export class AuthService {
     );
 
     if (!isValid) {
-      throw new BadRequestException('Ancien mot de passe incorrect');
+      throw new BadRequestException('Current password is incorrect');
     }
 
     const newPasswordHash = await this.luciaService.hashPassword(
@@ -238,7 +238,7 @@ export class AuthService {
     // Invalidate all sessions
     await this.luciaService.invalidateUserSessions(userId);
 
-    return { message: 'Mot de passe modifié avec succès' };
+    return { message: 'Password changed successfully' };
   }
 
   /**
@@ -263,7 +263,7 @@ export class AuthService {
           url = await this.luciaService.createAzureAuthorizationURL(state);
           break;
         default:
-          throw new BadRequestException('Provider non supporté');
+          throw new BadRequestException('Unsupported OAuth provider');
       }
     } catch (error) {
       throw new BadRequestException(`OAuth failed: ${error.message}`);
@@ -424,11 +424,11 @@ export class AuthService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profil non trouvé');
+      throw new NotFoundException('Profile not found');
     }
 
     if (profile.isOnboarded) {
-      throw new BadRequestException('Profil déjà complété');
+      throw new BadRequestException('Profile already completed');
     }
 
     // Validate role-specific requirements
@@ -522,11 +522,11 @@ export class AuthService {
 
     if (role === 'PRO') {
       if (!data.firstName || !data.lastName) {
-        throw new BadRequestException('Prénom et nom obligatoires pour PRO');
+        throw new BadRequestException('First name and last name are required for PRO');
       }
 
       if (!data.countries || data.countries.length === 0) {
-        throw new BadRequestException('Au moins 1 pays obligatoire pour PRO');
+        throw new BadRequestException('At least one country is required for PRO');
       }
 
       const validCountries = await this.prismaService.country.findMany({
@@ -534,18 +534,18 @@ export class AuthService {
       });
 
       if (validCountries.length !== data.countries.length) {
-        throw new BadRequestException('Code(s) pays invalide(s)');
+        throw new BadRequestException('Invalid country code(s)');
       }
 
       const availableCountries = await this.checkCountriesAvailability(data.countries);
       if (availableCountries.length === 0) {
-        throw new BadRequestException('Aucun pays sélectionné disponible');
+        throw new BadRequestException('No selected country is available');
       }
     }
 
     if (!role || role === 'USER') {
       if (!data.country) {
-        throw new BadRequestException('Code pays obligatoire pour USER');
+        throw new BadRequestException('Country code is required for USER');
       }
 
       const countryData = await this.prismaService.country.findUnique({
@@ -553,7 +553,7 @@ export class AuthService {
       });
 
       if (!countryData) {
-        throw new BadRequestException('Code pays invalide');
+        throw new BadRequestException('Invalid country code');
       }
     }
   }

@@ -784,7 +784,7 @@ export class UgcService {
       || ugc.session?.tester?.stripeConnectAccountId;
 
     if (!testerStripeAccount) {
-      throw new BadRequestException('Tester has no Stripe Connect account. Cannot transfer payment.');
+      throw new NotFoundException('Tester has no Stripe Connect account. Cannot transfer payment.');
     }
 
     // 3. Transfert Stripe vers le testeur
@@ -882,7 +882,7 @@ export class UgcService {
       || ugc.session?.tester?.stripeConnectAccountId;
 
     if (!testerStripeAccount) {
-      throw new BadRequestException('Tester has no Stripe Connect account');
+      throw new NotFoundException('Tester has no Stripe Connect account');
     }
 
     const transfer = await this.stripeService.createPlatformToConnectTransfer(

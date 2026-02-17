@@ -75,7 +75,7 @@ export class RatingsService {
     // 3. Récupérer le productId depuis l'offre
     const productId = session.campaign.offers?.[0]?.productId;
     if (!productId) {
-      throw new BadRequestException('No product found for this campaign');
+      throw new NotFoundException('No product found for this campaign');
     }
 
     // 4. Créer la review

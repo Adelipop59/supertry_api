@@ -8,8 +8,10 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { PrismaService } from '../../database/prisma.service';
@@ -24,8 +26,10 @@ import { KycStatusResponseDto, KycRequiredResponseDto } from './dto/kyc-status-r
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 import { Param } from '@nestjs/common';
 
+@ApiTags('Stripe')
 @Controller('stripe')
 export class StripeController {
   private readonly logger = new Logger(StripeController.name);
@@ -43,8 +47,13 @@ export class StripeController {
   // ============================================================================
 
   @Post('connect/create')
+  @ApiOperation({ summary: 'Créer un compte Connect Stripe pour un testeur' })
+  @ApiResponse({ status: 201, description: 'Compte Connect créé avec succès' })
+  @ApiResponse({ status: 400, description: 'Profil non trouvé ou compte déjà existant' })
   @Roles(UserRole.USER)  // ONLY TESTERS need Stripe Connect to receive transfers
   @HttpCode(HttpStatus.CREATED)
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async createConnectAccount(
     @CurrentUser('id') userId: string,
     @Body() createDto: CreateConnectAccountDto,
@@ -54,7 +63,7 @@ export class StripeController {
     });
 
     if (!profile) {
-      throw new BadRequestException('Profile not found');
+      throw new NotFoundException('Profile not found');
     }
 
     // Check if Connect account already exists
@@ -101,8 +110,13 @@ export class StripeController {
   }
 
   @Post('connect/onboarding-link')
+  @ApiOperation({ summary: "Obtenir le lien d'onboarding Stripe Connect" })
+  @ApiResponse({ status: 200, description: "Lien d'onboarding généré avec succès" })
+  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
   @Roles(UserRole.USER)  // ONLY TESTERS
   @HttpCode(HttpStatus.OK)
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async createOnboardingLink(
     @CurrentUser('id') userId: string,
     @Body() onboardingDto: CreateOnboardingLinkDto,
@@ -127,7 +141,11 @@ export class StripeController {
   }
 
   @Get('connect/account')
+  @ApiOperation({ summary: 'Récupérer les informations du compte Connect Stripe' })
+  @ApiResponse({ status: 200, description: 'Informations du compte récupérées' })
+  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
   @Roles(UserRole.USER)  // ONLY TESTERS
+  @ApiAuthResponses()
   async getConnectAccount(@CurrentUser('id') userId: string) {
     const profile = await this.prisma.profile.findUnique({
       where: { id: userId },
@@ -151,7 +169,10 @@ export class StripeController {
   }
 
   @Get('connect/kyc-status')
+  @ApiOperation({ summary: 'Vérifier le statut KYC du compte Connect Stripe' })
+  @ApiResponse({ status: 200, description: 'Statut KYC récupéré', type: KycStatusResponseDto })
   @Roles(UserRole.USER)  // ONLY TESTERS
+  @ApiAuthResponses()
   async getKycStatus(
     @CurrentUser('id') userId: string,
   ): Promise<KycStatusResponseDto | KycRequiredResponseDto> {
@@ -184,7 +205,11 @@ export class StripeController {
   }
 
   @Get('connect/balance')
+  @ApiOperation({ summary: 'Récupérer le solde du compte Connect Stripe' })
+  @ApiResponse({ status: 200, description: 'Solde récupéré avec succès' })
+  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
   @Roles(UserRole.USER)  // ONLY TESTERS
+  @ApiAuthResponses()
   async getConnectBalance(@CurrentUser('id') userId: string) {
     const profile = await this.prisma.profile.findUnique({
       where: { id: userId },
@@ -211,7 +236,12 @@ export class StripeController {
   // ============================================================================
 
   @Post('identity/create-session')
+  @ApiOperation({ summary: "Créer une session de vérification d'identité Stripe Identity" })
+  @ApiResponse({ status: 201, description: 'Session de vérification créée' })
+  @ApiResponse({ status: 400, description: 'Compte Connect requis au préalable' })
   @Roles(UserRole.USER)
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async createIdentitySession(
     @CurrentUser('id') userId: string,
     @Body() dto: { returnUrl: string },
@@ -229,7 +259,11 @@ export class StripeController {
   }
 
   @Get('identity/status/:sessionId')
+  @ApiOperation({ summary: "Récupérer le statut d'une session de vérification d'identité" })
+  @ApiResponse({ status: 200, description: 'Statut de la vérification récupéré' })
   @Roles(UserRole.USER, UserRole.PRO)
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   async getIdentityStatus(@Param('sessionId') sessionId: string) {
     return this.stripeService.getIdentityVerificationStatus(sessionId);
   }
@@ -239,7 +273,12 @@ export class StripeController {
   // ============================================================================
 
   @Post('payouts/create')
+  @ApiOperation({ summary: 'Créer un retrait (payout) vers le compte bancaire du testeur' })
+  @ApiResponse({ status: 201, description: 'Retrait initié avec succès' })
+  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
   @Roles(UserRole.USER)  // ONLY TESTERS
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async createPayout(
     @CurrentUser('id') userId: string,
     @Body() dto: { amount: number; withdrawalId: string },
@@ -263,6 +302,9 @@ export class StripeController {
   // ============================================================================
 
   @Post('webhooks')
+  @ApiOperation({ summary: 'Webhook Stripe - Réception des événements Stripe' })
+  @ApiResponse({ status: 200, description: 'Événement webhook traité avec succès' })
+  @ApiResponse({ status: 400, description: 'Signature stripe-signature manquante ou invalide' })
   @Public()
   @HttpCode(HttpStatus.OK)
   async handleWebhook(@Req() req: Request, @Headers('stripe-signature') signature: string) {

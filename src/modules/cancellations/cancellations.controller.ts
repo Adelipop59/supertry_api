@@ -7,22 +7,26 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CancellationsService } from './cancellations.service';
 import { LuciaAuthGuard } from '../../common/guards/lucia-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { CancelCampaignDto } from './dto/cancel-campaign.dto';
+import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
+@ApiTags('Cancellations')
 @Controller('cancellations')
 @UseGuards(LuciaAuthGuard, RolesGuard)
 export class CancellationsController {
   constructor(private readonly cancellationsService: CancellationsService) {}
 
-  /**
-   * PRO annule sa campagne
-   * POST /cancellations/campaigns/:id/cancel
-   */
+  @ApiOperation({ summary: 'Annuler une campagne (PRO)' })
+  @ApiResponse({ status: 200, description: 'Campagne annulée avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
   @Post('campaigns/:id/cancel')
   @Roles(UserRole.PRO)
   async cancelCampaign(
@@ -37,10 +41,11 @@ export class CancellationsController {
     );
   }
 
-  /**
-   * ADMIN annule une campagne
-   * POST /cancellations/campaigns/:id/admin-cancel
-   */
+  @ApiOperation({ summary: 'Annuler une campagne (ADMIN)' })
+  @ApiResponse({ status: 200, description: 'Campagne annulée avec succès par l\'administrateur' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
   @Post('campaigns/:id/admin-cancel')
   @Roles(UserRole.ADMIN)
   async adminCancelCampaign(
@@ -55,10 +60,10 @@ export class CancellationsController {
     );
   }
 
-  /**
-   * Aperçu des impacts d'annulation
-   * GET /cancellations/campaigns/:id/impact
-   */
+  @ApiOperation({ summary: 'Aperçu des impacts d\'annulation d\'une campagne' })
+  @ApiResponse({ status: 200, description: 'Détails des impacts d\'annulation' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
   @Get('campaigns/:id/impact')
   @Roles(UserRole.PRO, UserRole.ADMIN)
   async getCancellationImpact(

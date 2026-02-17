@@ -234,7 +234,7 @@ export class DisputesService {
       case DisputeResolutionType.REFUND_TESTER:
         // Rembourser le testeur (produit + shipping + bonus)
         if (!session.campaign.stripePaymentIntentId) {
-          throw new BadRequestException('No payment found for refund');
+          throw new NotFoundException('No payment found for refund');
         }
 
         const productCost = Number(
@@ -288,7 +288,7 @@ export class DisputesService {
       case DisputeResolutionType.REFUND_PRO:
         // Rembourser le PRO
         if (!session.campaign.stripePaymentIntentId) {
-          throw new BadRequestException('No payment found for refund');
+          throw new NotFoundException('No payment found for refund');
         }
 
         const proRefundAmount = dto.refundAmount || 0;
@@ -343,7 +343,7 @@ export class DisputesService {
         }
 
         if (!session.campaign.stripePaymentIntentId) {
-          throw new BadRequestException('No payment found for refund');
+          throw new NotFoundException('No payment found for refund');
         }
 
         refund = await this.stripeService.createRefund(

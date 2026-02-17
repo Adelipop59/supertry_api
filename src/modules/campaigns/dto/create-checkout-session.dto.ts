@@ -1,6 +1,8 @@
 import { IsNotEmpty, IsString, Matches } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateCheckoutSessionDto {
+  @ApiProperty({ description: 'URL de redirection en cas de succès', example: 'https://super-try.com/campaigns/success' })
   @IsNotEmpty()
   @IsString()
   @Matches(/^https?:\/\/.+/, {
@@ -8,6 +10,7 @@ export class CreateCheckoutSessionDto {
   })
   successUrl: string;
 
+  @ApiProperty({ description: 'URL de redirection en cas d\'annulation', example: 'https://super-try.com/campaigns/cancel' })
   @IsNotEmpty()
   @IsString()
   @Matches(/^https?:\/\/.+/, {

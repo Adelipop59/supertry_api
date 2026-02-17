@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { MediaService, MediaFolder, MediaType } from '../media/media.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -198,7 +199,7 @@ export class ProductsService {
     return createPaginatedResponse(mappedProducts, total, page, limit);
   }
 
-  async findOne(id: string): Promise<ProductResponseDto> {
+  async findOne(id: string, userId?: string, role?: string): Promise<ProductResponseDto> {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: PRODUCT_INCLUDE,
@@ -206,6 +207,24 @@ export class ProductsService {
 
     if (!product) {
       throw new NotFoundException(`Product with ID '${id}' not found`);
+    }
+
+    // Testers can only see products from campaigns they participated in
+    if (role === UserRole.USER && userId) {
+      const hasAccess = await this.prisma.testSession.findFirst({
+        where: {
+          testerId: userId,
+          campaign: {
+            offers: {
+              some: { productId: id },
+            },
+          },
+        },
+      });
+
+      if (!hasAccess) {
+        throw new ForbiddenException('You can only view products from campaigns you participated in');
+      }
     }
 
     return this.toResponseDto(product);

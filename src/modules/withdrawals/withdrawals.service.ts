@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { AuditService } from '../audit/audit.service';
@@ -32,7 +32,7 @@ export class WithdrawalsService {
     });
 
     if (!wallet) {
-      throw new BadRequestException('No wallet found');
+      throw new NotFoundException('No wallet found');
     }
 
     if (Number(wallet.balance) < amount) {
@@ -51,7 +51,7 @@ export class WithdrawalsService {
     });
 
     if (!profile) {
-      throw new BadRequestException('Profile not found');
+      throw new NotFoundException('Profile not found');
     }
 
     if (!profile?.stripeConnectAccountId) {
@@ -174,7 +174,7 @@ export class WithdrawalsService {
     });
 
     if (!withdrawal || withdrawal.userId !== userId) {
-      throw new BadRequestException('Withdrawal not found');
+      throw new NotFoundException('Withdrawal not found');
     }
 
     if (withdrawal.status !== WithdrawalStatus.PENDING) {
@@ -257,7 +257,7 @@ export class WithdrawalsService {
     });
 
     if (!withdrawal || withdrawal.userId !== userId) {
-      throw new BadRequestException('Withdrawal not found');
+      throw new NotFoundException('Withdrawal not found');
     }
 
     return withdrawal;

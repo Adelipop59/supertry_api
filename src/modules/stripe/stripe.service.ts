@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
@@ -96,7 +96,7 @@ export class StripeService {
       return await this.stripe.accounts.retrieve(accountId);
     } catch (error) {
       this.logger.error(`Failed to retrieve account ${accountId}: ${error.message}`, error.stack);
-      throw new BadRequestException('Stripe Connect account not found');
+      throw new NotFoundException('Stripe Connect account not found');
     }
   }
 
@@ -239,7 +239,7 @@ export class StripeService {
       return await this.stripe.paymentIntents.retrieve(paymentIntentId);
     } catch (error) {
       this.logger.error(`Failed to retrieve PaymentIntent ${paymentIntentId}: ${error.message}`);
-      throw new BadRequestException('PaymentIntent not found');
+      throw new NotFoundException('PaymentIntent not found');
     }
   }
 
@@ -486,7 +486,7 @@ export class StripeService {
       };
     } catch (error) {
       this.logger.error(`Failed to retrieve Identity Verification Session ${sessionId}: ${error.message}`, error.stack);
-      throw new BadRequestException('Identity verification session not found');
+      throw new NotFoundException('Identity verification session not found');
     }
   }
 

@@ -24,6 +24,7 @@ import {
   RefreshTokenResponseDto,
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
+import { ApiAuthResponses, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -34,6 +35,7 @@ export class AuthController {
   @Public()
   @ApiOperation({ summary: 'Inscription classique email/password' })
   @ApiResponse({ status: 201, type: AuthResponseDto })
+  @ApiValidationErrorResponse()
   async signup(
     @Body() signupDto: SignupDto,
     @Res({ passthrough: true }) res: Response,
@@ -51,6 +53,7 @@ export class AuthController {
   @Public()
   @ApiOperation({ summary: 'Connexion email/password' })
   @ApiResponse({ status: 200, type: AuthResponseDto })
+  @ApiValidationErrorResponse()
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -67,6 +70,7 @@ export class AuthController {
   @Post('logout')
   @ApiOperation({ summary: 'Déconnexion' })
   @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiAuthResponses()
   async logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -91,6 +95,7 @@ export class AuthController {
   @Public()
   @ApiOperation({ summary: "Vérifier si un email existe" })
   @ApiResponse({ status: 200, type: CheckEmailResponseDto })
+  @ApiValidationErrorResponse()
   async checkEmail(@Body() checkEmailDto: CheckEmailDto): Promise<CheckEmailResponseDto> {
     return this.authService.checkEmailExists(checkEmailDto.email);
   }
@@ -132,6 +137,8 @@ export class AuthController {
   @Post('complete-onboarding')
   @ApiOperation({ summary: 'Finaliser onboarding (OAuth users)' })
   @ApiResponse({ status: 200 })
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async completeOnboarding(
     @Req() req: Request,
     @Body() onboardingDto: CompleteOnboardingDto,
@@ -154,6 +161,8 @@ export class AuthController {
   @Post('change-password')
   @ApiOperation({ summary: 'Changer mot de passe' })
   @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
   async changePassword(
     @Req() req: Request,
     @Body() changePasswordDto: ChangePasswordDto,
@@ -186,6 +195,7 @@ export class AuthController {
   @Get('session')
   @ApiOperation({ summary: 'Vérifier session active' })
   @ApiResponse({ status: 200 })
+  @ApiAuthResponses()
   async checkSession(@Req() req: Request): Promise<{ user: any | null }> {
     const sessionId = req.cookies?.['auth_session'] || '';
 
@@ -210,6 +220,7 @@ export class AuthController {
   @Post('refresh')
   @ApiOperation({ summary: 'Rafraîchir session' })
   @ApiResponse({ status: 200, type: RefreshTokenResponseDto })
+  @ApiAuthResponses()
   async refreshSession(@Req() req: Request): Promise<RefreshTokenResponseDto> {
     const sessionId = req.cookies?.['auth_session'] || '';
 
