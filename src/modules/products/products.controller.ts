@@ -21,7 +21,7 @@ import { ProductFilterDto } from './dto/product-filter.dto';
 import { AddImagesDto } from './dto/add-images.dto';
 import { RemoveImagesDto } from './dto/remove-images.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
+
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
@@ -41,7 +41,6 @@ export class ProductsController {
   }
 
   @Get()
-  @Public()
   async findAll(
     @Query() filterDto: ProductFilterDto,
   ): Promise<PaginatedResponse<ProductResponseDto>> {
@@ -58,7 +57,6 @@ export class ProductsController {
   }
 
   @Get(':id')
-  @Public()
   async findOne(@Param('id') id: string): Promise<ProductResponseDto> {
     return this.productsService.findOne(id);
   }

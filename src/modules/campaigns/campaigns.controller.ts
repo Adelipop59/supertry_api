@@ -18,7 +18,7 @@ import { CampaignFilterDto } from './dto/campaign-filter.dto';
 import { CheckEligibilityResponseDto } from './dto/check-eligibility-response.dto';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Public } from '../../common/decorators/public.decorator';
+
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
@@ -46,7 +46,6 @@ export class CampaignsController {
   }
 
   @Get()
-  @Public()
   async findAll(
     @Query() filterDto: CampaignFilterDto,
   ): Promise<PaginatedResponse<CampaignResponseDto>> {
@@ -63,7 +62,6 @@ export class CampaignsController {
   }
 
   @Get(':id')
-  @Public()
   async findOne(@Param('id') id: string): Promise<CampaignResponseDto> {
     return this.campaignsService.findOne(id);
   }
