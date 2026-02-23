@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 
 /**
@@ -26,7 +27,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let error: string;
     let extraFields: Record<string, unknown> = {};
 
-    if (exception instanceof HttpException) {
+    if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+      const prismaResult = this.handlePrismaError(exception);
+      statusCode = prismaResult.statusCode;
+      message = prismaResult.message;
+      error = this.getErrorName(statusCode);
+    } else if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
       const exceptionResponse = exception.getResponse();
 
@@ -76,6 +82,27 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       path: request.url,
       ...extraFields,
     });
+  }
+
+  private handlePrismaError(exception: Prisma.PrismaClientKnownRequestError): {
+    statusCode: number;
+    message: string;
+  } {
+    switch (exception.code) {
+      case 'P2002': {
+        const target = (exception.meta?.target as string[])?.join(', ') || 'field';
+        return { statusCode: HttpStatus.CONFLICT, message: `Un enregistrement avec ce ${target} existe déjà` };
+      }
+      case 'P2003': {
+        const field = (exception.meta?.field_name as string) || 'relation';
+        return { statusCode: HttpStatus.BAD_REQUEST, message: `Référence invalide : ${field}` };
+      }
+      case 'P2025':
+        return { statusCode: HttpStatus.NOT_FOUND, message: 'Enregistrement non trouvé' };
+      default:
+        this.logger.error(`Prisma error ${exception.code}: ${exception.message}`);
+        return { statusCode: HttpStatus.INTERNAL_SERVER_ERROR, message: 'Erreur de base de données' };
+    }
   }
 
   private getErrorName(statusCode: number): string {

@@ -24,7 +24,9 @@ import {
   PaginatedResponse,
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
-import { SessionStatus, CampaignMarketplaceMode, AuditCategory } from '@prisma/client';
+import { SessionStatus, CampaignMarketplaceMode, AuditCategory, TesterTier } from '@prisma/client';
+import { GamificationService } from '../gamification/gamification.service';
+import { isTierAtLeast } from '../gamification/gamification.constants';
 
 const SESSION_INCLUDE = {
   campaign: {
@@ -109,6 +111,7 @@ export class TestSessionsService {
     private stripeService: StripeService,
     private auditService: AuditService,
     private businessRulesService: BusinessRulesService,
+    private gamificationService: GamificationService,
   ) {}
 
   async apply(
@@ -121,6 +124,7 @@ export class TestSessionsService {
       where: { id: campaignId },
       include: {
         criteria: true,
+        offers: true,
         distributions: {
           where: { isActive: true },
         },
@@ -150,6 +154,7 @@ export class TestSessionsService {
         stripeOnboardingCompleted: true,
         stripeIdentityVerified: true,
         completedSessionsCount: true,
+        tier: true,
       },
     });
 
@@ -199,6 +204,27 @@ export class TestSessionsService {
       }
     } else {
       console.warn('⚠️  KYC verification skipped (SKIP_KYC_VERIFICATION=true)');
+    }
+
+    // Gamification: vérification tier vs prix produit
+    const offer = campaign.offers?.[0];
+    if (offer && tester) {
+      const tierCheck = await this.gamificationService.checkTierEligibility(
+        testerId,
+        Number(offer.expectedPrice),
+      );
+      if (!tierCheck.eligible) {
+        throw new BadRequestException(tierCheck.reason);
+      }
+
+      // Vérification palier minimum défini par le vendeur
+      if (campaign.criteria?.minTier) {
+        if (!isTierAtLeast(tester.tier, campaign.criteria.minTier as TesterTier)) {
+          throw new BadRequestException(
+            `Cette campagne requiert le palier ${campaign.criteria.minTier} ou supérieur. Votre palier actuel : ${tester.tier}`,
+          );
+        }
+      }
     }
 
     // Calculate scheduled purchase date
@@ -924,6 +950,23 @@ export class TestSessionsService {
       this.logger.error(`Failed to process test completion payment: ${error.message}`);
       // Don't throw - session is still marked as COMPLETED
       // Payment can be retried later
+    }
+
+    // Gamification: award XP for test completion (non-blocking)
+    try {
+      const testerProfile = await this.prisma.profile.findUnique({
+        where: { id: session.testerId },
+        select: { completedSessionsCount: true },
+      });
+
+      await this.gamificationService.awardTestCompletionXp(
+        session.testerId,
+        session.id,
+        Number(offer.bonus),
+        testerProfile?.completedSessionsCount || 1,
+      );
+    } catch (error) {
+      this.logger.error(`Gamification XP award failed: ${error.message}`);
     }
 
     return updatedSession as any;

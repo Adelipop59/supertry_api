@@ -57,9 +57,10 @@ export class CampaignsController {
   @ApiResponse({ status: 200, description: 'Liste des campagnes' })
   @ApiAuthResponses()
   async findAll(
+    @CurrentUser() user: any,
     @Query() filterDto: CampaignFilterDto,
   ): Promise<PaginatedResponse<CampaignResponseDto>> {
-    return this.campaignsService.findAll(filterDto);
+    return this.campaignsService.findAll(filterDto, user);
   }
 
   @Get('my-campaigns')

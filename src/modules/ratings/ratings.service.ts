@@ -6,6 +6,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { SessionStatus, AuditCategory } from '@prisma/client';
+import { GamificationService } from '../gamification/gamification.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
@@ -34,6 +35,7 @@ export class RatingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly gamificationService: GamificationService,
   ) {}
 
   // ============================================================================
@@ -163,6 +165,19 @@ export class RatingsService {
     });
 
     this.logger.log(`Tester rated: ${session.testerId} → ${dto.rating}/5 on session ${dto.sessionId}`);
+
+    // Gamification: award XP for rating (non-blocking)
+    try {
+      await this.gamificationService.awardRatingXp(
+        session.testerId,
+        dto.sessionId,
+        testerRating.id,
+        dto.rating,
+      );
+    } catch (error) {
+      this.logger.error(`Gamification rating XP failed: ${error.message}`);
+    }
+
     return testerRating;
   }
 

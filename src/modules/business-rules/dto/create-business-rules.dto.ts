@@ -138,4 +138,83 @@ export class CreateBusinessRulesDto {
   @IsInt()
   @Min(1)
   kycRequiredAfterTests: number;
+
+  // Gamification - prix max produit par palier
+  @ApiProperty({ description: 'Prix max produit pour palier Bronze', example: 30.0 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tierBronzeMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Argent', example: 60.0 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tierSilverMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Or', example: 120.0 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tierGoldMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Platine', example: 250.0 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tierPlatinumMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Diamant', example: 99999 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  tierDiamondMaxProductPrice: number;
+
+  // Gamification - XP par événement
+  @ApiProperty({ description: 'XP de base par test complété', example: 100 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpTestCompleted: number;
+
+  @ApiProperty({ description: 'XP bonus pour note 4+/5', example: 50 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpHighRatingBonus: number;
+
+  @ApiProperty({ description: 'XP bonus supplémentaire pour note 5/5', example: 30 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpPerfectRatingBonus: number;
+
+  @ApiProperty({ description: 'XP bonus pour campagne à bonus minimum', example: 40 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpLowBonusAltruism: number;
+
+  @ApiProperty({ description: 'XP bonus streak (3+ tests en 30j)', example: 75 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpStreakBonus: number;
+
+  @ApiProperty({ description: 'XP bonus premier test', example: 100 })
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  xpFirstTestBonus: number;
 }

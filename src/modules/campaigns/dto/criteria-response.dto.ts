@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { TesterTier } from '@prisma/client';
 
 export class CampaignCriteriaResponseDto {
   @ApiProperty({ description: 'ID des critères', example: '550e8400-e29b-41d4-a716-446655440000' })
@@ -63,6 +64,9 @@ export class CampaignCriteriaResponseDto {
 
   @ApiProperty({ description: 'Compte Prime requis', example: false })
   requirePrime: boolean;
+
+  @ApiPropertyOptional({ description: 'Palier minimum requis (gamification)', example: 'SILVER', enum: TesterTier })
+  minTier?: TesterTier;
 
   @ApiProperty({ description: 'Date de création', example: '2026-02-15T10:30:00.000Z' })
   createdAt: Date;

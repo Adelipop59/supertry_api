@@ -20,7 +20,9 @@ import {
   PaginatedResponse,
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
-import { CampaignMarketplaceMode, CampaignStatus, AuditCategory, NotificationType } from '@prisma/client';
+import { CampaignMarketplaceMode, CampaignStatus, AuditCategory, NotificationType, TesterTier, UserRole } from '@prisma/client';
+import { GamificationService } from '../gamification/gamification.service';
+import { isTierAtLeast, TIER_ORDER } from '../gamification/gamification.constants';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -77,6 +79,7 @@ export class CampaignsService {
     private businessRulesService: BusinessRulesService,
     private auditService: AuditService,
     private notificationsService: NotificationsService,
+    private gamificationService: GamificationService,
   ) {}
 
   async create(
@@ -202,6 +205,7 @@ export class CampaignsService {
 
   async findAll(
     filterDto: CampaignFilterDto,
+    user?: { id: string; role: UserRole; tier?: TesterTier },
   ): Promise<PaginatedResponse<CampaignResponseDto>> {
     const {
       page = 1,
@@ -244,6 +248,40 @@ export class CampaignsService {
       }
       if (maxBonus !== undefined) {
         where.offers.some.bonus.lte = maxBonus;
+      }
+    }
+
+    // Gamification: filtrer par tier pour les testeurs (USER)
+    if (user?.role === UserRole.USER) {
+      const testerTier = user.tier || TesterTier.BRONZE;
+      const maxPrice = await this.gamificationService.getMaxProductPriceForTier(testerTier);
+
+      // Filtrer les campagnes dont le prix produit est accessible au tier du testeur
+      if (!where.offers) {
+        where.offers = { some: {} };
+      }
+      if (!where.offers.some) {
+        where.offers.some = {};
+      }
+      where.offers.some.expectedPrice = {
+        ...where.offers.some.expectedPrice,
+        lte: maxPrice,
+      };
+
+      // Exclure les campagnes qui exigent un palier supérieur au tier du testeur
+      const testerTierIndex = TIER_ORDER.indexOf(testerTier);
+      const higherTiers = TIER_ORDER.slice(testerTierIndex + 1);
+      if (higherTiers.length > 0) {
+        where.AND = [
+          ...(where.AND || []),
+          {
+            OR: [
+              { criteria: null },
+              { criteria: { minTier: null } },
+              { criteria: { minTier: { in: TIER_ORDER.slice(0, testerTierIndex + 1) } } },
+            ],
+          },
+        ];
       }
     }
 
@@ -331,6 +369,7 @@ export class CampaignsService {
       where: { id: campaignId },
       include: {
         criteria: true,
+        offers: true,
         testSessions: {
           where: { testerId },
         },
@@ -361,9 +400,8 @@ export class CampaignsService {
     const reasons: string[] = [];
     const criteria = campaign.criteria;
 
-    if (!criteria) {
-      return { eligible: true };
-    }
+    // Check criteria-based eligibility (only if criteria exist)
+    if (criteria) {
 
     // Check age
     if (criteria.minAge && tester.birthDate) {
@@ -432,6 +470,28 @@ export class CampaignsService {
     // Check banned status
     if (tester.bannedUntil && tester.bannedUntil > new Date()) {
       reasons.push(`You are temporarily banned until ${tester.bannedUntil}`);
+    }
+
+    } // end if (criteria)
+
+    // Gamification: vérification tier vs prix produit
+    const offer = campaign.offers?.[0];
+    if (offer) {
+      const tierCheck = await this.gamificationService.checkTierEligibility(
+        testerId,
+        Number(offer.expectedPrice),
+      );
+      if (!tierCheck.eligible) {
+        reasons.push(tierCheck.reason!);
+      }
+    }
+
+    // Gamification: vérification palier minimum défini par le vendeur
+    if (criteria?.minTier) {
+      const testerTier = tester.tier || TesterTier.BRONZE;
+      if (!isTierAtLeast(testerTier, criteria.minTier as TesterTier)) {
+        reasons.push(`Palier minimum requis : ${criteria.minTier}`);
+      }
     }
 
     return {

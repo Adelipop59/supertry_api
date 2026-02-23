@@ -5,12 +5,14 @@ import {
   IsBoolean,
   IsArray,
   IsString,
+  IsEnum,
   Min,
   Max,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { TesterTier } from '@prisma/client';
 
 export class CreateCampaignCriteriaDto {
   @ApiPropertyOptional({ description: 'Âge minimum', example: 18 })
@@ -140,4 +142,9 @@ export class CreateCampaignCriteriaDto {
   @IsOptional()
   @IsBoolean()
   requirePrime?: boolean;
+
+  @ApiPropertyOptional({ description: 'Palier minimum requis (gamification)', example: 'SILVER', enum: TesterTier })
+  @IsOptional()
+  @IsEnum(TesterTier)
+  minTier?: TesterTier;
 }

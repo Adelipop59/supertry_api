@@ -64,6 +64,41 @@ export class BusinessRulesResponseDto {
   @ApiProperty({ description: 'Nombre de tests réussis avant obligation KYC Identity', example: 3 })
   kycRequiredAfterTests: number;
 
+  // Gamification - prix max produit par palier
+  @ApiProperty({ description: 'Prix max produit pour palier Bronze', example: 30.0 })
+  tierBronzeMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Argent', example: 60.0 })
+  tierSilverMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Or', example: 120.0 })
+  tierGoldMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Platine', example: 250.0 })
+  tierPlatinumMaxProductPrice: number;
+
+  @ApiProperty({ description: 'Prix max produit pour palier Diamant', example: 99999 })
+  tierDiamondMaxProductPrice: number;
+
+  // Gamification - XP par événement
+  @ApiProperty({ description: 'XP de base par test complété', example: 100 })
+  xpTestCompleted: number;
+
+  @ApiProperty({ description: 'XP bonus pour note 4+/5', example: 50 })
+  xpHighRatingBonus: number;
+
+  @ApiProperty({ description: 'XP bonus supplémentaire pour note 5/5', example: 30 })
+  xpPerfectRatingBonus: number;
+
+  @ApiProperty({ description: 'XP bonus pour campagne à bonus minimum', example: 40 })
+  xpLowBonusAltruism: number;
+
+  @ApiProperty({ description: 'XP bonus streak (3+ tests en 30j)', example: 75 })
+  xpStreakBonus: number;
+
+  @ApiProperty({ description: 'XP bonus premier test', example: 100 })
+  xpFirstTestBonus: number;
+
   @ApiProperty({ description: 'Date de création', example: '2025-01-15T10:30:00.000Z' })
   createdAt: Date;
 

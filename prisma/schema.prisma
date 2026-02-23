@@ -163,6 +163,28 @@ enum WithdrawalStatus {
   CANCELLED // Retrait annulé
 }
 
+// Enum pour paliers testeur (gamification)
+enum TesterTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
+}
+
+// Enum pour types d'événements XP (gamification)
+enum XpEventType {
+  TEST_COMPLETED       // XP de base pour test complété
+  HIGH_RATING_BONUS    // Bonus pour note 4-5/5
+  PERFECT_RATING_BONUS // Bonus supplémentaire pour note 5/5
+  LOW_BONUS_ALTRUISM   // Bonus pour campagne à petit bonus (5EUR)
+  STREAK_BONUS         // Bonus pour activité régulière (3+ tests en 30j)
+  FIRST_TEST_BONUS     // Bonus one-time premier test
+  MILESTONE_BONUS      // Bonus pour palier de tests atteint (10, 25, 50, 100)
+  DISPUTE_REVERSAL     // Reversal XP si dispute REFUND_TESTER
+  ADMIN_ADJUSTMENT     // Ajustement manuel par admin
+}
+
 // ==================== MODELS ====================
 
 // Modèle Profile - Table principale des utilisateurs
@@ -207,6 +229,11 @@ model Profile {
   // Premium status (future feature)
   isPrime Boolean @default(false) @map("is_prime") // Statut premium
 
+  // Gamification
+  totalXp       Int        @default(0) @map("total_xp") // Points XP cumulés
+  tier          TesterTier @default(BRONZE) // Palier actuel
+  tierUpdatedAt DateTime?  @map("tier_updated_at") // Dernière promotion de palier
+
   // Info spécifique PRO
   companyName String? @map("company_name")
   siret       String?
@@ -244,6 +271,7 @@ model Profile {
   tipsReceived            Tip[]                   @relation("TipReceiver") // Tips reçus (USER)
   testerRatingsGiven      TesterRating[]          @relation("TesterRatingGiver") // Notes données aux testeurs (PRO)
   testerRatingsReceived   TesterRating[]          @relation("TesterRatingReceiver") // Notes reçues (USER)
+  xpEvents                XpEvent[] // Historique des événements XP (gamification)
 
   @@index([email])
   @@index([role])
@@ -447,6 +475,9 @@ model CampaignCriteria {
 
   requireVerified Boolean @default(false) @map("require_verified")
   requirePrime    Boolean @default(false) @map("require_prime")
+
+  // Gamification - palier minimum requis
+  minTier TesterTier? @map("min_tier") // Palier minimum optionnel défini par le vendeur
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -1135,6 +1166,21 @@ model BusinessRules {
   // KYC testeur : nombre de tests réussis avant obligation KYC Identity
   kycRequiredAfterTests Int @default(3) @map("kyc_required_after_tests")
 
+  // Gamification - prix max produit par palier (en EUR)
+  tierBronzeMaxProductPrice   Decimal @default(30.00)  @map("tier_bronze_max_product_price")  @db.Decimal(10, 2)
+  tierSilverMaxProductPrice   Decimal @default(60.00)  @map("tier_silver_max_product_price")  @db.Decimal(10, 2)
+  tierGoldMaxProductPrice     Decimal @default(120.00) @map("tier_gold_max_product_price")    @db.Decimal(10, 2)
+  tierPlatinumMaxProductPrice Decimal @default(250.00) @map("tier_platinum_max_product_price") @db.Decimal(10, 2)
+  tierDiamondMaxProductPrice  Decimal @default(99999)  @map("tier_diamond_max_product_price")  @db.Decimal(10, 2)
+
+  // Gamification - XP par événement
+  xpTestCompleted      Int @default(100) @map("xp_test_completed")
+  xpHighRatingBonus    Int @default(50)  @map("xp_high_rating_bonus")
+  xpPerfectRatingBonus Int @default(30)  @map("xp_perfect_rating_bonus")
+  xpLowBonusAltruism   Int @default(40)  @map("xp_low_bonus_altruism")
+  xpStreakBonus        Int @default(75)  @map("xp_streak_bonus")
+  xpFirstTestBonus     Int @default(100) @map("xp_first_test_bonus")
+
   // Metadata
   version   Int      @default(1)
   isActive  Boolean  @default(true) @map("is_active")
@@ -1238,4 +1284,28 @@ model AuditLog {
   @@index([createdAt])
   @@index([action])
   @@map("audit_logs")
+}
+
+// Table XpEvent - Historique des événements XP (gamification)
+model XpEvent {
+  id String @id @default(uuid())
+
+  profileId String  @map("profile_id")
+  profile   Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  type   XpEventType
+  amount Int // Peut être négatif pour les reversals
+
+  // Contexte optionnel
+  sessionId   String? @map("session_id")
+  ratingId    String? @map("rating_id")
+  description String? @db.Text
+  metadata    Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([profileId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("xp_events")
 }

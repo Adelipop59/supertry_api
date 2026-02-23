@@ -21,6 +21,7 @@ import { CreateDisputeDto } from './dto/create-dispute.dto';
 import { ResolveDisputeDto, DisputeResolutionType } from './dto/resolve-dispute.dto';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
+import { GamificationService } from '../gamification/gamification.service';
 
 @Injectable()
 export class DisputesService {
@@ -31,6 +32,7 @@ export class DisputesService {
     private readonly stripeService: StripeService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    private readonly gamificationService: GamificationService,
   ) {}
 
   /**
@@ -458,6 +460,15 @@ export class DisputesService {
     );
 
     this.logger.log(`Dispute resolved for session ${sessionId} by admin ${adminId}`);
+
+    // Gamification: reverse XP if tester refunded (non-blocking)
+    if (dto.resolutionType === DisputeResolutionType.REFUND_TESTER) {
+      try {
+        await this.gamificationService.reverseSessionXp(session.testerId, sessionId);
+      } catch (error) {
+        this.logger.error(`Gamification XP reversal failed: ${error.message}`);
+      }
+    }
 
     return {
       session: updatedSession,
