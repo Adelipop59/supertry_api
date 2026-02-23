@@ -43,12 +43,27 @@ export class ProductsService {
     private mediaService: MediaService,
   ) {}
 
-  private toResponseDto(product: any): ProductResponseDto {
+  private async toResponseDto(product: any): Promise<ProductResponseDto> {
+    const imageEntries: string[] = Array.isArray(product.images) ? product.images : [];
+
+    // Convertir toutes les entrées en keys S3 si nécessaire, puis générer des signed URLs
+    const keysToSign = imageEntries.map((entry) => {
+      if (entry.startsWith('http://') || entry.startsWith('https://')) {
+        // Ancienne URL complète -> extraire la key S3
+        return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+      }
+      return entry;
+    });
+
+    const signedImages = keysToSign.length > 0
+      ? await this.mediaService.getSignedUrls(keysToSign)
+      : [];
+
     return {
       ...product,
       price: Number(product.price),
       shippingCost: Number(product.shippingCost),
-      images: Array.isArray(product.images) ? product.images : [],
+      images: signedImages,
       description: product.description ?? undefined,
       asin: product.asin ?? undefined,
       productUrl: product.productUrl ?? undefined,
@@ -140,7 +155,7 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    const mappedProducts = products.map((p) => this.toResponseDto(p));
+    const mappedProducts = await Promise.all(products.map((p) => this.toResponseDto(p)));
     return createPaginatedResponse(mappedProducts, total, page, limit);
   }
 
@@ -195,7 +210,7 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    const mappedProducts = products.map((p) => this.toResponseDto(p));
+    const mappedProducts = await Promise.all(products.map((p) => this.toResponseDto(p)));
     return createPaginatedResponse(mappedProducts, total, page, limit);
   }
 
@@ -252,18 +267,61 @@ export class ProductsService {
   }
 
   async remove(id: string, sellerId: string): Promise<void> {
-    const product = await this.findOne(id);
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        offers: {
+          include: { campaign: { select: { status: true } } },
+        },
+      },
+    });
 
-    // Check ownership
+    if (!product) {
+      throw new NotFoundException(`Product with ID '${id}' not found`);
+    }
+
     if (product.sellerId !== sellerId) {
       throw new ForbiddenException('You can only delete your own products');
     }
 
-    // Soft delete
-    await this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    // Bloquer si le produit est dans une campagne active
+    const activeCampaignStatuses = ['DRAFT', 'PENDING_PAYMENT', 'PENDING_ACTIVATION', 'ACTIVE'];
+    const hasActiveCampaign = product.offers.some(
+      (offer: any) => activeCampaignStatuses.includes(offer.campaign.status),
+    );
+
+    if (hasActiveCampaign) {
+      throw new ForbiddenException(
+        'Ce produit est utilisé dans une campagne en cours. Terminez ou annulez la campagne avant de supprimer le produit.',
+      );
+    }
+
+    const hasAnyCampaign = product.offers.length > 0;
+
+    if (hasAnyCampaign) {
+      // Soft delete : le produit a servi dans des campagnes (COMPLETED/CANCELLED),
+      // on garde les données pour l'historique
+      await this.prisma.product.update({
+        where: { id },
+        data: { isActive: false },
+      });
+    } else {
+      // Hard delete : le produit n'a jamais été utilisé dans aucune campagne
+      const imageEntries = (Array.isArray(product.images) ? product.images : []) as string[];
+      if (imageEntries.length > 0) {
+        const keys = imageEntries.map((entry) => {
+          if (entry.startsWith('http://') || entry.startsWith('https://')) {
+            return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+          }
+          return entry;
+        });
+        await this.mediaService.deleteMultiple(keys);
+      }
+
+      await this.prisma.product.delete({
+        where: { id },
+      });
+    }
   }
 
   async addImages(
@@ -318,6 +376,29 @@ export class ProductsService {
     return this.toResponseDto(updatedProduct);
   }
 
+  async getImageSignedUrls(productId: string): Promise<string[]> {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found');
+    }
+
+    const imageEntries = (Array.isArray(product.images) ? product.images : []) as string[];
+    if (imageEntries.length === 0) return [];
+
+    // Convertir les anciennes URLs complètes en keys S3
+    const keys = imageEntries.map((entry) => {
+      if (entry.startsWith('http://') || entry.startsWith('https://')) {
+        return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+      }
+      return entry;
+    });
+
+    return this.mediaService.getSignedUrls(keys);
+  }
+
   async uploadImages(
     productId: string,
     userId: string,
@@ -347,12 +428,12 @@ export class ProductsService {
       },
     );
 
-    // Extraire les URLs
-    const newImageUrls = uploadResults.map((result) => result.url);
+    // Extraire les keys S3 (pas les URLs)
+    const newImageKeys = uploadResults.map((result) => result.key);
 
-    // Ajouter les nouvelles URLs aux images existantes
+    // Ajouter les nouvelles keys aux images existantes
     const currentImages = product.images as string[];
-    const updatedImages = [...currentImages, ...newImageUrls];
+    const updatedImages = [...currentImages, ...newImageKeys];
 
     // Mettre à jour le produit
     const updatedProduct = await this.prisma.product.update({

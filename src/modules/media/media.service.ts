@@ -43,6 +43,7 @@ export class MediaService {
   private bucketName: string;
   private region: string;
   private cloudFrontDomain?: string;
+  private s3Endpoint?: string;
 
   // Tailles max par type (en octets)
   private readonly MAX_SIZES = {
@@ -88,7 +89,7 @@ export class MediaService {
   };
 
   constructor(private configService: ConfigService) {
-    this.region = this.configService.get<string>('AWS_REGION', 'eu-west-3');
+    this.region = this.configService.get<string>('AWS_S3_REGION', 'eu-west-3');
     this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME', '');
     this.cloudFrontDomain = this.configService.get<string>('AWS_CLOUDFRONT_DOMAIN');
 
@@ -96,12 +97,16 @@ export class MediaService {
       throw new Error('AWS_S3_BUCKET_NAME is not configured');
     }
 
+    this.s3Endpoint = this.configService.get<string>('AWS_S3_ENDPOINT');
+
     this.s3Client = new S3Client({
       region: this.region,
+      ...(this.s3Endpoint && { endpoint: this.s3Endpoint }),
       credentials: {
         accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID', ''),
         secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY', ''),
       },
+      forcePathStyle: !!this.s3Endpoint,
     });
   }
 
@@ -255,6 +260,13 @@ export class MediaService {
   }
 
   /**
+   * Générer des URLs signées pour plusieurs keys
+   */
+  async getSignedUrls(keys: string[], expiresIn: number = 3600): Promise<string[]> {
+    return Promise.all(keys.map((key) => this.getSignedUrl(key, expiresIn)));
+  }
+
+  /**
    * Vérifier si un fichier existe
    */
   async exists(key: string): Promise<boolean> {
@@ -279,6 +291,12 @@ export class MediaService {
       // CloudFront URL
       if (this.cloudFrontDomain && url.includes(this.cloudFrontDomain)) {
         return url.split(this.cloudFrontDomain + '/')[1];
+      }
+
+      // Supabase Storage URL: .../object/public/{bucket}/{key}
+      const supabaseMatch = url.match(/\/object\/public\/[^/]+\/(.+)$/);
+      if (supabaseMatch) {
+        return supabaseMatch[1];
       }
 
       // S3 URL standard
@@ -354,7 +372,15 @@ export class MediaService {
       return `https://${this.cloudFrontDomain}/${key}`;
     }
 
-    // Sinon utiliser l'URL S3 standard
+    // Si un endpoint S3 custom est configuré (ex: Supabase Storage)
+    // Endpoint: https://xxx.storage.supabase.co/storage/v1/s3
+    // Public URL: https://xxx.storage.supabase.co/storage/v1/object/public/{bucket}/{key}
+    if (this.s3Endpoint) {
+      const baseUrl = this.s3Endpoint.replace(/\/s3\/?$/, '');
+      return `${baseUrl}/object/public/${this.bucketName}/${key}`;
+    }
+
+    // Sinon utiliser l'URL S3 standard AWS
     return `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`;
   }
 }

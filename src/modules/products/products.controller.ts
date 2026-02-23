@@ -76,6 +76,18 @@ export class ProductsController {
     return this.productsService.findMyProducts(userId, filterDto);
   }
 
+  @Get(':id/signed-urls')
+  @ApiOperation({ summary: 'Obtenir des URLs signées pour les images d\'un produit' })
+  @ApiResponse({ status: 200, description: 'URLs signées générées' })
+  @ApiResponse({ status: 404, description: 'Produit non trouvé' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async getSignedUrls(
+    @Param('id') id: string,
+  ): Promise<string[]> {
+    return this.productsService.getImageSignedUrls(id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer un produit par son ID' })
   @ApiResponse({ status: 200, type: ProductResponseDto, description: 'Produit trouvé' })

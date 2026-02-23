@@ -4,13 +4,27 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import cookieParser from 'cookie-parser';
+import { json } from 'express';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  // Disable default body parser so we can configure rawBody for Stripe webhooks only
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
+
+  // JSON body parser with rawBody capture for Stripe webhook signature verification
+  app.use(
+    json({
+      verify: (req: any, _res: any, buf: Buffer) => {
+        // Only store rawBody for Stripe webhooks (needed for signature verification)
+        if (req.url?.includes('/stripe/webhooks')) {
+          req.rawBody = buf;
+        }
+      },
+    }),
+  );
 
   // Enable CORS
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    origin: true, // Allow all origins (mobile app, web, etc.)
     credentials: true,
   });
 
@@ -71,7 +85,7 @@ async function bootstrap() {
           .then(function(data) {
             if (data.user) {
               var role = (data.user.role || '').toUpperCase();
-              var roleLabel = role === 'ADMIN' ? 'Admin' : role === 'SELLER' ? 'Pro' : 'Testeur';
+              var roleLabel = role === 'ADMIN' ? 'Admin' : role === 'PRO' ? 'Pro' : 'Testeur';
               banner.textContent = 'Connecte : ' + (data.user.email || '') + ' (' + roleLabel + ')';
               banner.className = 'connected';
             } else {
