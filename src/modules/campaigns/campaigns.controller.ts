@@ -238,16 +238,27 @@ export class CampaignsController {
   ) {
     const escrow = await this.paymentsService.calculateCampaignEscrow(campaignId);
 
-    const [sellerProfile, campaign] = await Promise.all([
+    const [sellerProfile, campaignData] = await Promise.all([
       this.prisma.profile.findUnique({
         where: { id: userId },
         select: { email: true, firstName: true, lastName: true },
       }),
       this.prisma.campaign.findUnique({
         where: { id: campaignId },
-        select: { title: true, offers: { select: { productName: true } } },
+        select: { title: true, stripePaymentIntentId: true, offers: { select: { productName: true } } },
       }),
     ]);
+
+    // Annuler l'ancien PaymentIntent s'il existe (évite les PI orphelins sur Stripe)
+    if (campaignData?.stripePaymentIntentId) {
+      try {
+        await this.stripeService.cancelPaymentIntent(campaignData.stripePaymentIntentId, 'abandoned');
+      } catch (e) {
+        // Ignorer si déjà annulé ou expiré
+      }
+    }
+
+    const campaign = campaignData;
 
     const stripeMetadata: Record<string, string> = {
       platform: 'supertry',
@@ -299,12 +310,13 @@ export class CampaignsController {
       },
     });
 
-    // Update campaign status
+    // Update campaign status (reset paymentAuthorizedAt pour le nouveau PI)
     await this.prisma.campaign.update({
       where: { id: campaignId },
       data: {
         status: 'PENDING_PAYMENT' as any,
         stripePaymentIntentId: paymentIntent.id,
+        paymentAuthorizedAt: null,
       },
     });
 

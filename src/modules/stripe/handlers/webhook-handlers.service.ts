@@ -432,19 +432,25 @@ export class WebhookHandlersService {
     if (campaignId) {
       const campaign = await this.prisma.campaign.findUnique({
         where: { id: campaignId },
-        select: { id: true, status: true, paymentAuthorizedAt: true },
+        select: { id: true, status: true, paymentAuthorizedAt: true, stripePaymentIntentId: true },
       });
 
-      if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT && !campaign.paymentAuthorizedAt) {
-        await this.prisma.campaign.update({
-          where: { id: campaignId },
-          data: {
-            paymentAuthorizedAt: new Date(),
-            stripePaymentIntentId: paymentIntent.id,
-          },
-        });
+      if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT) {
+        // Toujours mettre à jour si le PI correspond au dernier stocké sur la campagne,
+        // ou si aucun paymentAuthorizedAt n'est encore set
+        if (campaign.stripePaymentIntentId === paymentIntent.id || !campaign.paymentAuthorizedAt) {
+          await this.prisma.campaign.update({
+            where: { id: campaignId },
+            data: {
+              paymentAuthorizedAt: new Date(),
+              stripePaymentIntentId: paymentIntent.id,
+            },
+          });
 
-        this.logger.log(`Campaign ${campaignId} payment authorized, grace period started`);
+          this.logger.log(`Campaign ${campaignId} payment authorized (PI: ${paymentIntent.id}), grace period started`);
+        } else {
+          this.logger.warn(`Campaign ${campaignId} has different PI (${campaign.stripePaymentIntentId}), skipping PI ${paymentIntent.id}`);
+        }
       }
     }
 
