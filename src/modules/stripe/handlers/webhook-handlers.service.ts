@@ -428,6 +428,26 @@ export class WebhookHandlersService {
 
     this.logger.log(`PI ${paymentIntent.id} amount_capturable_updated: ${paymentIntent.amount_capturable / 100}€`);
 
+    // Mettre à jour la campagne : enregistrer paymentAuthorizedAt pour que le scheduler puisse capturer
+    if (campaignId) {
+      const campaign = await this.prisma.campaign.findUnique({
+        where: { id: campaignId },
+        select: { id: true, status: true, paymentAuthorizedAt: true },
+      });
+
+      if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT && !campaign.paymentAuthorizedAt) {
+        await this.prisma.campaign.update({
+          where: { id: campaignId },
+          data: {
+            paymentAuthorizedAt: new Date(),
+            stripePaymentIntentId: paymentIntent.id,
+          },
+        });
+
+        this.logger.log(`Campaign ${campaignId} payment authorized, grace period started`);
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'PAYMENT_INTENT_CAPTURABLE', {
       paymentIntentId: paymentIntent.id,
       campaignId: campaignId || null,
