@@ -559,31 +559,33 @@ export class StripeController {
       this.logger.log(`Campaign ${campaign.id} payment authorized (manual capture, 1h grace period)`);
     } else {
       // AUTOMATIC CAPTURE: Paiement déjà capturé (succeeded)
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: 'COMPLETED' as any },
-      });
+      // Transaction atomique: transaction + campagne + wallet
+      await this.prisma.$transaction(async (tx) => {
+        await tx.transaction.update({
+          where: { id: transaction.id },
+          data: { status: 'COMPLETED' as any },
+        });
 
-      await this.prisma.campaign.update({
-        where: { id: campaign.id },
-        data: {
-          status: 'ACTIVE' as any,
-          stripePaymentIntentId: paymentIntentId,
-          paymentCapturedAt: new Date(),
-        },
-      });
-
-      // Update PlatformWallet escrow
-      const platformWallet = await this.prisma.platformWallet.findFirst();
-      if (platformWallet) {
-        await this.prisma.platformWallet.update({
-          where: { id: platformWallet.id },
+        await tx.campaign.update({
+          where: { id: campaign.id },
           data: {
-            escrowBalance: { increment: Number(transaction.amount) },
-            totalReceived: { increment: Number(transaction.amount) },
+            status: 'ACTIVE' as any,
+            stripePaymentIntentId: paymentIntentId,
+            paymentCapturedAt: new Date(),
           },
         });
-      }
+
+        const platformWallet = await tx.platformWallet.findFirst();
+        if (platformWallet) {
+          await tx.platformWallet.update({
+            where: { id: platformWallet.id },
+            data: {
+              escrowBalance: { increment: Number(transaction.amount) },
+              totalReceived: { increment: Number(transaction.amount) },
+            },
+          });
+        }
+      });
 
       const sellerProfile = await this.prisma.profile.findUnique({
         where: { id: campaign.sellerId },

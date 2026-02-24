@@ -436,9 +436,11 @@ export class WebhookHandlersService {
       });
 
       if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT) {
-        // Toujours mettre à jour si le PI correspond au dernier stocké sur la campagne,
-        // ou si aucun paymentAuthorizedAt n'est encore set
-        if (campaign.stripePaymentIntentId === paymentIntent.id || !campaign.paymentAuthorizedAt) {
+        // Idempotence: si paymentAuthorizedAt est déjà set pour CE PI, ne pas re-update (double delivery)
+        if (campaign.stripePaymentIntentId === paymentIntent.id && campaign.paymentAuthorizedAt) {
+          this.logger.log(`Campaign ${campaignId} already authorized for PI ${paymentIntent.id}, skipping (idempotent)`);
+        } else if (campaign.stripePaymentIntentId === paymentIntent.id || !campaign.paymentAuthorizedAt) {
+          // PI correspond au dernier stocké, ou aucun paymentAuthorizedAt n'est encore set
           await this.prisma.campaign.update({
             where: { id: campaignId },
             data: {

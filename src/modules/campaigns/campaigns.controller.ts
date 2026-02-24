@@ -258,6 +258,16 @@ export class CampaignsController {
       }
     }
 
+    // Marquer les anciennes transactions PENDING comme CANCELLED (évite les orphelins en BDD)
+    await this.prisma.transaction.updateMany({
+      where: {
+        campaignId,
+        status: 'PENDING' as any,
+        type: 'CAMPAIGN_PAYMENT' as any,
+      },
+      data: { status: 'CANCELLED' as any },
+    });
+
     const campaign = campaignData;
 
     const stripeMetadata: Record<string, string> = {
@@ -293,32 +303,32 @@ export class CampaignsController {
       },
     );
 
-    // Create transaction
-    await this.prisma.transaction.create({
-      data: {
-        campaignId,
-        type: 'CAMPAIGN_PAYMENT' as any,
-        amount: escrow.total,
-        reason: `Payment for campaign ${campaignId}`,
-        status: 'PENDING' as any,
-        stripePaymentIntentId: paymentIntent.id,
-        metadata: {
-          escrow,
-          userId,
-          source: 'mobile',
+    // Créer transaction + mettre à jour campagne dans une transaction atomique
+    await this.prisma.$transaction([
+      this.prisma.transaction.create({
+        data: {
+          campaignId,
+          type: 'CAMPAIGN_PAYMENT' as any,
+          amount: escrow.total,
+          reason: `Payment for campaign ${campaignId}`,
+          status: 'PENDING' as any,
+          stripePaymentIntentId: paymentIntent.id,
+          metadata: {
+            escrow,
+            userId,
+            source: 'mobile',
+          },
         },
-      },
-    });
-
-    // Update campaign status (reset paymentAuthorizedAt pour le nouveau PI)
-    await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: {
-        status: 'PENDING_PAYMENT' as any,
-        stripePaymentIntentId: paymentIntent.id,
-        paymentAuthorizedAt: null,
-      },
-    });
+      }),
+      this.prisma.campaign.update({
+        where: { id: campaignId },
+        data: {
+          status: 'PENDING_PAYMENT' as any,
+          stripePaymentIntentId: paymentIntent.id,
+          paymentAuthorizedAt: null,
+        },
+      }),
+    ]);
 
     return {
       clientSecret: paymentIntent.client_secret,

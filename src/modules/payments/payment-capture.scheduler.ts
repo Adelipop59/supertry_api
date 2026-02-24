@@ -59,43 +59,47 @@ export class PaymentCaptureScheduler {
 
         this.logger.log(`[AUTO-CAPTURE] Captured PI ${pi.id} for campaign ${campaign.id}`);
 
-        // Mettre à jour la campagne
-        await this.prisma.campaign.update({
-          where: { id: campaign.id },
-          data: {
-            status: CampaignStatus.ACTIVE,
-            paymentCapturedAt: new Date(),
-          },
-        });
-
-        // Mettre à jour la transaction
+        // Trouver la transaction AVANT la $transaction atomique
         const transaction = await this.prisma.transaction.findFirst({
           where: {
             campaignId: campaign.id,
             stripePaymentIntentId: campaign.stripePaymentIntentId,
+            status: 'PENDING' as any,
           },
         });
 
-        if (transaction) {
-          await this.prisma.transaction.update({
-            where: { id: transaction.id },
-            data: { status: 'COMPLETED' as any },
-          });
-        }
-
-        // Mettre à jour PlatformWallet: ajouter à l'escrow
-        const platformWallet = await this.prisma.platformWallet.findFirst();
-        if (platformWallet && transaction) {
-          await this.prisma.platformWallet.update({
-            where: { id: platformWallet.id },
+        // Mettre à jour campagne + transaction + wallet atomiquement
+        await this.prisma.$transaction(async (tx) => {
+          await tx.campaign.update({
+            where: { id: campaign.id },
             data: {
-              escrowBalance: { increment: new Decimal(Number(transaction.amount)) },
-              totalReceived: { increment: new Decimal(Number(transaction.amount)) },
+              status: CampaignStatus.ACTIVE,
+              paymentCapturedAt: new Date(),
             },
           });
-        }
 
-        // Audit
+          if (transaction) {
+            await tx.transaction.update({
+              where: { id: transaction.id },
+              data: { status: 'COMPLETED' as any },
+            });
+          }
+
+          if (transaction) {
+            const platformWallet = await tx.platformWallet.findFirst();
+            if (platformWallet) {
+              await tx.platformWallet.update({
+                where: { id: platformWallet.id },
+                data: {
+                  escrowBalance: { increment: new Decimal(Number(transaction.amount)) },
+                  totalReceived: { increment: new Decimal(Number(transaction.amount)) },
+                },
+              });
+            }
+          }
+        });
+
+        // Audit (hors transaction, non critique)
         await this.auditService.log(
           campaign.sellerId,
           AuditCategory.CAMPAIGN,
@@ -112,6 +116,53 @@ export class PaymentCaptureScheduler {
       } catch (error) {
         this.logger.error(`[AUTO-CAPTURE] Failed to capture campaign ${campaign.id}: ${error.message}`);
 
+        // Tracker les retries via metadata de la transaction
+        const failedTx = await this.prisma.transaction.findFirst({
+          where: {
+            campaignId: campaign.id,
+            stripePaymentIntentId: campaign.stripePaymentIntentId,
+            status: 'PENDING' as any,
+          },
+        });
+
+        const retryCount = ((failedTx?.metadata as any)?.captureRetryCount ?? 0) + 1;
+        const MAX_CAPTURE_RETRIES = 3;
+
+        if (failedTx) {
+          await this.prisma.transaction.update({
+            where: { id: failedTx.id },
+            data: {
+              metadata: {
+                ...(failedTx.metadata as any),
+                captureRetryCount: retryCount,
+                lastCaptureError: error.message,
+                lastCaptureAttempt: new Date().toISOString(),
+              },
+            },
+          });
+        }
+
+        // Après MAX_CAPTURE_RETRIES, remettre la campagne en DRAFT pour que le PRO puisse relancer
+        if (retryCount >= MAX_CAPTURE_RETRIES) {
+          this.logger.error(`[AUTO-CAPTURE] Max retries (${MAX_CAPTURE_RETRIES}) reached for campaign ${campaign.id}, reverting to DRAFT`);
+
+          await this.prisma.campaign.update({
+            where: { id: campaign.id },
+            data: {
+              status: CampaignStatus.DRAFT,
+              stripePaymentIntentId: null,
+              paymentAuthorizedAt: null,
+            },
+          });
+
+          if (failedTx) {
+            await this.prisma.transaction.update({
+              where: { id: failedTx.id },
+              data: { status: 'FAILED' as any },
+            });
+          }
+        }
+
         await this.auditService.log(
           campaign.sellerId,
           AuditCategory.WALLET,
@@ -120,6 +171,9 @@ export class PaymentCaptureScheduler {
             campaignId: campaign.id,
             paymentIntentId: campaign.stripePaymentIntentId,
             error: error.message,
+            retryCount,
+            maxRetries: MAX_CAPTURE_RETRIES,
+            revertedToDraft: retryCount >= MAX_CAPTURE_RETRIES,
           },
         );
       }
@@ -162,10 +216,21 @@ export class PaymentCaptureScheduler {
           'abandoned',
         );
 
-        await this.prisma.campaign.update({
-          where: { id: campaign.id },
-          data: { status: CampaignStatus.CANCELLED },
-        });
+        // Mettre à jour campagne + transactions associées atomiquement
+        await this.prisma.$transaction([
+          this.prisma.campaign.update({
+            where: { id: campaign.id },
+            data: { status: CampaignStatus.CANCELLED },
+          }),
+          this.prisma.transaction.updateMany({
+            where: {
+              campaignId: campaign.id,
+              stripePaymentIntentId: campaign.stripePaymentIntentId,
+              status: 'PENDING' as any,
+            },
+            data: { status: 'CANCELLED' as any },
+          }),
+        ]);
 
         await this.auditService.log(
           campaign.sellerId,
