@@ -267,6 +267,20 @@ export class MediaService {
   }
 
   /**
+   * Générer une URL publique pour un fichier (ACL public-read)
+   */
+  getPublicUrl(key: string): string {
+    return this.buildUrl(key);
+  }
+
+  /**
+   * Générer des URLs publiques pour plusieurs keys
+   */
+  getPublicUrls(keys: string[]): string[] {
+    return keys.map((key) => this.buildUrl(key));
+  }
+
+  /**
    * Vérifier si un fichier existe
    */
   async exists(key: string): Promise<boolean> {

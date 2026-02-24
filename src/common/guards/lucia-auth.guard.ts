@@ -19,7 +19,12 @@ export class LuciaAuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
-    const sessionId = request.cookies?.['auth_session'] || '';
+
+    // Support cookie-based auth (web) et Bearer token auth (mobile)
+    // Le Bearer token contient le session ID (identique au cookie auth_session)
+    const authHeader = request.headers?.authorization;
+    const bearerSessionId = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const sessionId = request.cookies?.['auth_session'] || bearerSessionId || '';
 
     if (!sessionId) {
       throw new UnauthorizedException('Missing session');

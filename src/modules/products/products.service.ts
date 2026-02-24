@@ -57,8 +57,8 @@ export class ProductsService {
   private async toResponseDto(product: any): Promise<ProductResponseDto> {
     const imageEntries: string[] = Array.isArray(product.images) ? product.images : [];
 
-    // Convertir toutes les entrées en keys S3 si nécessaire, puis générer des signed URLs
-    const keysToSign = imageEntries.map((entry) => {
+    // Convertir toutes les entrées en keys S3 si nécessaire
+    const keys = imageEntries.map((entry) => {
       if (entry.startsWith('http://') || entry.startsWith('https://')) {
         // Ancienne URL complète -> extraire la key S3
         return this.mediaService.extractKeyFromUrl(entry) ?? entry;
@@ -66,8 +66,10 @@ export class ProductsService {
       return entry;
     });
 
-    const signedImages = keysToSign.length > 0
-      ? await this.mediaService.getSignedUrls(keysToSign)
+    // Les images produit sont uploadées avec ACL public-read → URL publique directe
+    // (les signed URLs via le SDK S3 ne fonctionnent pas avec Supabase Storage)
+    const signedImages = keys.length > 0
+      ? this.mediaService.getPublicUrls(keys)
       : [];
 
     return {
@@ -420,7 +422,7 @@ export class ProductsService {
       return entry;
     });
 
-    return this.mediaService.getSignedUrls(keys);
+    return this.mediaService.getPublicUrls(keys);
   }
 
   async uploadImages(
