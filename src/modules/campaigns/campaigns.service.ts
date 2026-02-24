@@ -216,12 +216,9 @@ export class CampaignsService {
     } = filterDto;
     const skip = (page - 1) * limit;
 
-    // Toujours exclure PENDING_ACTIVATION (invisible aux testeurs)
+    // Endpoint testeur : sans filtre status, on ne montre que les campagnes ACTIVE
     const where: any = {
       status: status || CampaignStatus.ACTIVE,
-      NOT: {
-        status: CampaignStatus.PENDING_ACTIVATION,
-      },
     };
 
     if (categoryId) {

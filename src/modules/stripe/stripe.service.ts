@@ -143,6 +143,7 @@ export class StripeService {
       description?: string;
       statementDescriptor?: string;
       transferGroup?: string;
+      captureMethod?: 'automatic' | 'manual';
     } = {},
   ): Promise<Stripe.PaymentIntent> {
     try {
@@ -150,6 +151,7 @@ export class StripeService {
         amount: Math.round(amount * 100), // Convert to cents
         currency,
         metadata,
+        capture_method: options.captureMethod || 'automatic',
         automatic_payment_methods: {
           enabled: true,
         },

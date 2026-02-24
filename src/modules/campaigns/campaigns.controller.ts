@@ -53,8 +53,10 @@ export class CampaignsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Lister les campagnes' })
+  @Roles(UserRole.USER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Lister les campagnes disponibles (testeurs)' })
   @ApiResponse({ status: 200, description: 'Liste des campagnes' })
+  @ApiResponse({ status: 403, description: 'Accès réservé aux testeurs' })
   @ApiAuthResponses()
   async findAll(
     @CurrentUser() user: any,
@@ -218,6 +220,97 @@ export class CampaignsController {
     return {
       checkoutUrl: session.url,
       sessionId: session.id,
+      amount: escrow.total * 100,
+      currency: 'eur',
+    };
+  }
+
+  @Post(':id/payment-intent')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Créer un Payment Intent (mobile)' })
+  @ApiResponse({ status: 200, description: 'Payment Intent créé' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async createPaymentIntent(
+    @Param('id') campaignId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    const escrow = await this.paymentsService.calculateCampaignEscrow(campaignId);
+
+    const [sellerProfile, campaign] = await Promise.all([
+      this.prisma.profile.findUnique({
+        where: { id: userId },
+        select: { email: true, firstName: true, lastName: true },
+      }),
+      this.prisma.campaign.findUnique({
+        where: { id: campaignId },
+        select: { title: true, offers: { select: { productName: true } } },
+      }),
+    ]);
+
+    const stripeMetadata: Record<string, string> = {
+      platform: 'supertry',
+      env: process.env.NODE_ENV || 'development',
+      transactionType: 'CAMPAIGN_PAYMENT',
+      campaignId,
+      campaignTitle: campaign?.title || 'N/A',
+      sellerId: userId,
+      sellerEmail: sellerProfile?.email || 'N/A',
+      sellerName: `${sellerProfile?.firstName || ''} ${sellerProfile?.lastName || ''}`.trim() || 'N/A',
+      totalSlots: String(escrow.totalSlots),
+      productName: campaign?.offers?.[0]?.productName || 'N/A',
+      productCost: escrow.productCost.toFixed(2),
+      shippingCost: escrow.shippingCost.toFixed(2),
+      platformCommission: escrow.platformCommission.toFixed(2),
+      proBonus: escrow.proBonus.toFixed(2),
+      supertryCommission: escrow.supertryCommission.toFixed(2),
+      stripeCoverage: escrow.stripeCoverage.toFixed(2),
+      perTester: escrow.perTester.toFixed(2),
+      totalAmount: escrow.total.toFixed(2),
+      captureMethod: 'manual',
+      createdAt: new Date().toISOString(),
+    };
+
+    const paymentIntent = await this.stripeService.createPaymentIntent(
+      escrow.total,
+      'eur',
+      stripeMetadata,
+      {
+        captureMethod: 'manual',
+        description: `SuperTry - ${campaign?.title || 'Campaign'}: ${escrow.totalSlots} testeurs x ${escrow.perTester.toFixed(2)}€/testeur`,
+      },
+    );
+
+    // Create transaction
+    await this.prisma.transaction.create({
+      data: {
+        campaignId,
+        type: 'CAMPAIGN_PAYMENT' as any,
+        amount: escrow.total,
+        reason: `Payment for campaign ${campaignId}`,
+        status: 'PENDING' as any,
+        stripePaymentIntentId: paymentIntent.id,
+        metadata: {
+          escrow,
+          userId,
+          source: 'mobile',
+        },
+      },
+    });
+
+    // Update campaign status
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        status: 'PENDING_PAYMENT' as any,
+        stripePaymentIntentId: paymentIntent.id,
+      },
+    });
+
+    return {
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
       amount: escrow.total * 100,
       currency: 'eur',
     };
