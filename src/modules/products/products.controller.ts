@@ -134,8 +134,12 @@ export class ProductsController {
   async remove(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
-  ): Promise<{ type: 'soft' | 'hard' }> {
-    return this.productsService.remove(id, userId);
+  ): Promise<{ message: string; type: 'soft' | 'hard' }> {
+    const result = await this.productsService.remove(id, userId);
+    const message = result.type === 'soft'
+      ? 'Produit désactivé avec succès (historique conservé car lié à des campagnes passées)'
+      : 'Produit supprimé définitivement avec succès';
+    return { message, ...result };
   }
 
   @Post(':id/images')

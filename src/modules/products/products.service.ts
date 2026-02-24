@@ -236,6 +236,11 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID '${id}' not found`);
     }
 
+    // PRO can only see their own products
+    if (role === UserRole.PRO && userId && product.sellerId !== userId) {
+      throw new ForbiddenException('You can only view your own products');
+    }
+
     // Testers can only see products from campaigns they participated in
     if (role === UserRole.USER && userId) {
       const hasAccess = await this.prisma.testSession.findFirst({
@@ -328,7 +333,12 @@ export class ProductsService {
           }
           return entry;
         });
-        await this.mediaService.deleteMultiple(keys);
+        // Non-bloquant : un échec S3 ne doit pas empêcher la suppression du produit
+        try {
+          await this.mediaService.deleteMultiple(keys);
+        } catch {
+          // Les images orphelines seront nettoyées ultérieurement
+        }
       }
 
       await this.prisma.product.delete({
