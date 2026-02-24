@@ -69,8 +69,6 @@ const CAMPAIGN_LIST_INCLUDE = {
 @Injectable()
 export class CampaignsService {
   private readonly logger = new Logger(CampaignsService.name);
-  private readonly SUPERTRY_COMMISSION = 5.0;
-  private readonly MIN_TESTER_BONUS = 5.0;
 
   constructor(
     private prisma: PrismaService,
@@ -125,19 +123,19 @@ export class CampaignsService {
       }
     }
 
-    // Validation 3: Bonus minimum
-    if (createDto.offer.bonus < this.MIN_TESTER_BONUS) {
-      throw new BadRequestException(
-        `Tester bonus must be at least ${this.MIN_TESTER_BONUS}€`,
-      );
-    }
+    // Validation 3: Calculate escrow amount (basé sur les MAX remboursables)
+    // Commission plateforme (5€ testeur + 5€ SuperTry) lue depuis BusinessRules
+    const rules = await this.businessRulesService.findLatest();
+    const platformCommission = rules.testerBonus + rules.supertryCommission;
 
-    // Validation 4: Calculate escrow amount
+    const maxPrice = createDto.offer.maxReimbursedPrice ?? createDto.offer.expectedPrice;
+    const maxShipping = createDto.offer.maxReimbursedShipping ?? createDto.offer.shippingCost;
+    const proBonus = createDto.offer.bonus ?? 0;
     const costPerTester =
-      (createDto.offer.expectedPrice +
-        createDto.offer.shippingCost +
-        createDto.offer.bonus +
-        this.SUPERTRY_COMMISSION) *
+      (maxPrice +
+        maxShipping +
+        platformCommission +
+        proBonus) *
       createDto.offer.quantity;
 
     const totalEscrow = costPerTester * createDto.totalSlots;
@@ -537,17 +535,23 @@ export class CampaignsService {
       );
     }
 
-    // Recalculate escrow if offer changes
+    // Recalculate escrow if offer changes (basé sur les MAX remboursables)
     let escrowAmount = campaign.escrowAmount;
     if (updateDto.offer || updateDto.totalSlots) {
       const offer = updateDto.offer || campaign.offers[0];
       const totalSlots = updateDto.totalSlots || campaign.totalSlots;
 
+      const rules = await this.businessRulesService.findLatest();
+      const platformCommission = rules.testerBonus + rules.supertryCommission;
+
+      const maxPrice = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
+      const maxShipping = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
+      const proBonus = Number(offer.bonus ?? 0);
       const costPerTester =
-        (Number(offer.expectedPrice) +
-          Number(offer.shippingCost) +
-          Number(offer.bonus) +
-          this.SUPERTRY_COMMISSION) *
+        (maxPrice +
+          maxShipping +
+          platformCommission +
+          proBonus) *
         offer.quantity;
 
       escrowAmount = costPerTester * totalSlots;

@@ -81,12 +81,12 @@ export class CreateOfferDto {
   @Min(0)
   maxReimbursedShipping?: number;
 
-  @ApiProperty({ description: 'Bonus pour le testeur', example: 5.00 })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'Bonus supplémentaire offert par le vendeur (en plus de la commission plateforme)', example: 0 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(5) // Minimum 5€ bonus obligatoire
-  bonus: number;
+  @Min(0)
+  bonus?: number;
 
   @ApiProperty({ description: 'Quantité', example: 1 })
   @IsNotEmpty()

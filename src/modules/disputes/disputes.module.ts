@@ -5,6 +5,7 @@ import { PrismaModule } from '../../database/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { BusinessRulesModule } from '../business-rules/business-rules.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     StripeModule,
     AuditModule,
     NotificationsModule,
+    BusinessRulesModule,
   ],
   controllers: [DisputesController],
   providers: [DisputesService],

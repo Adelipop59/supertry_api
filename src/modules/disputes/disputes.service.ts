@@ -22,6 +22,7 @@ import { ResolveDisputeDto, DisputeResolutionType } from './dto/resolve-dispute.
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
 import { GamificationService } from '../gamification/gamification.service';
+import { BusinessRulesService } from '../business-rules/business-rules.service';
 
 @Injectable()
 export class DisputesService {
@@ -33,6 +34,7 @@ export class DisputesService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly gamificationService: GamificationService,
+    private readonly businessRulesService: BusinessRulesService,
   ) {}
 
   /**
@@ -234,17 +236,19 @@ export class DisputesService {
     // Traiter selon le type de résolution
     switch (dto.resolutionType) {
       case DisputeResolutionType.REFUND_TESTER:
-        // Rembourser le testeur (produit + shipping + bonus)
+        // Rembourser le testeur (produit + shipping + testerFee + proBonus)
         if (!session.campaign.stripePaymentIntentId) {
           throw new NotFoundException('No payment found for refund');
         }
 
+        const rules = await this.businessRulesService.findLatest();
         const productCost = Number(
           session.validatedProductPrice || session.campaign.offers[0].expectedPrice,
         );
         const shippingCost = Number(session.campaign.offers[0].shippingCost);
-        const testerBonus = Number(session.campaign.offers[0].bonus);
-        const refundAmount = productCost + shippingCost + testerBonus;
+        const testerFee = rules.testerBonus;
+        const proBonus = Number(session.campaign.offers[0].bonus ?? 0);
+        const refundAmount = productCost + shippingCost + testerFee + proBonus;
 
         refund = await this.stripeService.createRefund(
           session.campaign.stripePaymentIntentId,

@@ -45,7 +45,8 @@ export class PaymentsService {
   async calculateCampaignEscrow(campaignId: string): Promise<{
     productCost: number;
     shippingCost: number;
-    testerBonus: number;
+    platformCommission: number;
+    proBonus: number;
     supertryCommission: number;
     stripeCoverage: number;
     perTester: number;
@@ -61,14 +62,17 @@ export class PaymentsService {
       throw new NotFoundException('Campaign or offer not found');
     }
 
-    const productCost = Number(campaign.offers[0].expectedPrice);
-    const shippingCost = Number(campaign.offers[0].shippingCost);
-    const testerBonus = Number(campaign.offers[0].bonus);
+    const rules = await this.businessRulesService.findLatest();
+    const platformCommission = rules.testerBonus + rules.supertryCommission;
 
-    // baseCost = productCost + shippingCost + testerBonus (SANS commission)
-    const baseCostWithoutCommission = productCost + shippingCost + testerBonus;
+    const productCost = Number(campaign.offers[0].maxReimbursedPrice ?? campaign.offers[0].expectedPrice);
+    const shippingCost = Number(campaign.offers[0].maxReimbursedShipping ?? campaign.offers[0].shippingCost);
+    const proBonus = Number(campaign.offers[0].bonus ?? 0);
 
-    // Calcul via BusinessRules: 5€ fixe + 3.5% couverture Stripe
+    // baseCost = maxPrice + maxShipping + commission plateforme + bonus PRO (SANS couverture Stripe)
+    const baseCostWithoutCommission = productCost + shippingCost + platformCommission + proBonus;
+
+    // Calcul via BusinessRules: commission fixe + 3.5% couverture Stripe
     const { commissionFixedFee, stripeCoverage, totalPerTester } =
       await this.businessRulesService.calculateCommission(baseCostWithoutCommission);
 
@@ -77,7 +81,8 @@ export class PaymentsService {
     return {
       productCost,
       shippingCost,
-      testerBonus,
+      platformCommission,
+      proBonus,
       supertryCommission: commissionFixedFee,
       stripeCoverage,
       perTester: totalPerTester,
@@ -303,9 +308,10 @@ export class PaymentsService {
     // NOT the expected/max amounts from the offer
     const productCost = Number(session.productPrice);  // Real price paid
     const shippingCost = Number(session.shippingCost); // Real shipping paid
-    const testerBonus = Number(session.campaign.offers[0].bonus);
-    const rewardAmount = productCost + shippingCost + testerBonus;
-    const commissionAmount = rules.commissionFixedFee; // 5€ fixe par produit
+    const testerBonus = rules.testerBonus;             // 5€ fixe (BusinessRules)
+    const proBonus = Number(session.campaign.offers[0].bonus ?? 0); // Bonus supplémentaire PRO
+    const rewardAmount = productCost + shippingCost + testerBonus + proBonus;
+    const commissionAmount = rules.supertryCommission; // 5€ fixe (BusinessRules)
 
     // Vérifier TESTEUR Identity KYC (obligatoire)
     const testerStripeAccount = testerProfile?.stripeConnectAccountId;
@@ -317,7 +323,8 @@ export class PaymentsService {
     this.logger.log(`💰 PROCESSING TEST COMPLETION FOR SESSION ${sessionId}`);
     this.logger.log(`   Product Cost: ${productCost}€`);
     this.logger.log(`   Shipping Cost: ${shippingCost}€`);
-    this.logger.log(`   Tester Bonus: ${testerBonus}€`);
+    this.logger.log(`   Tester Fee (fixed): ${testerBonus}€`);
+    this.logger.log(`   Pro Bonus: ${proBonus}€`);
     this.logger.log(`   TOTAL REWARD: ${rewardAmount}€`);
     this.logger.log(`   Commission (SuperTry): ${commissionAmount}€`);
     this.logger.log(`   Tester Stripe Account: ${testerStripeAccount}`);
@@ -380,7 +387,8 @@ export class PaymentsService {
           sellerEmail: sellerProfile?.email || 'N/A',
           productCost: productCost.toFixed(2),
           shippingCost: shippingCost.toFixed(2),
-          testerBonus: testerBonus.toFixed(2),
+          testerFee: testerBonus.toFixed(2),
+          proBonus: proBonus.toFixed(2),
           totalReward: rewardAmount.toFixed(2),
           commissionRetained: commissionAmount.toFixed(2),
           sourceChargeId: sourceChargeId || 'N/A',
@@ -453,7 +461,8 @@ export class PaymentsService {
           metadata: {
             productPrice: session.productPrice,
             shippingCost: session.shippingCost,
-            bonus: testerBonus,
+            testerFee: testerBonus,
+            proBonus,
           },
         },
       });
@@ -1027,16 +1036,19 @@ export class PaymentsService {
       throw new NotFoundException('No platform wallet found');
     }
 
+    const rules = await this.businessRulesService.findLatest();
     const productCost = Number(session.validatedProductPrice || session.campaign.offers[0].expectedPrice);
     const shippingCost = Number(session.campaign.offers[0].shippingCost);
-    const testerBonus = Number(session.campaign.offers[0].bonus);
+    const testerFee = rules.testerBonus;
+    const proBonus = Number(session.campaign.offers[0].bonus ?? 0);
+    const totalTesterBonus = testerFee + proBonus;
 
     // Calculer les montants via BusinessRules
     const { refundToTester, supertryCommission } =
       await this.businessRulesService.calculateTesterCancellationImpact(
         productCost,
         shippingCost,
-        testerBonus,
+        totalTesterBonus,
       );
 
     this.logger.log(
