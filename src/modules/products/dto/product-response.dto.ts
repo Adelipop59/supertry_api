@@ -83,4 +83,13 @@ export class ProductResponseDto {
 
   @ApiProperty({ description: 'Date de dernière mise à jour du produit', example: '2024-01-15T10:30:00.000Z' })
   updatedAt: Date;
+
+  @ApiPropertyOptional({ description: 'Offres liées au produit (campagnes)' })
+  offers?: {
+    id: string;
+    campaign: {
+      id: string;
+      status: string;
+    };
+  }[];
 }

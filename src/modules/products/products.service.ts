@@ -34,6 +34,17 @@ const PRODUCT_INCLUDE = {
       slug: true,
     },
   },
+  offers: {
+    select: {
+      id: true,
+      campaign: {
+        select: {
+          id: true,
+          status: true,
+        },
+      },
+    },
+  },
 } as const;
 
 @Injectable()
@@ -75,6 +86,7 @@ export class ProductsService {
         avatar: product.seller.avatar ?? undefined,
       } : undefined,
       category: product.category ?? undefined,
+      offers: product.offers ?? undefined,
     };
   }
 
@@ -266,7 +278,7 @@ export class ProductsService {
     return this.toResponseDto(updatedProduct);
   }
 
-  async remove(id: string, sellerId: string): Promise<void> {
+  async remove(id: string, sellerId: string): Promise<{ type: 'soft' | 'hard' }> {
     const product = await this.prisma.product.findUnique({
       where: { id },
       include: {
@@ -305,6 +317,7 @@ export class ProductsService {
         where: { id },
         data: { isActive: false },
       });
+      return { type: 'soft' };
     } else {
       // Hard delete : le produit n'a jamais été utilisé dans aucune campagne
       const imageEntries = (Array.isArray(product.images) ? product.images : []) as string[];
@@ -321,6 +334,7 @@ export class ProductsService {
       await this.prisma.product.delete({
         where: { id },
       });
+      return { type: 'hard' };
     }
   }
 

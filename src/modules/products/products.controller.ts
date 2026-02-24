@@ -124,9 +124,8 @@ export class ProductsController {
 
   @Delete(':id')
   @Roles(UserRole.PRO, UserRole.ADMIN)
-  @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Supprimer un produit' })
-  @ApiResponse({ status: 204, description: 'Produit supprimé avec succès' })
+  @ApiResponse({ status: 200, description: 'Produit supprimé avec succès' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès interdit' })
   @ApiResponse({ status: 404, description: 'Produit non trouvé' })
@@ -135,7 +134,7 @@ export class ProductsController {
   async remove(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
-  ): Promise<void> {
+  ): Promise<{ type: 'soft' | 'hard' }> {
     return this.productsService.remove(id, userId);
   }
 
