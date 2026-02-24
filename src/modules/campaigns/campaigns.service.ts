@@ -236,16 +236,20 @@ export class CampaignsService {
     }
 
     if (minBonus !== undefined || maxBonus !== undefined) {
+      // Le filtre bonus est du point de vue testeur (bonus total = testerBonus(BR) + proBonus)
+      // On soustrait testerBonus pour filtrer sur offer.bonus (qui est le proBonus)
+      const bonusRules = await this.businessRulesService.findLatest();
+      const testerFee = bonusRules.testerBonus;
       where.offers = {
         some: {
           bonus: {},
         },
       };
       if (minBonus !== undefined) {
-        where.offers.some.bonus.gte = minBonus;
+        where.offers.some.bonus.gte = Math.max(0, minBonus - testerFee);
       }
       if (maxBonus !== undefined) {
-        where.offers.some.bonus.lte = maxBonus;
+        where.offers.some.bonus.lte = Math.max(0, maxBonus - testerFee);
       }
     }
 
