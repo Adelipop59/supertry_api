@@ -66,10 +66,9 @@ export class ProductsService {
       return entry;
     });
 
-    // Les images produit sont uploadées avec ACL public-read → URL publique directe
-    // (les signed URLs via le SDK S3 ne fonctionnent pas avec Supabase Storage)
+    // Générer des signed URLs S3 (valides 1h) pour l'accès aux images
     const signedImages = keys.length > 0
-      ? this.mediaService.getPublicUrls(keys)
+      ? await this.mediaService.getSignedUrls(keys)
       : [];
 
     return {
@@ -422,7 +421,7 @@ export class ProductsService {
       return entry;
     });
 
-    return this.mediaService.getPublicUrls(keys);
+    return this.mediaService.getSignedUrls(keys);
   }
 
   async uploadImages(
