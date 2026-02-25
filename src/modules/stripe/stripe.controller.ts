@@ -204,6 +204,35 @@ export class StripeController {
     return kycStatus;
   }
 
+  @Post('connect/account-session')
+  @ApiOperation({ summary: 'Créer une AccountSession pour les composants embarqués Connect (mobile)' })
+  @ApiResponse({ status: 200, description: 'AccountSession créée avec clientSecret' })
+  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
+  @Roles(UserRole.USER)
+  @HttpCode(HttpStatus.OK)
+  @ApiAuthResponses()
+  async createAccountSession(@CurrentUser('id') userId: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { stripeConnectAccountId: true },
+    });
+
+    if (!profile?.stripeConnectAccountId) {
+      throw new BadRequestException('No Stripe Connect account found. Create one first.');
+    }
+
+    return this.stripeService.createAccountSession(profile.stripeConnectAccountId);
+  }
+
+  @Get('connect/onboarding-status')
+  @ApiOperation({ summary: 'Récupérer le statut détaillé d\'onboarding Connect + Identity (mobile)' })
+  @ApiResponse({ status: 200, description: 'Statut détaillé récupéré' })
+  @Roles(UserRole.USER)
+  @ApiAuthResponses()
+  async getOnboardingStatus(@CurrentUser('id') userId: string) {
+    return this.stripeService.getDetailedOnboardingStatus(userId);
+  }
+
   @Get('connect/balance')
   @ApiOperation({ summary: 'Récupérer le solde du compte Connect Stripe' })
   @ApiResponse({ status: 200, description: 'Solde récupéré avec succès' })
@@ -266,6 +295,43 @@ export class StripeController {
   @ApiNotFoundErrorResponse()
   async getIdentityStatus(@Param('sessionId') sessionId: string) {
     return this.stripeService.getIdentityVerificationStatus(sessionId);
+  }
+
+  @Post('identity/create-session-mobile')
+  @ApiOperation({ summary: "Créer une session Identity pour le SDK mobile natif (pas de returnUrl)" })
+  @ApiResponse({ status: 201, description: 'Session Identity mobile créée avec clientSecret' })
+  @ApiResponse({ status: 400, description: 'Compte Connect requis au préalable' })
+  @Roles(UserRole.USER)
+  @ApiAuthResponses()
+  async createIdentitySessionMobile(@CurrentUser('id') userId: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { id: true, stripeConnectAccountId: true },
+    });
+
+    if (!profile?.stripeConnectAccountId) {
+      throw new BadRequestException('Create Stripe Connect account first');
+    }
+
+    // Le SDK mobile natif ne nécessite pas de returnUrl — on passe une URL factice
+    const result = await this.stripeService.createIdentityVerificationSession(
+      profile.id,
+      'supertry://identity-callback',
+    );
+
+    // Sauvegarder le sessionId et le statut en BDD
+    await this.prisma.profile.update({
+      where: { id: userId },
+      data: {
+        stripeIdentitySessionId: result.sessionId,
+        stripeIdentityStatus: 'NOT_STARTED',
+      },
+    });
+
+    return {
+      clientSecret: result.clientSecret,
+      sessionId: result.sessionId,
+    };
   }
 
   // ============================================================================

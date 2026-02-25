@@ -132,6 +132,182 @@ export class StripeService {
   }
 
   // ============================================================================
+  // Account Sessions (for mobile embedded onboarding)
+  // ============================================================================
+
+  async createAccountSession(accountId: string): Promise<{ clientSecret: string }> {
+    try {
+      const accountSession = await this.stripe.accountSessions.create({
+        account: accountId,
+        components: {
+          account_onboarding: { enabled: true },
+        },
+      });
+
+      this.logger.log(`AccountSession created for ${accountId}`);
+      return { clientSecret: accountSession.client_secret };
+    } catch (error) {
+      this.logger.error(`Failed to create AccountSession: ${error.message}`, error.stack);
+      throw new InternalServerErrorException('Failed to create account session');
+    }
+  }
+
+  // ============================================================================
+  // Detailed Onboarding Status (for mobile app)
+  // ============================================================================
+
+  computeOnboardingStatus(account: Stripe.Account): string {
+    const disabledReason = account.requirements?.disabled_reason ?? null;
+    const currentlyDue = account.requirements?.currently_due ?? [];
+    const pastDue = account.requirements?.past_due ?? [];
+    const pendingVerification = account.requirements?.pending_verification ?? [];
+
+    if (disabledReason?.includes('rejected')) return 'REJECTED';
+    if (disabledReason === 'platform_paused') return 'RESTRICTED';
+    if (pastDue.length > 0) return 'PAST_DUE';
+    if (account.charges_enabled && account.payouts_enabled) return 'COMPLETED';
+    if (pendingVerification.length > 0 && currentlyDue.length === 0) return 'PENDING_VERIFICATION';
+    if (currentlyDue.length > 0 && account.details_submitted) return 'ACTION_REQUIRED';
+    if (!account.details_submitted) return 'IN_PROGRESS';
+    return 'IN_PROGRESS';
+  }
+
+  async getDetailedOnboardingStatus(profileId: string): Promise<any> {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: profileId },
+      select: {
+        stripeConnectAccountId: true,
+        stripeOnboardingCompleted: true,
+        stripeIdentityVerified: true,
+        stripeIdentityStatus: true,
+        stripeIdentityLastError: true,
+        stripeIdentitySessionId: true,
+        completedSessionsCount: true,
+      },
+    });
+
+    if (!profile?.stripeConnectAccountId) {
+      // Compute identity status
+      const identityRequired = (profile?.completedSessionsCount ?? 0) >= 3;
+      return {
+        status: 'NOT_STARTED',
+        accountExists: false,
+        chargesEnabled: false,
+        payoutsEnabled: false,
+        detailsSubmitted: false,
+        disabledReason: null,
+        requirements: {
+          currentlyDue: [],
+          pastDue: [],
+          pendingVerification: [],
+          eventuallyDue: [],
+          currentDeadline: null,
+          errors: [],
+        },
+        identity: {
+          status: identityRequired ? 'NOT_STARTED' : 'NOT_REQUIRED',
+          required: identityRequired,
+          verified: false,
+          lastError: null,
+          lastErrorMessage: null,
+          sessionId: null,
+        },
+        canApplyToCampaigns: false,
+        canReceivePayments: false,
+        userMessage: 'Configurez votre compte pour recevoir vos paiements.',
+      };
+    }
+
+    // Fetch real-time status from Stripe
+    const account = await this.stripe.accounts.retrieve(profile.stripeConnectAccountId);
+    const status = this.computeOnboardingStatus(account);
+
+    // Sync to DB
+    await this.prisma.profile.update({
+      where: { id: profileId },
+      data: {
+        stripeOnboardingCompleted: account.charges_enabled && account.details_submitted,
+        stripeOnboardingStatus: status,
+        stripeDisabledReason: account.requirements?.disabled_reason ?? null,
+        stripeRequirementsCurrentlyDue: account.requirements?.currently_due ?? [],
+        stripeRequirementsPastDue: account.requirements?.past_due ?? [],
+        stripeRequirementsPendingVerification: account.requirements?.pending_verification ?? [],
+        stripeCurrentDeadline: account.requirements?.current_deadline
+          ? new Date(account.requirements.current_deadline * 1000)
+          : null,
+      },
+    });
+
+    // Compute identity status
+    const identityRequired = (profile.completedSessionsCount ?? 0) >= 3;
+    const identityStatus = profile.stripeIdentityVerified
+      ? 'VERIFIED'
+      : identityRequired
+        ? (profile.stripeIdentityStatus ?? 'NOT_STARTED')
+        : 'NOT_REQUIRED';
+
+    const identityErrorMessages: Record<string, string> = {
+      consent_declined: 'Vous avez refusé le consentement. Veuillez réessayer.',
+      document_expired: 'Votre pièce d\'identité est expirée. Utilisez un document valide.',
+      document_type_not_supported: 'Ce type de document n\'est pas accepté. Utilisez un passeport, une carte d\'identité ou un permis de conduire.',
+      selfie_face_mismatch: 'Le selfie ne correspond pas à la photo du document. Réessayez avec un meilleur éclairage.',
+      selfie_manipulated: 'La photo semble avoir été modifiée. Veuillez prendre une nouvelle photo.',
+      selfie_document_missing_photo: 'La photo sur le document n\'est pas lisible. Réessayez avec un document en bon état.',
+      under_supported_age: 'Vous devez avoir au moins 18 ans.',
+    };
+
+    const userMessages: Record<string, string> = {
+      NOT_STARTED: 'Configurez votre compte pour recevoir vos paiements.',
+      IN_PROGRESS: 'Votre inscription n\'est pas terminée. Reprenez là où vous en étiez.',
+      PENDING_VERIFICATION: 'Vos informations sont en cours de vérification. Délai habituel : 1 à 2 jours.',
+      COMPLETED: 'Votre compte est vérifié et prêt à recevoir des paiements.',
+      ACTION_REQUIRED: 'Informations supplémentaires requises. Veuillez compléter votre profil.',
+      PAST_DUE: 'Action urgente : des informations manquantes bloquent votre compte.',
+      RESTRICTED: 'Votre compte est temporairement restreint. Contactez le support.',
+      REJECTED: 'Votre vérification a été refusée. Contactez le support pour en savoir plus.',
+    };
+
+    const canApply = profile.stripeOnboardingCompleted
+      && (!identityRequired || profile.stripeIdentityVerified);
+
+    return {
+      status,
+      accountExists: true,
+      chargesEnabled: account.charges_enabled ?? false,
+      payoutsEnabled: account.payouts_enabled ?? false,
+      detailsSubmitted: account.details_submitted ?? false,
+      disabledReason: account.requirements?.disabled_reason ?? null,
+      requirements: {
+        currentlyDue: account.requirements?.currently_due ?? [],
+        pastDue: account.requirements?.past_due ?? [],
+        pendingVerification: account.requirements?.pending_verification ?? [],
+        eventuallyDue: account.requirements?.eventually_due ?? [],
+        currentDeadline: account.requirements?.current_deadline
+          ? new Date(account.requirements.current_deadline * 1000).toISOString()
+          : null,
+        errors: (account.requirements?.errors ?? []).map((e: any) => ({
+          code: e.code,
+          reason: e.reason,
+          requirement: e.requirement,
+        })),
+      },
+      identity: {
+        status: identityStatus,
+        required: identityRequired,
+        verified: profile.stripeIdentityVerified,
+        lastError: profile.stripeIdentityLastError,
+        lastErrorMessage: profile.stripeIdentityLastError
+          ? (identityErrorMessages[profile.stripeIdentityLastError] ?? 'La vérification a échoué. Veuillez réessayer avec des documents en bon état.')
+          : null,
+        sessionId: profile.stripeIdentitySessionId,
+      },
+      canApplyToCampaigns: canApply,
+      canReceivePayments: account.charges_enabled && account.payouts_enabled,
+      userMessage: userMessages[status] ?? userMessages.IN_PROGRESS,
+    };
+  }
+
+  // ============================================================================
   // Payment Intents
   // ============================================================================
 

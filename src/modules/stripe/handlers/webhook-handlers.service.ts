@@ -32,7 +32,14 @@ export class WebhookHandlersService {
   async handleAccountUpdated(account: Stripe.Account) {
     const profile = await this.prisma.profile.findUnique({
       where: { stripeConnectAccountId: account.id },
-      select: { id: true, email: true, firstName: true, stripeOnboardingCompleted: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        stripeOnboardingCompleted: true,
+        stripeOnboardingStatus: true,
+        role: true,
+      },
     });
 
     if (!profile) {
@@ -40,25 +47,41 @@ export class WebhookHandlersService {
       return;
     }
 
-    const wasCompleted = profile.stripeOnboardingCompleted;
+    // 1. Compute new status
+    const newStatus = this.computeOnboardingStatus(account);
+    const previousStatus = profile.stripeOnboardingStatus;
     const isNowCompleted = account.charges_enabled && account.details_submitted;
 
-    // Mettre à jour Profile pour PRO et TESTEUR quand l'onboarding Connect est complété
-    if (!wasCompleted && isNowCompleted) {
-      await this.prisma.profile.update({
-        where: { stripeConnectAccountId: account.id },
-        data: { stripeOnboardingCompleted: true },
-      });
+    // 2. Update detailed status fields in DB
+    await this.prisma.profile.update({
+      where: { stripeConnectAccountId: account.id },
+      data: {
+        stripeOnboardingCompleted: isNowCompleted,
+        stripeOnboardingStatus: newStatus,
+        stripeDisabledReason: account.requirements?.disabled_reason ?? null,
+        stripeRequirementsCurrentlyDue: account.requirements?.currently_due ?? [],
+        stripeRequirementsPastDue: account.requirements?.past_due ?? [],
+        stripeRequirementsPendingVerification: account.requirements?.pending_verification ?? [],
+        stripeCurrentDeadline: account.requirements?.current_deadline
+          ? new Date(account.requirements.current_deadline * 1000)
+          : null,
+      },
+    });
 
-      // Audit log
-      await this.auditService.log(profile.id, AuditCategory.USER, 'STRIPE_ONBOARDING_COMPLETED', {
-        stripeAccountId: account.id,
-        chargesEnabled: account.charges_enabled,
-        payoutsEnabled: account.payouts_enabled,
-        role: profile.role,
-      });
+    // 3. Audit log
+    await this.auditService.log(profile.id, AuditCategory.USER, 'STRIPE_ACCOUNT_UPDATED', {
+      stripeAccountId: account.id,
+      previousStatus,
+      newStatus,
+      chargesEnabled: account.charges_enabled,
+      payoutsEnabled: account.payouts_enabled,
+      disabledReason: account.requirements?.disabled_reason ?? null,
+      role: profile.role,
+    });
 
-      // Notification
+    // 4. Send differentiated notifications based on status transitions
+    // Onboarding completed
+    if (newStatus === 'COMPLETED' && previousStatus !== 'COMPLETED') {
       const message = profile.role === 'PRO'
         ? 'Your Stripe onboarding is complete. You can now activate campaigns.'
         : 'Your Stripe onboarding is complete. You can now apply to campaigns.';
@@ -77,6 +100,93 @@ export class WebhookHandlersService {
         },
       });
     }
+
+    // Action required (documents rejected, additional info needed)
+    if (newStatus === 'ACTION_REQUIRED' && previousStatus !== 'ACTION_REQUIRED') {
+      const errors = account.requirements?.errors ?? [];
+      const errorDetails = errors.map((e: any) => e.reason).filter(Boolean).join(', ');
+
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Action requise sur votre compte Stripe',
+        variables: {
+          firstName: profile.firstName,
+          message: `Des informations supplémentaires sont nécessaires pour votre compte Stripe.${errorDetails ? ` Détails : ${errorDetails}.` : ''} Ouvrez l'app pour compléter votre vérification.`,
+        },
+        metadata: {
+          userId: profile.id,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    }
+
+    // Past due (urgent)
+    if (newStatus === 'PAST_DUE' && previousStatus !== 'PAST_DUE') {
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Action urgente requise sur votre compte Stripe',
+        variables: {
+          firstName: profile.firstName,
+          message: 'Des informations manquantes bloquent votre compte. Connectez-vous immédiatement pour résoudre le problème.',
+        },
+        metadata: {
+          userId: profile.id,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    }
+
+    // Restricted or rejected
+    if (['RESTRICTED', 'REJECTED'].includes(newStatus) && ![previousStatus].some(s => ['RESTRICTED', 'REJECTED'].includes(s ?? ''))) {
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Compte Stripe restreint',
+        variables: {
+          firstName: profile.firstName,
+          message: 'Votre compte a été restreint. Veuillez contacter le support.',
+        },
+        metadata: {
+          userId: profile.id,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    }
+
+    // Pending verification (submitted, waiting for Stripe)
+    if (newStatus === 'PENDING_VERIFICATION' && previousStatus === 'IN_PROGRESS') {
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Vérification en cours',
+        variables: {
+          firstName: profile.firstName,
+          message: 'Vos informations ont été soumises et sont en cours de vérification. Vous serez notifié dès que le processus sera terminé.',
+        },
+        metadata: {
+          userId: profile.id,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    }
+  }
+
+  private computeOnboardingStatus(account: Stripe.Account): string {
+    const disabledReason = account.requirements?.disabled_reason ?? null;
+    const currentlyDue = account.requirements?.currently_due ?? [];
+    const pastDue = account.requirements?.past_due ?? [];
+    const pendingVerification = account.requirements?.pending_verification ?? [];
+
+    if (disabledReason?.includes('rejected')) return 'REJECTED';
+    if (disabledReason === 'platform_paused') return 'RESTRICTED';
+    if (pastDue.length > 0) return 'PAST_DUE';
+    if (account.charges_enabled && account.payouts_enabled) return 'COMPLETED';
+    if (pendingVerification.length > 0 && currentlyDue.length === 0) return 'PENDING_VERIFICATION';
+    if (currentlyDue.length > 0 && account.details_submitted) return 'ACTION_REQUIRED';
+    if (!account.details_submitted) return 'IN_PROGRESS';
+    return 'IN_PROGRESS';
   }
 
   async handleAccountExternalAccountCreated(event: Stripe.Event) {
@@ -143,6 +253,16 @@ export class WebhookHandlersService {
     const profileId = session.metadata?.profileId;
 
     if (profileId) {
+      // Save detailed Identity status
+      await this.prisma.profile.update({
+        where: { id: profileId },
+        data: {
+          stripeIdentityStatus: 'PROCESSING',
+          stripeIdentityLastError: null,
+          stripeIdentitySessionId: session.id,
+        },
+      });
+
       await this.auditService.log(profileId, AuditCategory.USER, 'STRIPE_IDENTITY_PROCESSING', {
         verificationSessionId: session.id,
       });
@@ -199,6 +319,8 @@ export class WebhookHandlersService {
         data: {
           stripeIdentityVerified: true,
           stripeOnboardingCompleted: true, // Auto-set car Identity > Onboarding
+          stripeIdentityStatus: 'VERIFIED',
+          stripeIdentityLastError: null,
         },
       });
 
@@ -229,11 +351,17 @@ export class WebhookHandlersService {
     const profileId = session.metadata?.profileId;
 
     if (profileId) {
-      // Bloquer le user temporairement
+      // Extract the error code from the session
+      const lastErrorCode = (session.last_error as any)?.code ?? 'unknown';
+
+      // Block user + save detailed Identity status
       await this.prisma.profile.update({
         where: { id: profileId },
         data: {
           stripeIdentityVerified: false,
+          stripeIdentityStatus: 'REQUIRES_INPUT',
+          stripeIdentityLastError: lastErrorCode,
+          stripeIdentitySessionId: session.id,
         },
       });
 
@@ -241,6 +369,7 @@ export class WebhookHandlersService {
       await this.auditService.log(profileId, AuditCategory.USER, 'STRIPE_IDENTITY_REQUIRES_INPUT', {
         verificationSessionId: session.id,
         lastError: session.last_error,
+        lastErrorCode,
       });
 
       // Notification critique
@@ -271,6 +400,13 @@ export class WebhookHandlersService {
     const profileId = session.metadata?.profileId;
 
     if (profileId) {
+      await this.prisma.profile.update({
+        where: { id: profileId },
+        data: {
+          stripeIdentityStatus: 'CANCELED',
+        },
+      });
+
       await this.auditService.log(profileId, AuditCategory.USER, 'STRIPE_IDENTITY_CANCELED', {
         verificationSessionId: session.id,
       });

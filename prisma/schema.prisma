@@ -208,6 +208,19 @@ model Profile {
   stripeOnboardingCompleted Boolean  @default(false) @map("stripe_onboarding_completed") // Onboarding Stripe complété
   stripeIdentityVerified    Boolean  @default(false) @map("stripe_identity_verified") // Stripe Identity KYC complété (TESTEUR)
 
+  // Stripe Connect - Statut détaillé onboarding (pour suivi mobile)
+  stripeOnboardingStatus                    String?   @map("stripe_onboarding_status") // NOT_STARTED, IN_PROGRESS, PENDING_VERIFICATION, COMPLETED, ACTION_REQUIRED, PAST_DUE, RESTRICTED, REJECTED
+  stripeDisabledReason                      String?   @map("stripe_disabled_reason") // disabled_reason de Stripe (pending.onboarding, rejected.fraud, etc.)
+  stripeRequirementsCurrentlyDue            String[]  @map("stripe_requirements_currently_due") // Champs encore à fournir
+  stripeRequirementsPastDue                 String[]  @map("stripe_requirements_past_due") // Champs en retard (urgents)
+  stripeRequirementsPendingVerification     String[]  @map("stripe_requirements_pending_verification") // Champs en cours de vérification
+  stripeCurrentDeadline                     DateTime? @map("stripe_current_deadline") // Deadline pour les requirements
+
+  // Stripe Identity - Statut détaillé KYC (pour suivi mobile)
+  stripeIdentityStatus    String?  @map("stripe_identity_status") // NOT_REQUIRED, NOT_STARTED, PROCESSING, VERIFIED, REQUIRES_INPUT, CANCELED
+  stripeIdentitySessionId String?  @map("stripe_identity_session_id") // ID de la dernière session Identity
+  stripeIdentityLastError String?  @map("stripe_identity_last_error") // Dernier motif de rejet (selfie_face_mismatch, document_expired, etc.)
+
   // Info spécifique testeur (USER)
   birthDate              DateTime? @map("birth_date") // Date de naissance pour calculer l'âge
   gender                 String? // M, F, Other
