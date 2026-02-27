@@ -7,8 +7,11 @@ import {
   NotificationType,
   CampaignStatus,
   WithdrawalStatus,
+  TransactionStatus,
+  TransactionType,
 } from '@prisma/client';
 import { NotificationTemplate } from '../../notifications/enums/notification-template.enum';
+import { Decimal } from '@prisma/client/runtime/library';
 import Stripe from 'stripe';
 
 /**
@@ -614,28 +617,110 @@ export class WebhookHandlersService {
   }
 
   async handleTransferUpdated(transfer: Stripe.Transfer) {
+    // Stripe sends transfer.updated for all status changes (pending → paid, failed, reversed)
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { stripeTransferId: transfer.id },
+    });
+
+    if (transaction) {
+      // Case 1: Transfer reversed → mark REFUNDED (actual reversal handled by transfer.reversed event)
+      if (transfer.reversed && transaction.status !== TransactionStatus.REFUNDED) {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: TransactionStatus.REFUNDED },
+        });
+        this.logger.log(`Transaction ${transaction.id} marked REFUNDED (transfer ${transfer.id} reversed via update)`);
+      }
+      // Case 2: Transfer confirmed paid → ensure transaction is COMPLETED
+      else if (!transfer.reversed && transaction.status === TransactionStatus.PENDING) {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: TransactionStatus.COMPLETED },
+        });
+        this.logger.log(`Transaction ${transaction.id} confirmed COMPLETED (transfer ${transfer.id} paid via update)`);
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'TRANSFER_UPDATED', {
       transferId: transfer.id,
-    });
-  }
-
-  async handleTransferPaid(transfer: Stripe.Transfer) {
-    await this.auditService.log(null, AuditCategory.WALLET, 'TRANSFER_PAID', {
-      transferId: transfer.id,
-      amount: transfer.amount / 100,
-      destination: transfer.destination,
+      reversed: transfer.reversed,
+      transactionId: transaction?.id || null,
     });
   }
 
   async handleTransferFailed(transfer: Stripe.Transfer) {
-    // Logger l'erreur
     this.logger.error(`Transfer failed: ${transfer.id}`, {
       destination: transfer.destination,
       amount: transfer.amount,
       metadata: transfer.metadata,
     });
 
-    // Trouver la session ou transaction associée
+    const amountEur = transfer.amount / 100;
+
+    // 1. Find and update the Transaction record
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { stripeTransferId: transfer.id },
+      include: { wallet: true },
+    });
+
+    if (transaction) {
+      await this.prisma.$transaction(async (tx) => {
+        // Mark transaction as FAILED
+        await tx.transaction.update({
+          where: { id: transaction.id },
+          data: { status: TransactionStatus.FAILED },
+        });
+
+        // Rollback wallet credit
+        if (transaction.walletId) {
+          await tx.wallet.update({
+            where: { id: transaction.walletId },
+            data: {
+              balance: { decrement: new Decimal(amountEur) },
+              totalEarned: { decrement: new Decimal(amountEur) },
+            },
+          });
+        }
+
+        // Find the associated COMMISSION transaction for this session
+        let commissionAmount = 0;
+        if (transaction.sessionId) {
+          const commissionTx = await tx.transaction.findFirst({
+            where: {
+              sessionId: transaction.sessionId,
+              type: TransactionType.COMMISSION,
+              status: TransactionStatus.COMPLETED,
+            },
+          });
+          if (commissionTx) {
+            commissionAmount = Number(commissionTx.amount);
+            // Also mark commission as FAILED
+            await tx.transaction.update({
+              where: { id: commissionTx.id },
+              data: { status: TransactionStatus.FAILED },
+            });
+          }
+        }
+
+        // Rollback PlatformWallet (put money back in escrow)
+        const platformWallet = await tx.platformWallet.findFirst();
+        if (platformWallet) {
+          await tx.platformWallet.update({
+            where: { id: platformWallet.id },
+            data: {
+              escrowBalance: { increment: new Decimal(amountEur + commissionAmount) },
+              totalTransferred: { decrement: new Decimal(amountEur) },
+              totalCommissions: { decrement: new Decimal(commissionAmount) },
+              commissionBalance: { decrement: new Decimal(commissionAmount) },
+            },
+          });
+        }
+      });
+
+      this.logger.log(`Transaction ${transaction.id} marked FAILED + wallet rolled back + commission reversed (transfer ${transfer.id})`);
+    }
+
+    // 2. Find session and notify
     const sessionId = transfer.metadata?.sessionId;
     if (sessionId) {
       const session = await this.prisma.testSession.findUnique({
@@ -644,23 +729,24 @@ export class WebhookHandlersService {
       });
 
       if (session) {
-        // Audit
         await this.auditService.log(null, AuditCategory.WALLET, 'TRANSFER_FAILED', {
           transferId: transfer.id,
           sessionId,
           testerId: session.testerId,
           sellerId: session.campaign.sellerId,
-          amount: transfer.amount / 100,
+          amount: amountEur,
+          transactionId: transaction?.id || null,
+          walletRolledBack: !!transaction?.walletId,
         });
 
-        // Notifier TESTEUR
+        // Notify tester
         await this.notificationsService.queueEmail({
           to: session.tester.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Payment Transfer Failed',
+          subject: 'Échec du transfert de paiement',
           variables: {
             firstName: session.tester.firstName,
-            message: 'There was an issue processing your payment. Our team has been notified and will contact you shortly.',
+            message: `Le transfert de ${amountEur}€ pour votre test "${session.campaign.title}" a échoué. Notre équipe a été notifiée et vous contactera prochainement.`,
           },
           metadata: {
             sessionId,
@@ -668,14 +754,14 @@ export class WebhookHandlersService {
           },
         });
 
-        // Notifier PRO
+        // Notify PRO
         await this.notificationsService.queueEmail({
           to: session.campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Transfer Failed',
+          subject: 'Échec du transfert au testeur',
           variables: {
             firstName: session.campaign.seller.firstName,
-            message: `Transfer failed for test session. Support team notified.`,
+            message: `Le transfert au testeur pour la campagne "${session.campaign.title}" a échoué. L'équipe support a été notifiée.`,
           },
           metadata: {
             sessionId,
@@ -683,13 +769,138 @@ export class WebhookHandlersService {
           },
         });
       }
+    } else if (!transaction) {
+      // No session ID and no transaction found — just audit
+      await this.auditService.log(null, AuditCategory.WALLET, 'TRANSFER_FAILED', {
+        transferId: transfer.id,
+        amount: amountEur,
+        metadata: transfer.metadata,
+      });
     }
   }
 
   async handleTransferReversed(transfer: Stripe.Transfer) {
+    const amountEur = transfer.amount / 100;
+
+    // Find the Transaction linked to this transfer
+    const transaction = await this.prisma.transaction.findFirst({
+      where: { stripeTransferId: transfer.id },
+      include: { wallet: true },
+    });
+
+    if (transaction && transaction.status !== TransactionStatus.REFUNDED) {
+      await this.prisma.$transaction(async (tx) => {
+        // Mark transaction as REFUNDED
+        await tx.transaction.update({
+          where: { id: transaction.id },
+          data: { status: TransactionStatus.REFUNDED },
+        });
+
+        // Deduct from tester wallet
+        if (transaction.walletId) {
+          await tx.wallet.update({
+            where: { id: transaction.walletId },
+            data: {
+              balance: { decrement: new Decimal(amountEur) },
+              totalEarned: { decrement: new Decimal(amountEur) },
+            },
+          });
+        }
+
+        // Find and reverse the associated COMMISSION transaction
+        let commissionAmount = 0;
+        if (transaction.sessionId) {
+          const commissionTx = await tx.transaction.findFirst({
+            where: {
+              sessionId: transaction.sessionId,
+              type: TransactionType.COMMISSION,
+              status: TransactionStatus.COMPLETED,
+            },
+          });
+          if (commissionTx) {
+            commissionAmount = Number(commissionTx.amount);
+            await tx.transaction.update({
+              where: { id: commissionTx.id },
+              data: { status: TransactionStatus.REFUNDED },
+            });
+          }
+        }
+
+        // Create a reversal transaction for audit trail
+        await tx.transaction.create({
+          data: {
+            walletId: transaction.walletId,
+            type: TransactionType.REFUND,
+            amount: new Decimal(amountEur),
+            reason: `Reversal: ${transaction.reason}`,
+            sessionId: transaction.sessionId,
+            campaignId: transaction.campaignId,
+            stripeTransferId: transfer.id,
+            status: TransactionStatus.COMPLETED,
+            metadata: {
+              originalTransactionId: transaction.id,
+              reversalReason: 'transfer_reversed',
+              commissionReversed: commissionAmount,
+            },
+          },
+        });
+
+        // Restore PlatformWallet escrow + reverse commission
+        const platformWallet = await tx.platformWallet.findFirst();
+        if (platformWallet) {
+          await tx.platformWallet.update({
+            where: { id: platformWallet.id },
+            data: {
+              escrowBalance: { increment: new Decimal(amountEur + commissionAmount) },
+              totalTransferred: { decrement: new Decimal(amountEur) },
+              totalCommissions: { decrement: new Decimal(commissionAmount) },
+              commissionBalance: { decrement: new Decimal(commissionAmount) },
+            },
+          });
+        }
+      });
+
+      this.logger.log(`Transfer ${transfer.id} reversed — Transaction ${transaction.id} marked REFUNDED + wallet + commission rolled back`);
+    }
+
+    // Notify tester and PRO
+    const sessionId = transfer.metadata?.sessionId;
+    if (sessionId) {
+      const session = await this.prisma.testSession.findUnique({
+        where: { id: sessionId },
+        include: { tester: true, campaign: { include: { seller: true } } },
+      });
+
+      if (session) {
+        await this.notificationsService.queueEmail({
+          to: session.tester.email,
+          template: NotificationTemplate.GENERIC_NOTIFICATION,
+          subject: 'Transfert annulé',
+          variables: {
+            firstName: session.tester.firstName,
+            message: `Le transfert de ${amountEur}€ pour "${session.campaign.title}" a été annulé. Veuillez contacter le support pour plus d'informations.`,
+          },
+          metadata: { sessionId, type: NotificationType.SYSTEM_ALERT },
+        });
+
+        await this.notificationsService.queueEmail({
+          to: session.campaign.seller.email,
+          template: NotificationTemplate.GENERIC_NOTIFICATION,
+          subject: 'Transfert annulé au testeur',
+          variables: {
+            firstName: session.campaign.seller.firstName,
+            message: `Le transfert au testeur pour "${session.campaign.title}" a été annulé (reversal). L'équipe support a été notifiée.`,
+          },
+          metadata: { sessionId, type: NotificationType.SYSTEM_ALERT },
+        });
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'TRANSFER_REVERSED', {
       transferId: transfer.id,
-      amount: transfer.amount / 100,
+      amount: amountEur,
+      transactionId: transaction?.id || null,
+      walletRolledBack: !!transaction?.walletId,
     });
   }
 
@@ -698,21 +909,107 @@ export class WebhookHandlersService {
   // ==========================================================================
 
   async handleChargeRefunded(charge: Stripe.Charge) {
+    const amountRefunded = charge.amount_refunded / 100;
+    const paymentIntentId = typeof charge.payment_intent === 'string'
+      ? charge.payment_intent
+      : charge.payment_intent?.id ?? null;
+
+    // Find the campaign transaction linked to this charge's PaymentIntent
+    if (paymentIntentId) {
+      const transaction = await this.prisma.transaction.findFirst({
+        where: { stripePaymentIntentId: paymentIntentId },
+      });
+
+      if (transaction && transaction.status !== TransactionStatus.REFUNDED) {
+        // Check if fully or partially refunded
+        const isFullRefund = charge.amount_refunded >= charge.amount;
+
+        await this.prisma.$transaction(async (tx) => {
+          // Update the original transaction
+          await tx.transaction.update({
+            where: { id: transaction.id },
+            data: {
+              status: isFullRefund ? TransactionStatus.REFUNDED : transaction.status,
+              stripeRefundId: charge.refunds?.data?.[0]?.id ?? null,
+            },
+          });
+
+          // Update PlatformWallet — return escrow
+          const platformWallet = await tx.platformWallet.findFirst();
+          if (platformWallet) {
+            await tx.platformWallet.update({
+              where: { id: platformWallet.id },
+              data: {
+                escrowBalance: { decrement: new Decimal(amountRefunded) },
+                totalReceived: { decrement: new Decimal(amountRefunded) },
+              },
+            });
+          }
+        });
+
+        this.logger.log(`Charge ${charge.id} refunded ${amountRefunded}€ — Transaction ${transaction.id} updated`);
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'CHARGE_REFUNDED', {
       chargeId: charge.id,
-      amountRefunded: charge.amount_refunded / 100,
+      amountRefunded,
+      paymentIntentId,
     });
   }
 
   async handleRefundCreated(refund: Stripe.Refund) {
+    const amountEur = (refund.amount ?? 0) / 100;
+
+    // Link refund to transaction if possible
+    const paymentIntentId = typeof refund.payment_intent === 'string'
+      ? refund.payment_intent
+      : (refund.payment_intent as any)?.id ?? null;
+
+    if (paymentIntentId) {
+      const transaction = await this.prisma.transaction.findFirst({
+        where: { stripePaymentIntentId: paymentIntentId },
+      });
+
+      if (transaction) {
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { stripeRefundId: refund.id },
+        });
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'REFUND_CREATED', {
       refundId: refund.id,
-      amount: refund.amount / 100,
+      amount: amountEur,
       reason: refund.reason,
+      status: refund.status,
+      paymentIntentId,
     });
   }
 
   async handleRefundUpdated(refund: Stripe.Refund) {
+    // If refund succeeded, update transaction status
+    if (refund.status === 'succeeded') {
+      const paymentIntentId = typeof refund.payment_intent === 'string'
+        ? refund.payment_intent
+        : (refund.payment_intent as any)?.id ?? null;
+
+      if (paymentIntentId) {
+        const transaction = await this.prisma.transaction.findFirst({
+          where: { stripePaymentIntentId: paymentIntentId },
+        });
+
+        if (transaction && transaction.status !== TransactionStatus.REFUNDED) {
+          await this.prisma.transaction.update({
+            where: { id: transaction.id },
+            data: { status: TransactionStatus.REFUNDED },
+          });
+          this.logger.log(`Transaction ${transaction.id} marked REFUNDED (refund ${refund.id} succeeded)`);
+        }
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'REFUND_UPDATED', {
       refundId: refund.id,
       status: refund.status,
@@ -720,15 +1017,46 @@ export class WebhookHandlersService {
   }
 
   async handleRefundFailed(refund: Stripe.Refund) {
+    const amountEur = (refund.amount ?? 0) / 100;
+
     this.logger.error(`Refund failed: ${refund.id}`, {
-      amount: refund.amount,
+      amount: amountEur,
       failureReason: refund.failure_reason,
     });
 
+    // Notify the campaign seller if linked
+    const paymentIntentId = typeof refund.payment_intent === 'string'
+      ? refund.payment_intent
+      : (refund.payment_intent as any)?.id ?? null;
+
+    if (paymentIntentId) {
+      const campaign = await this.prisma.campaign.findFirst({
+        where: { stripePaymentIntentId: paymentIntentId },
+        include: { seller: true },
+      });
+
+      if (campaign) {
+        await this.notificationsService.queueEmail({
+          to: campaign.seller.email,
+          template: NotificationTemplate.GENERIC_NOTIFICATION,
+          subject: 'Échec du remboursement',
+          variables: {
+            firstName: campaign.seller.firstName,
+            message: `Le remboursement de ${amountEur}€ pour la campagne "${campaign.title}" a échoué. Notre équipe a été notifiée.`,
+          },
+          metadata: {
+            campaignId: campaign.id,
+            type: NotificationType.SYSTEM_ALERT,
+          },
+        });
+      }
+    }
+
     await this.auditService.log(null, AuditCategory.WALLET, 'REFUND_FAILED', {
       refundId: refund.id,
-      amount: refund.amount / 100,
+      amount: amountEur,
       failureReason: refund.failure_reason,
+      paymentIntentId,
     });
   }
 
