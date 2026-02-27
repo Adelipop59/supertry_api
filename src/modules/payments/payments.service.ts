@@ -333,20 +333,23 @@ export class PaymentsService {
     // Create wallet for tester if doesn't exist
     await this.walletService.createWallet(session.testerId);
 
-    // Vérifier stripeIdentityVerified pour TESTEUR
+    // Vérifier stripeIdentityVerified pour TESTEUR (uniquement après N tests complétés)
     const testerIdentity = await this.prisma.profile.findUnique({
       where: { id: session.testerId },
-      select: { stripeIdentityVerified: true },
+      select: { stripeIdentityVerified: true, completedSessionsCount: true },
     });
 
-    if (!testerIdentity?.stripeIdentityVerified) {
+    const kycThreshold = rules.kycRequiredAfterTests ?? 3;
+    const completedCount = testerIdentity?.completedSessionsCount ?? 0;
+
+    if (completedCount >= kycThreshold && !testerIdentity?.stripeIdentityVerified) {
       throw new BadRequestException({
-        message: 'Tester must complete Identity verification to receive payment',
+        message: `Tester must complete Identity verification after ${kycThreshold} completed tests to continue receiving payments`,
         identityRequired: true,
       });
     }
 
-    // NOTE: Pour les TESTEURS, on vérifie uniquement stripeIdentityVerified
+    // NOTE: Pour les TESTEURS, on vérifie uniquement stripeIdentityVerified (après le seuil KYC)
     // Les TESTEURS REÇOIVENT de l'argent (transfers), ils n'en PRENNENT PAS (charges)
     // Donc chargesEnabled n'est PAS requis pour les testeurs
 
