@@ -640,7 +640,7 @@ export class TestSessionsService {
         orderNumber: dto.orderNumber,
         productPrice: dto.productPrice,
         shippingCost: dto.shippingCost,
-        purchaseProofUrl: dto.purchaseProofUrl,
+        purchaseProofKeys: dto.purchaseProofKeys,
         purchasedAt: new Date(),
       },
       include: SESSION_INCLUDE,
@@ -997,6 +997,48 @@ export class TestSessionsService {
         skip,
         take: limit,
         include: SESSION_BASIC_INCLUDE,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.testSession.count({ where }),
+    ]);
+
+    return createPaginatedResponse(sessions as any, total, page, limit);
+  }
+
+  async findByCampaign(
+    campaignId: string,
+    sellerId: string,
+    filterDto: TestSessionFilterDto,
+  ): Promise<PaginatedResponse<TestSessionResponseDto>> {
+    // Verify campaign exists and belongs to seller
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, sellerId: true },
+    });
+
+    if (!campaign) {
+      throw new NotFoundException(`Campaign with ID '${campaignId}' not found`);
+    }
+
+    if (campaign.sellerId !== sellerId) {
+      throw new ForbiddenException('You can only view sessions for your own campaigns');
+    }
+
+    const { page = 1, limit = 10, status } = filterDto;
+    const skip = (page - 1) * limit;
+
+    const where: any = { campaignId };
+
+    if (status) {
+      where.status = status;
+    }
+
+    const [sessions, total] = await Promise.all([
+      this.prisma.testSession.findMany({
+        where,
+        skip,
+        take: limit,
+        include: SESSION_INCLUDE,
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.testSession.count({ where }),

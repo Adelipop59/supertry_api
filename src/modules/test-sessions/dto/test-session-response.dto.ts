@@ -146,10 +146,11 @@ export class TestSessionResponseDto {
   shippingCost?: number;
 
   @ApiPropertyOptional({
-    description: 'URL de la preuve d\'achat',
-    example: 'https://example.com/proof.jpg',
+    description: 'Clés S3 des preuves d\'achat (images et documents)',
+    example: ['purchases/session-id/screenshot.png', 'purchases/session-id/facture.pdf'],
+    type: [String],
   })
-  purchaseProofUrl?: string;
+  purchaseProofKeys?: string[];
 
   @ApiPropertyOptional({
     description: 'Date de l\'achat',

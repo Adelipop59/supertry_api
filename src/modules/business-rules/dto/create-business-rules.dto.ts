@@ -1,6 +1,6 @@
-import { IsNotEmpty, IsNumber, IsInt, Min, Max } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsInt, IsOptional, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateBusinessRulesDto {
   @ApiProperty({ description: 'Bonus accordé au testeur', example: 5.0 })
@@ -217,4 +217,16 @@ export class CreateBusinessRulesDto {
   @IsInt()
   @Min(0)
   xpFirstTestBonus: number;
+
+  // Fourchette de prix automatique
+  @ApiPropertyOptional({
+    description: 'Paliers de fourchette de prix automatique (JSON array)',
+    example: [
+      { maxPrice: 10, margin: 2, roundTo: 1 },
+      { maxPrice: 100, margin: 5, roundTo: 5 },
+      { maxPrice: 99999, margin: 10, roundTo: 10 },
+    ],
+  })
+  @IsOptional()
+  priceRangeTiers?: any;
 }

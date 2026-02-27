@@ -38,19 +38,19 @@ export class CreateOfferDto {
   @Min(0)
   shippingCost: number;
 
-  @ApiProperty({ description: 'Prix minimum de la fourchette', example: 25.00 })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'Prix minimum de la fourchette (calculé automatiquement, ignoré si fourni)', example: 25.00 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  priceRangeMin: number;
+  priceRangeMin?: number;
 
-  @ApiProperty({ description: 'Prix maximum de la fourchette', example: 35.00 })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'Prix maximum de la fourchette (calculé automatiquement, ignoré si fourni)', example: 35.00 })
+  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  priceRangeMax: number;
+  priceRangeMax?: number;
 
   @ApiProperty({ description: 'Prix révélé au testeur', example: true })
   @IsNotEmpty()

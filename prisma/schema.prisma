@@ -697,7 +697,7 @@ model TestSession {
 
   // Purchase proof
   orderNumber            String?   @map("order_number")
-  purchaseProofUrl       String?   @map("purchase_proof_url")
+  purchaseProofKeys      Json      @default("[]") @map("purchase_proof_keys")  // Array of S3 keys (images + documents)
   purchasedAt            DateTime? @map("purchased_at")
   orderNumberValidatedAt DateTime? @map("order_number_validated_at")
 
@@ -739,6 +739,7 @@ model TestSession {
   tips         Tip[]
   transactions Transaction[]
 
+  @@unique([testerId, campaignId])
   @@index([campaignId])
   @@index([testerId])
   @@index([status])
@@ -1194,6 +1195,10 @@ model BusinessRules {
   xpLowBonusAltruism   Int @default(40)  @map("xp_low_bonus_altruism")
   xpStreakBonus        Int @default(75)  @map("xp_streak_bonus")
   xpFirstTestBonus     Int @default(100) @map("xp_first_test_bonus")
+
+  // Fourchette de prix automatique par palier de prix produit
+  // Format JSON: [{ "maxPrice": 10, "margin": 2, "roundTo": 1 }, { "maxPrice": 100, "margin": 5, "roundTo": 5 }, { "maxPrice": 99999, "margin": 10, "roundTo": 10 }]
+  priceRangeTiers Json @default("[{\"maxPrice\":10,\"margin\":2,\"roundTo\":1},{\"maxPrice\":100,\"margin\":5,\"roundTo\":5},{\"maxPrice\":99999,\"margin\":10,\"roundTo\":10}]") @map("price_range_tiers")
 
   // Metadata
   version   Int      @default(1)

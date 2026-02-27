@@ -157,6 +157,22 @@ export class TestSessionsController {
   }
 
   // PRO endpoints
+  @Get('by-campaign/:campaignId')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Récupérer les sessions d\'une campagne (vendeur)' })
+  @ApiResponse({ status: 200, description: 'Liste paginée des sessions de la campagne' })
+  @ApiResponse({ status: 403, description: 'Accès refusé - campagne non possédée' })
+  @ApiResponse({ status: 404, description: 'Campagne non trouvée' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async findByCampaign(
+    @Param('campaignId') campaignId: string,
+    @CurrentUser('id') userId: string,
+    @Query() filterDto: TestSessionFilterDto,
+  ): Promise<PaginatedResponse<TestSessionResponseDto>> {
+    return this.testSessionsService.findByCampaign(campaignId, userId, filterDto);
+  }
+
   @Post(':id/accept')
   @Roles(UserRole.PRO, UserRole.ADMIN)
   @ApiOperation({ summary: 'Accepter la candidature d\'un testeur (vendeur)' })

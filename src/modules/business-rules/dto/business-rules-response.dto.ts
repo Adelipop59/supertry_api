@@ -99,6 +99,16 @@ export class BusinessRulesResponseDto {
   @ApiProperty({ description: 'XP bonus premier test', example: 100 })
   xpFirstTestBonus: number;
 
+  @ApiProperty({
+    description: 'Paliers de fourchette de prix automatique',
+    example: [
+      { maxPrice: 10, margin: 2, roundTo: 1 },
+      { maxPrice: 100, margin: 5, roundTo: 5 },
+      { maxPrice: 99999, margin: 10, roundTo: 10 },
+    ],
+  })
+  priceRangeTiers: any;
+
   @ApiProperty({ description: 'Date de création', example: '2025-01-15T10:30:00.000Z' })
   createdAt: Date;
 

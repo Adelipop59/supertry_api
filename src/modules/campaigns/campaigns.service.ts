@@ -123,9 +123,14 @@ export class CampaignsService {
       }
     }
 
+    // Auto-calculate price range from business rules
+    const rules = await this.businessRulesService.findLatest();
+    const priceRange = this.calculatePriceRange(createDto.offer.expectedPrice, rules.priceRangeTiers);
+    createDto.offer.priceRangeMin = priceRange.min;
+    createDto.offer.priceRangeMax = priceRange.max;
+
     // Validation 3: Calculate escrow amount (basé sur les MAX remboursables)
     // Commission plateforme (5€ testeur + 5€ SuperTry) lue depuis BusinessRules
-    const rules = await this.businessRulesService.findLatest();
     const platformCommission = rules.testerBonus + rules.supertryCommission;
 
     const maxPrice = createDto.offer.maxReimbursedPrice ?? createDto.offer.expectedPrice;
@@ -162,6 +167,8 @@ export class CampaignsService {
             create: {
               ...offer,
               productId: offer.productId,
+              priceRangeMin: offer.priceRangeMin!,
+              priceRangeMax: offer.priceRangeMax!,
             },
           },
           procedures:
@@ -513,6 +520,41 @@ export class CampaignsService {
     return age;
   }
 
+  /**
+   * Calcule automatiquement la fourchette de prix arrondie à partir du expectedPrice
+   * et des paliers définis dans BusinessRules.priceRangeTiers.
+   *
+   * Ex avec les paliers par défaut:
+   *   6.35€  → min 4€, max 8€       (marge ±2, arrondi à 1€)
+   *   28€    → min 25€, max 30€      (marge ±5, arrondi à 5€)
+   *   73€    → min 70€, max 75€      (marge ±5, arrondi à 5€)
+   *   150€   → min 140€, max 160€    (marge ±10, arrondi à 10€)
+   */
+  private calculatePriceRange(
+    expectedPrice: number,
+    priceRangeTiers: any,
+  ): { min: number; max: number } {
+    const tiers = (typeof priceRangeTiers === 'string'
+      ? JSON.parse(priceRangeTiers)
+      : priceRangeTiers) as Array<{ maxPrice: number; margin: number; roundTo: number }>;
+
+    // Trouver le palier correspondant au prix
+    const sortedTiers = [...tiers].sort((a, b) => a.maxPrice - b.maxPrice);
+    const tier = sortedTiers.find((t) => expectedPrice <= t.maxPrice)
+      || sortedTiers[sortedTiers.length - 1];
+
+    const { margin, roundTo } = tier;
+
+    // Arrondir vers le bas pour min, vers le haut pour max
+    const rawMin = expectedPrice - margin;
+    const rawMax = expectedPrice + margin;
+
+    const min = Math.max(0, Math.floor(rawMin / roundTo) * roundTo);
+    const max = Math.ceil(rawMax / roundTo) * roundTo;
+
+    return { min, max };
+  }
+
   async update(
     id: string,
     sellerId: string,
@@ -534,6 +576,14 @@ export class CampaignsService {
       throw new BadRequestException(
         'Cannot update an active campaign with ongoing sessions',
       );
+    }
+
+    // Recalculate price range if offer changes
+    if (updateDto.offer?.expectedPrice) {
+      const rules = await this.businessRulesService.findLatest();
+      const priceRange = this.calculatePriceRange(updateDto.offer.expectedPrice, rules.priceRangeTiers);
+      updateDto.offer.priceRangeMin = priceRange.min;
+      updateDto.offer.priceRangeMax = priceRange.max;
     }
 
     // Recalculate escrow if offer changes (basé sur les MAX remboursables)

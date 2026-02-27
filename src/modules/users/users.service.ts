@@ -1,5 +1,6 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
+import { MediaService, MediaFolder, MediaType } from '../media/media.service';
 import { Profile } from '@prisma/client';
 
 export interface CreateProfileDto {
@@ -17,7 +18,10 @@ export interface CreateProfileDto {
 
 @Injectable()
 export class UsersService {
-  constructor(private prismaService: PrismaService) {}
+  constructor(
+    private prismaService: PrismaService,
+    private mediaService: MediaService,
+  ) {}
 
   async createProfile(createProfileDto: CreateProfileDto): Promise<Profile> {
     // Check if email already exists
@@ -55,6 +59,91 @@ export class UsersService {
     return this.prismaService.profile.findUnique({
       where: { email },
     });
+  }
+
+  async getMe(userId: string): Promise<Omit<Profile, 'passwordHash'>> {
+    const profile = await this.prismaService.profile.findUnique({
+      where: { id: userId },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('Profil introuvable');
+    }
+
+    const { passwordHash, ...result } = profile;
+    return result;
+  }
+
+  async getPublicProfile(id: string): Promise<Partial<Profile>> {
+    const profile = await this.prismaService.profile.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        avatar: true,
+        role: true,
+        country: true,
+        createdAt: true,
+      },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('Profil introuvable');
+    }
+
+    return profile;
+  }
+
+  async updateMe(
+    userId: string,
+    data: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      avatar?: string;
+      deviceToken?: string;
+    },
+  ): Promise<Omit<Profile, 'passwordHash'>> {
+    const profile = await this.prismaService.profile.update({
+      where: { id: userId },
+      data,
+    });
+
+    const { passwordHash, ...result } = profile;
+    return result;
+  }
+
+  async updateAvatar(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<Omit<Profile, 'passwordHash'>> {
+    // Supprimer l'ancien avatar si existant
+    const currentProfile = await this.prismaService.profile.findUnique({
+      where: { id: userId },
+    });
+
+    if (currentProfile?.avatar) {
+      const oldKey = this.mediaService.extractKeyFromUrl(currentProfile.avatar);
+      if (oldKey) {
+        await this.mediaService.delete(oldKey).catch(() => {});
+      }
+    }
+
+    const uploadResult = await this.mediaService.upload(
+      file,
+      MediaFolder.PROFILES,
+      MediaType.IMAGE,
+      { subfolder: userId, makePublic: true },
+    );
+
+    const profile = await this.prismaService.profile.update({
+      where: { id: userId },
+      data: { avatar: uploadResult.url },
+    });
+
+    const { passwordHash, ...result } = profile;
+    return result;
   }
 
   async checkCountriesAvailability(countries: string[]): Promise<string[]> {

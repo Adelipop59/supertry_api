@@ -2,7 +2,8 @@ import {
   IsNotEmpty,
   IsString,
   IsNumber,
-  IsUrl,
+  IsArray,
+  ArrayMinSize,
   Min,
   MaxLength,
 } from 'class-validator';
@@ -43,10 +44,13 @@ export class SubmitPurchaseDto {
   shippingCost: number;
 
   @ApiProperty({
-    description: 'URL de la preuve d\'achat (capture d\'écran ou photo)',
-    example: 'https://example.com/proof.jpg',
+    description: 'Clés S3 des preuves d\'achat (images ou documents uploadés via /test-sessions/:id/upload-purchase-proof)',
+    example: ['purchases/session-id/screenshot.png', 'purchases/session-id/facture.pdf'],
+    type: [String],
   })
   @IsNotEmpty()
-  @IsUrl()
-  purchaseProofUrl: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  purchaseProofKeys: string[];
 }
