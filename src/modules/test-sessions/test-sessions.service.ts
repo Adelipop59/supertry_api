@@ -27,6 +27,7 @@ import {
 import { SessionStatus, CampaignMarketplaceMode, AuditCategory, TesterTier } from '@prisma/client';
 import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast } from '../gamification/gamification.constants';
+import { MessagesService } from '../messages/messages.service';
 
 const SESSION_INCLUDE = {
   campaign: {
@@ -112,6 +113,7 @@ export class TestSessionsService {
     private auditService: AuditService,
     private businessRulesService: BusinessRulesService,
     private gamificationService: GamificationService,
+    private messagesService: MessagesService,
   ) {}
 
   async apply(
@@ -341,6 +343,12 @@ export class TestSessionsService {
       },
       include: SESSION_INCLUDE,
     });
+
+    // Create system message to initiate the chat
+    await this.messagesService.createSystemMessage(
+      sessionId,
+      'Candidature acceptée ! Vous pouvez maintenant échanger par message.',
+    );
 
     return updatedSession as any;
   }
