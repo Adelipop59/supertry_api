@@ -86,6 +86,25 @@ export class PaymentsController {
     };
   }
 
+  @ApiOperation({ summary: '[Admin] Retry le paiement d\'une session COMPLETED sans paiement' })
+  @ApiResponse({ status: 200, description: 'Paiement retenté avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @Post('admin/retry-session-payment/:sessionId')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  async retrySessionPayment(@Param('sessionId') sessionId: string) {
+    const result = await this.paymentsService.processTestCompletion(sessionId);
+    return {
+      message: 'Payment retry successful',
+      sessionId,
+      testerTransferId: result.testerTransfer?.id,
+      testerTransactionId: result.testerTransaction.id,
+      commissionTransactionId: result.commissionTransaction.id,
+      amount: result.testerTransaction.amount,
+    };
+  }
+
   @ApiOperation({ summary: 'Rembourser les slots non utilisés' })
   @ApiResponse({ status: 200, description: 'Remboursement effectué avec succès' })
   @ApiAuthResponses()
