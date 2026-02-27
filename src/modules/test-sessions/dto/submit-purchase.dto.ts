@@ -1,14 +1,14 @@
 import {
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsNumber,
   IsArray,
-  ArrayMinSize,
   Min,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SubmitPurchaseDto {
   @ApiProperty({
@@ -43,14 +43,13 @@ export class SubmitPurchaseDto {
   @Min(0)
   shippingCost: number;
 
-  @ApiProperty({
-    description: 'Clés S3 des preuves d\'achat (images ou documents uploadés via /test-sessions/:id/upload-purchase-proof)',
+  @ApiPropertyOptional({
+    description: 'Clés S3 des preuves d\'achat (images ou documents uploadés via /media/upload)',
     example: ['purchases/session-id/screenshot.png', 'purchases/session-id/facture.pdf'],
     type: [String],
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsArray()
-  @ArrayMinSize(1)
   @IsString({ each: true })
-  purchaseProofKeys: string[];
+  purchaseProofKeys?: string[];
 }
