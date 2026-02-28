@@ -33,12 +33,12 @@ export class PaymentCaptureScheduler {
     const rules = await this.businessRulesService.findLatest();
     const captureDelayMinutes = rules.captureDelayMinutes;
 
-    // Trouver les campagnes PENDING_PAYMENT avec paymentAuthorizedAt > captureDelayMinutes
+    // Trouver les campagnes PENDING_ACTIVATION avec paymentAuthorizedAt > captureDelayMinutes
     const cutoffDate = new Date(Date.now() - captureDelayMinutes * 60 * 1000);
 
     const campaigns = await this.prisma.campaign.findMany({
       where: {
-        status: CampaignStatus.PENDING_PAYMENT,
+        status: { in: [CampaignStatus.PENDING_PAYMENT, CampaignStatus.PENDING_ACTIVATION] },
         paymentAuthorizedAt: {
           not: null,
           lte: cutoffDate,
@@ -194,7 +194,7 @@ export class PaymentCaptureScheduler {
 
     const staleCampaigns = await this.prisma.campaign.findMany({
       where: {
-        status: CampaignStatus.PENDING_PAYMENT,
+        status: { in: [CampaignStatus.PENDING_PAYMENT, CampaignStatus.PENDING_ACTIVATION] },
         paymentAuthorizedAt: {
           not: null,
           lte: staleCutoff,

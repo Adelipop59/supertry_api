@@ -506,7 +506,7 @@ export class WebhookHandlersService {
         select: { id: true, title: true, sellerId: true, status: true },
       });
 
-      if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT) {
+      if (campaign && (campaign.status === CampaignStatus.PENDING_PAYMENT || campaign.status === CampaignStatus.PENDING_ACTIVATION)) {
         await this.prisma.campaign.update({
           where: { id: campaignId },
           data: { status: CampaignStatus.CANCELLED },
@@ -574,21 +574,28 @@ export class WebhookHandlersService {
         select: { id: true, status: true, paymentAuthorizedAt: true, stripePaymentIntentId: true },
       });
 
-      if (campaign && campaign.status === CampaignStatus.PENDING_PAYMENT) {
+      if (campaign && (campaign.status === CampaignStatus.PENDING_PAYMENT || campaign.status === CampaignStatus.PENDING_ACTIVATION)) {
         // Idempotence: si paymentAuthorizedAt est déjà set pour CE PI, ne pas re-update (double delivery)
         if (campaign.stripePaymentIntentId === paymentIntent.id && campaign.paymentAuthorizedAt) {
           this.logger.log(`Campaign ${campaignId} already authorized for PI ${paymentIntent.id}, skipping (idempotent)`);
         } else if (campaign.stripePaymentIntentId === paymentIntent.id || !campaign.paymentAuthorizedAt) {
           // PI correspond au dernier stocké, ou aucun paymentAuthorizedAt n'est encore set
+          // Calculer la fin de la grace period
+          const rules = await this.prisma.businessRules.findFirst({ orderBy: { createdAt: 'desc' } });
+          const captureDelayMinutes = rules?.captureDelayMinutes ?? 60;
+          const now = new Date();
+          const gracePeriodEnd = new Date(now.getTime() + captureDelayMinutes * 60 * 1000);
+
           await this.prisma.campaign.update({
             where: { id: campaignId },
             data: {
-              paymentAuthorizedAt: new Date(),
+              paymentAuthorizedAt: now,
               stripePaymentIntentId: paymentIntent.id,
+              activationGracePeriodEndsAt: gracePeriodEnd,
             },
           });
 
-          this.logger.log(`Campaign ${campaignId} payment authorized (PI: ${paymentIntent.id}), grace period started`);
+          this.logger.log(`Campaign ${campaignId} payment authorized (PI: ${paymentIntent.id}), grace period ends at ${gracePeriodEnd.toISOString()}`);
         } else {
           this.logger.warn(`Campaign ${campaignId} has different PI (${campaign.stripePaymentIntentId}), skipping PI ${paymentIntent.id}`);
         }

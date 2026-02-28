@@ -572,12 +572,19 @@ export class StripeController {
       // Le PRO peut annuler dans 1h sans frais
       this.logger.log(`━━━ MANUAL CAPTURE: PI ${paymentIntentId} requires_capture ━━━`);
 
+      // Calculer la fin de la grace period
+      const rules = await this.prisma.businessRules.findFirst({ orderBy: { createdAt: 'desc' } });
+      const captureDelayMinutes = rules?.captureDelayMinutes ?? 60;
+      const now = new Date();
+      const gracePeriodEnd = new Date(now.getTime() + captureDelayMinutes * 60 * 1000);
+
       await this.prisma.campaign.update({
         where: { id: campaign.id },
         data: {
           status: 'PENDING_PAYMENT' as any,
           stripePaymentIntentId: paymentIntentId,
-          paymentAuthorizedAt: new Date(),
+          paymentAuthorizedAt: now,
+          activationGracePeriodEndsAt: gracePeriodEnd,
         },
       });
 

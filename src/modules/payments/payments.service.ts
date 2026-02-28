@@ -120,6 +120,20 @@ export class PaymentsService {
       throw new ForbiddenException('Not authorized');
     }
 
+    // Idempotency: block payment if campaign is not in DRAFT status
+    if (campaign.status !== CampaignStatus.DRAFT) {
+      throw new BadRequestException(
+        `Campaign is already in status "${campaign.status}". Payment can only be processed for DRAFT campaigns.`,
+      );
+    }
+
+    // Idempotency: block if a PaymentIntent already exists for this campaign
+    if (campaign.stripePaymentIntentId) {
+      throw new BadRequestException(
+        'A payment has already been initiated for this campaign. Please contact support if you believe this is an error.',
+      );
+    }
+
     // Calculate escrow
     const escrow = await this.calculateCampaignEscrow(campaignId);
 

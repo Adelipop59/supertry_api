@@ -9,6 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CampaignsService } from './campaigns.service';
@@ -245,9 +246,24 @@ export class CampaignsController {
       }),
       this.prisma.campaign.findUnique({
         where: { id: campaignId },
-        select: { title: true, stripePaymentIntentId: true, offers: { select: { productName: true } } },
+        select: { title: true, stripePaymentIntentId: true, paymentAuthorizedAt: true, offers: { select: { productName: true } } },
       }),
     ]);
+
+    // Si un PI existe et est déjà autorisé (requires_capture), bloquer la création d'un nouveau
+    if (campaignData?.stripePaymentIntentId && campaignData?.paymentAuthorizedAt) {
+      try {
+        const existingPi = await this.stripeService.getPaymentIntent(campaignData.stripePaymentIntentId);
+        if (existingPi.status === 'requires_capture') {
+          throw new BadRequestException(
+            'Le paiement est déjà autorisé et en attente de capture. La campagne sera activée automatiquement.',
+          );
+        }
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        // PI introuvable ou expiré → continuer
+      }
+    }
 
     // Annuler l'ancien PaymentIntent s'il existe (évite les PI orphelins sur Stripe)
     if (campaignData?.stripePaymentIntentId) {

@@ -911,12 +911,15 @@ export class TestSessionsService {
       throw new NotFoundException('Offer not found');
     }
 
-    // Calculate reward amount: REAL productPrice + REAL shippingCost + bonus
-    // Use the actual amounts paid by the tester, not the expected/max amounts
+    // Calculate reward amount: REAL productPrice + REAL shippingCost + testerBonus + proBonus
+    // Must match the calculation in paymentsService.processTestCompletion()
+    const rules = await this.businessRulesService.findLatest();
+    const testerBonus = rules?.testerBonus ?? 5;
     const rewardAmount =
       Number(session.productPrice) +    // Real product price paid by tester
       Number(session.shippingCost) +   // Real shipping cost paid by tester
-      Number(offer.bonus);              // Bonus is always fixed
+      testerBonus +                     // Fixed tester fee (BusinessRules)
+      Number(offer.bonus);              // Pro bonus
 
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
