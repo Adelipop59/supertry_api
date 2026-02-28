@@ -2,6 +2,7 @@ import { Controller, Get, Post, Param, Body, HttpCode, HttpStatus } from '@nestj
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { StripeService } from '../stripe/stripe.service';
+import { InvoiceService } from './invoice.service';
 import { ProcessCampaignPaymentDto } from './dto/process-campaign-payment.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -14,16 +15,20 @@ export class PaymentsController {
   constructor(
     private readonly paymentsService: PaymentsService,
     private readonly stripeService: StripeService,
+    private readonly invoiceService: InvoiceService,
   ) {}
 
-  @ApiOperation({ summary: 'Calculer l\'escrow d\'une campagne' })
-  @ApiResponse({ status: 200, description: 'Montant de l\'escrow calculé avec succès' })
+  @ApiOperation({ summary: 'Récapitulatif du prix / escrow d\'une campagne' })
+  @ApiResponse({ status: 200, description: 'Récapitulatif du prix retourné avec succès' })
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
   @Get('campaigns/:id/escrow')
-  @Roles(UserRole.PRO)
-  async calculateEscrow(@Param('id') campaignId: string) {
-    return this.paymentsService.calculateCampaignEscrow(campaignId);
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  async calculateEscrow(
+    @Param('id') campaignId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.paymentsService.calculateCampaignEscrow(campaignId, userId);
   }
 
   @ApiOperation({ summary: 'Créer une session de paiement' })
@@ -125,5 +130,18 @@ export class PaymentsController {
       refundId: result.refund.id,
       transactionId: result.transaction.id,
     };
+  }
+
+  @ApiOperation({ summary: 'Récupérer la facture Stripe d\'une campagne payée' })
+  @ApiResponse({ status: 200, description: 'URL de la facture retournée avec succès' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @Get('campaigns/:id/invoice')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  async getInvoice(
+    @Param('id') campaignId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.invoiceService.getOrCreateInvoice(campaignId, userId);
   }
 }

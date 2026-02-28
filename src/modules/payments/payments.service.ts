@@ -42,17 +42,7 @@ export class PaymentsService {
   // Campaign Escrow Calculation
   // ============================================================================
 
-  async calculateCampaignEscrow(campaignId: string): Promise<{
-    productCost: number;
-    shippingCost: number;
-    platformCommission: number;
-    proBonus: number;
-    supertryCommission: number;
-    stripeCoverage: number;
-    perTester: number;
-    total: number;
-    totalSlots: number;
-  }> {
+  async calculateCampaignEscrow(campaignId: string, userId?: string) {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
       include: { offers: true },
@@ -62,23 +52,65 @@ export class PaymentsService {
       throw new NotFoundException('Campaign or offer not found');
     }
 
-    const rules = await this.businessRulesService.findLatest();
-    const platformCommission = rules.testerBonus + rules.supertryCommission;
+    // Si userId fourni, vérifier ownership (PRO owner ou ADMIN)
+    if (userId) {
+      const user = await this.prisma.profile.findUnique({
+        where: { id: userId },
+        select: { id: true, role: true },
+      });
 
-    const productCost = Number(campaign.offers[0].maxReimbursedPrice ?? campaign.offers[0].expectedPrice);
-    const shippingCost = Number(campaign.offers[0].maxReimbursedShipping ?? campaign.offers[0].shippingCost);
-    const proBonus = Number(campaign.offers[0].bonus ?? 0);
+      if (user?.role !== 'ADMIN' && campaign.sellerId !== userId) {
+        throw new ForbiddenException('Not authorized to view this campaign price summary');
+      }
+    }
+
+    const rules = await this.businessRulesService.findLatest();
+
+    const offer = campaign.offers[0];
+    const productCost = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
+    const shippingCost = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
+    const testerBonus = rules.testerBonus;
+    const supertryCommission = rules.supertryCommission;
+    const proBonus = Number(offer.bonus ?? 0);
 
     // baseCost = maxPrice + maxShipping + commission plateforme + bonus PRO (SANS couverture Stripe)
+    const platformCommission = testerBonus + supertryCommission;
     const baseCostWithoutCommission = productCost + shippingCost + platformCommission + proBonus;
 
     // Calcul via BusinessRules: commission fixe + 3.5% couverture Stripe
     const { commissionFixedFee, stripeCoverage, totalPerTester } =
       await this.businessRulesService.calculateCommission(baseCostWithoutCommission);
 
-    const total = Math.round(totalPerTester * campaign.totalSlots * 100) / 100;
+    // Per tester WITHOUT Stripe fees
+    const perTesterWithoutStripeFees = Math.round((baseCostWithoutCommission + commissionFixedFee) * 100) / 100;
+
+    const totalSlots = campaign.totalSlots;
 
     return {
+      campaignId: campaign.id,
+      campaignTitle: campaign.title,
+      totalSlots,
+      // Détail par ligne
+      breakdown: {
+        productCost,
+        shippingCost,
+        testerBonus,
+        supertryCommission,
+        commissionFixedFee,
+        proBonus,
+        stripeFees: stripeCoverage,
+      },
+      // Récap par testeur
+      perTesterSummary: {
+        withoutStripeFees: perTesterWithoutStripeFees,
+        withStripeFees: totalPerTester,
+      },
+      // Récap total campagne
+      totalSummary: {
+        withoutStripeFees: Math.round(perTesterWithoutStripeFees * totalSlots * 100) / 100,
+        withStripeFees: Math.round(totalPerTester * totalSlots * 100) / 100,
+      },
+      // Champs flat (utilisés en interne par processCampaignPayment, refundUnusedSlots, etc.)
       productCost,
       shippingCost,
       platformCommission,
@@ -86,8 +118,7 @@ export class PaymentsService {
       supertryCommission: commissionFixedFee,
       stripeCoverage,
       perTester: totalPerTester,
-      total,
-      totalSlots: campaign.totalSlots,
+      total: Math.round(totalPerTester * totalSlots * 100) / 100,
     };
   }
 
@@ -356,7 +387,12 @@ export class PaymentsService {
     const kycThreshold = rules.kycRequiredAfterTests ?? 3;
     const completedCount = testerIdentity?.completedSessionsCount ?? 0;
 
-    if (completedCount >= kycThreshold && !testerIdentity?.stripeIdentityVerified) {
+    // IMPORTANT: Utiliser ">" (strictement supérieur) et non ">=" car completedSessionsCount
+    // est déjà incrémenté pour le test en cours AVANT l'appel à processTestCompletion.
+    // À la candidature (apply), le check utilise ">=" sur le compteur AVANT incrément.
+    // Donc ici ">" sur le compteur APRÈS incrément = même filtre effectif.
+    // Résultat: si le testeur a pu postuler, il sera forcément payé.
+    if (completedCount > kycThreshold && !testerIdentity?.stripeIdentityVerified) {
       throw new BadRequestException({
         message: `Tester must complete Identity verification after ${kycThreshold} completed tests to continue receiving payments`,
         identityRequired: true,

@@ -20,10 +20,13 @@ export class CampaignActivationScheduler {
    * CRON toutes les 2 minutes: active automatiquement les campagnes PENDING_ACTIVATION
    * dont la grace period est terminée (activationGracePeriodEndsAt < maintenant)
    */
-  @Cron('*/2 * * * *', {
-    name: 'campaign-auto-activation',
-    timeZone: 'Europe/Paris',
-  })
+  @Cron(
+    process.env.NODE_ENV === 'production' ? '*/2 * * * *' : '*/10 * * * * *',
+    {
+      name: 'campaign-auto-activation',
+      timeZone: 'Europe/Paris',
+    },
+  )
   async handleAutoActivation() {
     const now = new Date();
 

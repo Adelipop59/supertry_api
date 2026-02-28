@@ -100,11 +100,12 @@ export class BusinessRulesResponseDto {
   xpFirstTestBonus: number;
 
   @ApiProperty({
-    description: 'Paliers de fourchette de prix automatique',
+    description: 'Paliers de fourchette de prix automatique par tranches fixes',
     example: [
-      { maxPrice: 10, margin: 2, roundTo: 1 },
-      { maxPrice: 100, margin: 5, roundTo: 5 },
-      { maxPrice: 99999, margin: 10, roundTo: 10 },
+      { maxPrice: 50, step: 5 },
+      { maxPrice: 100, step: 10 },
+      { maxPrice: 200, step: 25 },
+      { maxPrice: 99999, step: 50 },
     ],
   })
   priceRangeTiers: any;

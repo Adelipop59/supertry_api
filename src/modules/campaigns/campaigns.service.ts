@@ -521,14 +521,17 @@ export class CampaignsService {
   }
 
   /**
-   * Calcule automatiquement la fourchette de prix arrondie à partir du expectedPrice
+   * Calcule automatiquement la fourchette de prix à partir du expectedPrice
    * et des paliers définis dans BusinessRules.priceRangeTiers.
    *
-   * Ex avec les paliers par défaut:
-   *   6.35€  → min 4€, max 8€       (marge ±2, arrondi à 1€)
-   *   28€    → min 25€, max 30€      (marge ±5, arrondi à 5€)
-   *   73€    → min 70€, max 75€      (marge ±5, arrondi à 5€)
-   *   150€   → min 140€, max 160€    (marge ±10, arrondi à 10€)
+   * Logique : tranches fixes par palier. Le prix est arrondi au plancher
+   * du multiple de `step`, puis min = plancher, max = plancher + step.
+   *
+   * Paliers par défaut:
+   *   0-50€   → step 5€   : 23€ → 20-25€, 7€ → 5-10€, 49€ → 45-50€
+   *   50-100€ → step 10€  : 86€ → 80-90€, 53€ → 50-60€
+   *   100-200€→ step 25€  : 145€ → 125-150€, 180€ → 175-200€
+   *   200€+   → step 50€  : 230€ → 200-250€, 310€ → 300-350€
    */
   private calculatePriceRange(
     expectedPrice: number,
@@ -536,21 +539,18 @@ export class CampaignsService {
   ): { min: number; max: number } {
     const tiers = (typeof priceRangeTiers === 'string'
       ? JSON.parse(priceRangeTiers)
-      : priceRangeTiers) as Array<{ maxPrice: number; margin: number; roundTo: number }>;
+      : priceRangeTiers) as Array<{ maxPrice: number; step: number }>;
 
     // Trouver le palier correspondant au prix
     const sortedTiers = [...tiers].sort((a, b) => a.maxPrice - b.maxPrice);
     const tier = sortedTiers.find((t) => expectedPrice <= t.maxPrice)
       || sortedTiers[sortedTiers.length - 1];
 
-    const { margin, roundTo } = tier;
+    const { step } = tier;
 
-    // Arrondir vers le bas pour min, vers le haut pour max
-    const rawMin = expectedPrice - margin;
-    const rawMax = expectedPrice + margin;
-
-    const min = Math.max(0, Math.floor(rawMin / roundTo) * roundTo);
-    const max = Math.ceil(rawMax / roundTo) * roundTo;
+    // Plancher = plus grand multiple de step inférieur ou égal au prix
+    const min = Math.max(0, Math.floor(expectedPrice / step) * step);
+    const max = min + step;
 
     return { min, max };
   }

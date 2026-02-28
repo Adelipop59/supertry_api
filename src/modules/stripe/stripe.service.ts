@@ -111,6 +111,21 @@ export class StripeService {
     }
   }
 
+  async getConnectBalanceTransactions(
+    accountId: string,
+    params: { limit?: number } = {},
+  ): Promise<Stripe.ApiList<Stripe.BalanceTransaction>> {
+    try {
+      return await this.stripe.balanceTransactions.list(
+        { limit: params.limit || 10 },
+        { stripeAccount: accountId },
+      );
+    } catch (error) {
+      this.logger.error(`Failed to list balance transactions for ${accountId}: ${error.message}`);
+      throw new InternalServerErrorException('Failed to list balance transactions');
+    }
+  }
+
   async getKycStatus(accountId: string): Promise<KycStatusResponseDto> {
     try {
       const account = await this.stripe.accounts.retrieve(accountId);
@@ -794,6 +809,51 @@ export class StripeService {
         throw new BadRequestException('Payouts not enabled for this account');
       }
 
+      // Vérifier le solde disponible sur le Connect account
+      const balance = await this.stripe.balance.retrieve({
+        stripeAccount: stripeConnectAccountId,
+      });
+      const availableBalance = balance.available
+        .filter((b) => b.currency === currency)
+        .reduce((sum, b) => sum + b.amount, 0);
+      const availableInEuros = availableBalance / 100;
+      const pendingBalance = balance.pending
+        .filter((b) => b.currency === currency)
+        .reduce((sum, b) => sum + b.amount, 0);
+      const pendingInEuros = pendingBalance / 100;
+
+      if (amount > availableInEuros) {
+        // Récupérer la date de disponibilité des fonds pending
+        let nextAvailableDate: string | null = null;
+        if (pendingBalance > 0) {
+          try {
+            const pendingTxns = await this.stripe.balanceTransactions.list(
+              { limit: 10 },
+              { stripeAccount: stripeConnectAccountId },
+            );
+            const pendingTxn = pendingTxns.data.find((t) => t.status === 'pending');
+            if (pendingTxn?.available_on) {
+              nextAvailableDate = new Date(pendingTxn.available_on * 1000).toLocaleDateString('fr-FR', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              });
+            }
+          } catch {
+            // Silencieux si la récupération échoue
+          }
+        }
+
+        const dateInfo = nextAvailableDate
+          ? `Prochaine disponibilité : ${nextAvailableDate}.`
+          : `Les fonds deviennent disponibles sous quelques jours.`;
+
+        throw new BadRequestException(
+          `Solde disponible insuffisant pour ce retrait. Disponible maintenant : ${availableInEuros.toFixed(2)}€. ` +
+          `En cours de traitement : ${pendingInEuros.toFixed(2)}€. ${dateInfo}`,
+        );
+      }
+
       // Créer payout depuis Connect account vers IBAN
       const payout = await this.stripe.payouts.create(
         {
@@ -810,6 +870,9 @@ export class StripeService {
       this.logger.log(`Payout created: ${payout.id} - ${amount}€ from ${stripeConnectAccountId}`);
       return payout;
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       this.logger.error(`Failed to create Payout: ${error.message}`, error.stack);
       throw new InternalServerErrorException(`Payout failed: ${error.message}`);
     }
@@ -876,6 +939,132 @@ export class StripeService {
       this.logger.error(`Failed to create test TopUp: ${error.message}`);
       throw new InternalServerErrorException(`Test TopUp failed: ${error.message}`);
     }
+  }
+
+  // ============================================================================
+  // Customers & Invoicing (Facturation PRO)
+  // ============================================================================
+
+  /**
+   * Récupère ou crée un Stripe Customer pour un PRO (pour la facturation)
+   */
+  async getOrCreateCustomer(profile: {
+    id: string;
+    email: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    companyName?: string | null;
+    stripeCustomerId?: string | null;
+  }): Promise<string> {
+    // Si le profil a déjà un customerId, vérifier qu'il existe encore
+    if (profile.stripeCustomerId) {
+      try {
+        await this.stripe.customers.retrieve(profile.stripeCustomerId);
+        return profile.stripeCustomerId;
+      } catch {
+        this.logger.warn(`Stripe Customer ${profile.stripeCustomerId} not found, creating new one`);
+      }
+    }
+
+    // Créer un nouveau customer
+    const name = profile.companyName
+      || [profile.firstName, profile.lastName].filter(Boolean).join(' ')
+      || profile.email;
+
+    const customer = await this.stripe.customers.create({
+      email: profile.email,
+      name,
+      metadata: {
+        profileId: profile.id,
+        platform: 'supertry',
+        env: process.env.NODE_ENV || 'development',
+      },
+    });
+
+    // Sauvegarder le customerId sur le profil
+    await this.prisma.profile.update({
+      where: { id: profile.id },
+      data: { stripeCustomerId: customer.id },
+    });
+
+    this.logger.log(`Stripe Customer created: ${customer.id} for profile ${profile.id}`);
+    return customer.id;
+  }
+
+  /**
+   * Crée une facture Stripe avec line items pour une campagne payée
+   * La facture est finalisée et marquée comme payée (out-of-band)
+   */
+  async createInvoiceForCampaign(
+    customerId: string,
+    escrow: {
+      breakdown: {
+        productCost: number;
+        shippingCost: number;
+        testerBonus: number;
+        supertryCommission: number;
+        commissionFixedFee: number;
+        proBonus: number;
+        stripeFees: number;
+      };
+      totalSlots: number;
+      campaignTitle: string;
+    },
+    campaignId: string,
+  ): Promise<{ invoiceId: string; invoiceUrl: string; invoicePdf: string }> {
+    const { breakdown, totalSlots } = escrow;
+
+    // Créer les Invoice Items (en centimes)
+    const lineItems: { description: string; amount: number }[] = [
+      { description: `Remboursement produit (x${totalSlots})`, amount: breakdown.productCost * totalSlots },
+      { description: `Frais de port (x${totalSlots})`, amount: breakdown.shippingCost * totalSlots },
+      { description: `Bonus testeur (x${totalSlots})`, amount: breakdown.testerBonus * totalSlots },
+      { description: `Bonus PRO (x${totalSlots})`, amount: breakdown.proBonus * totalSlots },
+      { description: `Commission SuperTry (x${totalSlots})`, amount: breakdown.supertryCommission * totalSlots },
+      { description: `Frais fixes (x${totalSlots})`, amount: breakdown.commissionFixedFee * totalSlots },
+      { description: `Couverture frais Stripe (x${totalSlots})`, amount: breakdown.stripeFees * totalSlots },
+    ];
+
+    // Filtrer les lignes à 0
+    const nonZeroItems = lineItems.filter(item => item.amount > 0);
+
+    for (const item of nonZeroItems) {
+      await this.stripe.invoiceItems.create({
+        customer: customerId,
+        amount: Math.round(item.amount * 100),
+        currency: 'eur',
+        description: item.description,
+      });
+    }
+
+    // Créer l'invoice
+    const invoice = await this.stripe.invoices.create({
+      customer: customerId,
+      auto_advance: false,
+      collection_method: 'send_invoice',
+      days_until_due: 0,
+      metadata: {
+        campaignId,
+        platform: 'supertry',
+      },
+      description: `Campagne SuperTry : ${escrow.campaignTitle}`,
+    });
+
+    // Finaliser l'invoice
+    const finalizedInvoice = await this.stripe.invoices.finalizeInvoice(invoice.id);
+
+    // Marquer comme payée (le paiement a déjà été effectué via PaymentIntent)
+    const paidInvoice = await this.stripe.invoices.pay(invoice.id, {
+      paid_out_of_band: true,
+    });
+
+    this.logger.log(`Invoice created and paid: ${paidInvoice.id} for campaign ${campaignId}`);
+
+    return {
+      invoiceId: paidInvoice.id,
+      invoiceUrl: paidInvoice.hosted_invoice_url || finalizedInvoice.hosted_invoice_url || '',
+      invoicePdf: paidInvoice.invoice_pdf || finalizedInvoice.invoice_pdf || '',
+    };
   }
 
   // ============================================================================

@@ -221,6 +221,9 @@ model Profile {
   stripeIdentitySessionId String?  @map("stripe_identity_session_id") // ID de la dernière session Identity
   stripeIdentityLastError String?  @map("stripe_identity_last_error") // Dernier motif de rejet (selfie_face_mismatch, document_expired, etc.)
 
+  // Stripe Customer (pour facturation PRO)
+  stripeCustomerId String? @unique @map("stripe_customer_id")
+
   // Info spécifique testeur (USER)
   birthDate              DateTime? @map("birth_date") // Date de naissance pour calculer l'âge
   gender                 String? // M, F, Other
@@ -387,6 +390,10 @@ model Campaign {
   // Manual Capture tracking
   paymentAuthorizedAt DateTime? @map("payment_authorized_at")
   paymentCapturedAt   DateTime? @map("payment_captured_at")
+
+  // Stripe Invoice (facture PRO)
+  stripeInvoiceId  String? @unique @map("stripe_invoice_id")
+  stripeInvoiceUrl String?          @map("stripe_invoice_url")
 
   // Cancellation tracking
   activationGracePeriodEndsAt DateTime? @map("activation_grace_period_ends_at")
@@ -1197,8 +1204,8 @@ model BusinessRules {
   xpFirstTestBonus     Int @default(100) @map("xp_first_test_bonus")
 
   // Fourchette de prix automatique par palier de prix produit
-  // Format JSON: [{ "maxPrice": 10, "margin": 2, "roundTo": 1 }, { "maxPrice": 100, "margin": 5, "roundTo": 5 }, { "maxPrice": 99999, "margin": 10, "roundTo": 10 }]
-  priceRangeTiers Json @default("[{\"maxPrice\":10,\"margin\":2,\"roundTo\":1},{\"maxPrice\":100,\"margin\":5,\"roundTo\":5},{\"maxPrice\":99999,\"margin\":10,\"roundTo\":10}]") @map("price_range_tiers")
+  // Format JSON: [{ "maxPrice": 50, "step": 5 }, { "maxPrice": 100, "step": 10 }, { "maxPrice": 200, "step": 25 }, { "maxPrice": 99999, "step": 50 }]
+  priceRangeTiers Json @default("[{\"maxPrice\":50,\"step\":5},{\"maxPrice\":100,\"step\":10},{\"maxPrice\":200,\"step\":25},{\"maxPrice\":99999,\"step\":50}]") @map("price_range_tiers")
 
   // Metadata
   version   Int      @default(1)

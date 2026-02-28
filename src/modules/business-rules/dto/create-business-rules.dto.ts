@@ -218,13 +218,14 @@ export class CreateBusinessRulesDto {
   @Min(0)
   xpFirstTestBonus: number;
 
-  // Fourchette de prix automatique
+  // Fourchette de prix automatique par tranches fixes
   @ApiPropertyOptional({
-    description: 'Paliers de fourchette de prix automatique (JSON array)',
+    description: 'Paliers de fourchette de prix automatique (JSON array). step = taille de la tranche.',
     example: [
-      { maxPrice: 10, margin: 2, roundTo: 1 },
-      { maxPrice: 100, margin: 5, roundTo: 5 },
-      { maxPrice: 99999, margin: 10, roundTo: 10 },
+      { maxPrice: 50, step: 5 },
+      { maxPrice: 100, step: 10 },
+      { maxPrice: 200, step: 25 },
+      { maxPrice: 99999, step: 50 },
     ],
   })
   @IsOptional()
