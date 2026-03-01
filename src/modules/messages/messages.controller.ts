@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
+import { MessagesGateway } from './messages.gateway';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -18,7 +19,10 @@ import { UserRole } from '@prisma/client';
 @ApiTags('Messages')
 @Controller('messages')
 export class MessagesController {
-  constructor(private readonly messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    private readonly messagesGateway: MessagesGateway,
+  ) {}
 
   @Get('conversations')
   @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
@@ -69,7 +73,9 @@ export class MessagesController {
       userId,
       userRole,
     );
-    return this.messagesService.createMessage(dto, userId);
+    const message = await this.messagesService.createMessage(dto, userId);
+    this.messagesGateway.emitToSession(dto.sessionId, 'new_message', message);
+    return message;
   }
 
   @Post(':sessionId/read')
