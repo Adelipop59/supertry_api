@@ -74,11 +74,18 @@ export class StripeController {
       };
     }
 
-    // Create Stripe Connect account
+    // Create Stripe Connect account with prefilled individual data
     const account = await this.stripeService.createConnectAccount(
       createDto.email,
       createDto.country,
       createDto.type,
+      {},
+      {
+        firstName: profile.firstName || undefined,
+        lastName: profile.lastName || undefined,
+        phone: profile.phone || undefined,
+        dateOfBirth: profile.birthDate?.toISOString().split('T')[0],
+      },
     );
 
     // Save to profile

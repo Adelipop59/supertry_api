@@ -9,6 +9,7 @@ import {
   Length,
   IsArray,
   ArrayMinSize,
+  IsDateString,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -78,6 +79,15 @@ export class SignupDto {
   phone?: string;
 
   @ApiProperty({
+    description: 'Date de naissance (format ISO)',
+    required: false,
+    example: '1995-06-15',
+  })
+  @IsDateString()
+  @IsOptional()
+  dateOfBirth?: string;
+
+  @ApiProperty({
     description: "Nom de l'entreprise",
     required: false,
     example: 'ACME Corp',
@@ -138,6 +148,7 @@ class ProfileInAuthResponse {
   @ApiProperty({ required: false }) firstName?: string;
   @ApiProperty({ required: false }) lastName?: string;
   @ApiProperty({ required: false }) phone?: string;
+  @ApiProperty({ required: false, description: 'Date de naissance', example: '1995-06-15T00:00:00.000Z' }) dateOfBirth?: Date;
   @ApiProperty({ required: false }) companyName?: string;
   @ApiProperty({ required: false }) siret?: string;
   @ApiProperty() isActive!: boolean;
@@ -249,6 +260,11 @@ export class CompleteOnboardingDto {
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @ApiProperty({ description: 'Date de naissance (format ISO)', required: false, example: '1995-06-15' })
+  @IsDateString()
+  @IsOptional()
+  dateOfBirth?: string;
 
   @ApiProperty({ description: "Nom de l'entreprise", required: false })
   @IsString()

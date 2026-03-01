@@ -35,6 +35,12 @@ export class StripeService {
     country: string,
     type: 'express' | 'standard' = 'express',
     metadata: Record<string, string> = {},
+    individual?: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      dateOfBirth?: string; // ISO format: 'YYYY-MM-DD'
+    },
   ): Promise<Stripe.Account> {
     try {
       const accountParams: Stripe.AccountCreateParams = {
@@ -42,6 +48,19 @@ export class StripeService {
         country,
         email,
         business_type: 'individual',
+        business_profile: {
+          url: 'https://www.super-try.com',
+        },
+        individual: {
+          email,
+          ...(individual?.firstName && { first_name: individual.firstName }),
+          ...(individual?.lastName && { last_name: individual.lastName }),
+          ...(individual?.phone && { phone: individual.phone }),
+          ...(individual?.dateOfBirth && (() => {
+            const d = new Date(individual.dateOfBirth!);
+            return { dob: { day: d.getUTCDate(), month: d.getUTCMonth() + 1, year: d.getUTCFullYear() } };
+          })()),
+        },
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },

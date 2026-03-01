@@ -10,6 +10,7 @@ export interface CreateProfileDto {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  birthDate?: Date;
   companyName?: string;
   siret?: string;
   authProvider?: string;
@@ -41,6 +42,7 @@ export class UsersService {
         firstName: createProfileDto.firstName,
         lastName: createProfileDto.lastName,
         phone: createProfileDto.phone,
+        birthDate: createProfileDto.birthDate,
         companyName: createProfileDto.companyName,
         siret: createProfileDto.siret,
         authProvider: createProfileDto.authProvider,
@@ -103,11 +105,16 @@ export class UsersService {
       phone?: string;
       avatar?: string;
       deviceToken?: string;
+      dateOfBirth?: string;
     },
   ): Promise<Omit<Profile, 'passwordHash'>> {
+    const { dateOfBirth, ...rest } = data;
     const profile = await this.prismaService.profile.update({
       where: { id: userId },
-      data,
+      data: {
+        ...rest,
+        ...(dateOfBirth && { birthDate: new Date(dateOfBirth) }),
+      },
     });
 
     const { passwordHash, ...result } = profile;

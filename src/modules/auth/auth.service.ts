@@ -63,6 +63,7 @@ export class AuthService {
       firstName: profileData.firstName || '',
       lastName: profileData.lastName || '',
       phone: profileData.phone,
+      birthDate: profileData.dateOfBirth ? new Date(profileData.dateOfBirth) : undefined,
       companyName: profileData.companyName,
       siret: profileData.siret,
     });
@@ -91,6 +92,13 @@ export class AuthService {
           email,
           country || 'FR', // Default to FR if no country
           'express',
+          {},
+          {
+            firstName: profileData.firstName,
+            lastName: profileData.lastName,
+            phone: profileData.phone,
+            dateOfBirth: profileData.dateOfBirth,
+          },
         );
 
         await this.prismaService.profile.update({
@@ -443,6 +451,7 @@ export class AuthService {
         firstName: profileData.firstName || profile.firstName,
         lastName: profileData.lastName || profile.lastName,
         phone: profileData.phone,
+        birthDate: profileData.dateOfBirth ? new Date(profileData.dateOfBirth) : profile.birthDate,
         companyName: profileData.companyName,
         siret: profileData.siret,
         isOnboarded: true,

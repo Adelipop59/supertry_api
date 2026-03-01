@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsOptional, IsString } from 'class-validator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'Jean' })
@@ -16,6 +16,11 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @ApiPropertyOptional({ description: 'Date de naissance (format ISO)', example: '1995-06-15' })
+  @IsOptional()
+  @IsDateString()
+  dateOfBirth?: string;
 
   @ApiPropertyOptional({ example: 'https://example.com/avatar.jpg' })
   @IsOptional()
