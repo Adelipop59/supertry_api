@@ -170,6 +170,18 @@ export class MessagesService {
     return counts.map((c) => ({ sessionId: c.sessionId, count: c._count }));
   }
 
+  async getSessionParticipantIds(sessionId: string): Promise<string[]> {
+    const session = await this.prisma.testSession.findUnique({
+      where: { id: sessionId },
+      select: {
+        testerId: true,
+        campaign: { select: { sellerId: true } },
+      },
+    });
+    if (!session) return [];
+    return [session.testerId, session.campaign.sellerId];
+  }
+
   async getConversations(userId: string, userRole: string) {
     const where =
       userRole === UserRole.ADMIN

@@ -503,10 +503,16 @@ export class WebhookHandlersService {
       // Annulation du PI = annulation campagne (manual capture: 0 frais)
       const campaign = await this.prisma.campaign.findUnique({
         where: { id: campaignId },
-        select: { id: true, title: true, sellerId: true, status: true },
+        select: { id: true, title: true, sellerId: true, status: true, stripePaymentIntentId: true },
       });
 
-      if (campaign && (campaign.status === CampaignStatus.PENDING_PAYMENT || campaign.status === CampaignStatus.PENDING_ACTIVATION)) {
+      // Ignorer si le PI annulé n'est plus le PI actif de la campagne
+      // (cas: le PRO relance un paiement → ancien PI annulé, nouveau PI créé)
+      if (campaign && campaign.stripePaymentIntentId && campaign.stripePaymentIntentId !== paymentIntent.id) {
+        this.logger.log(
+          `Ignoring cancelled PI ${paymentIntent.id} for campaign ${campaignId} - active PI is ${campaign.stripePaymentIntentId}`,
+        );
+      } else if (campaign && (campaign.status === CampaignStatus.PENDING_PAYMENT || campaign.status === CampaignStatus.PENDING_ACTIVATION)) {
         await this.prisma.campaign.update({
           where: { id: campaignId },
           data: { status: CampaignStatus.CANCELLED },

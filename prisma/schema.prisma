@@ -734,6 +734,10 @@ model TestSession {
   disputeResolvedAt DateTime? @map("dispute_resolved_at")
   disputeResolution String?   @map("dispute_resolution") @db.Text
 
+  // Admin moderation
+  adminDocumentRequests Json? @map("admin_document_requests")
+  disputeDocumentKeys   Json? @map("dispute_document_keys")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

@@ -1,0 +1,16 @@
+========================================
+  SuperTry API - Auth Tokens
+  Generated: 2026-03-01
+========================================
+
+--- PRO (Seller) ---
+Email:    adel.bailek@hotmail.fr
+Password: Adel59000!
+User ID:  66c85dcc-6bbe-4f89-82ba-76943f76e230
+Token:    ecfucaqvlys3fyyokrzvogsamnpgd5c7cldp2f2c
+
+--- TESTEUR (User) ---
+Email:    adel.bailekk@gmail.com
+Password: Adel59000!
+User ID:  f8dda29e-2120-47c3-a948-c26fe549435a
+Token:    vvjpztqybrbkn6ryhw7yuigqevcopsammu3gf5xu

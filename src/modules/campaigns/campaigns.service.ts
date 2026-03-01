@@ -130,8 +130,9 @@ export class CampaignsService {
     createDto.offer.priceRangeMax = priceRange.max;
 
     // Validation 3: Calculate escrow amount (basé sur les MAX remboursables)
-    // Commission plateforme (5€ testeur + 5€ SuperTry) lue depuis BusinessRules
-    const platformCommission = rules.testerBonus + rules.supertryCommission;
+    // Note: supertryCommission = commissionFixedFee (même frais, 5€)
+    // On utilise seulement testerBonus ici car commissionFixedFee est ajouté par calculateCommission()
+    const platformCommission = rules.testerBonus;
 
     const maxPrice = createDto.offer.maxReimbursedPrice ?? createDto.offer.expectedPrice;
     const maxShipping = createDto.offer.maxReimbursedShipping ?? createDto.offer.shippingCost;
@@ -593,7 +594,9 @@ export class CampaignsService {
       const totalSlots = updateDto.totalSlots || campaign.totalSlots;
 
       const rules = await this.businessRulesService.findLatest();
-      const platformCommission = rules.testerBonus + rules.supertryCommission;
+      // Note: supertryCommission = commissionFixedFee (même frais, 5€)
+      // On utilise seulement testerBonus ici car commissionFixedFee est ajouté par calculateCommission()
+      const platformCommission = rules.testerBonus;
 
       const maxPrice = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
       const maxShipping = Number(offer.maxReimbursedShipping ?? offer.shippingCost);

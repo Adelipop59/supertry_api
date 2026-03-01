@@ -70,14 +70,14 @@ export class PaymentsService {
     const productCost = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
     const shippingCost = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
     const testerBonus = rules.testerBonus;
-    const supertryCommission = rules.supertryCommission;
     const proBonus = Number(offer.bonus ?? 0);
 
-    // baseCost = maxPrice + maxShipping + commission plateforme + bonus PRO (SANS couverture Stripe)
-    const platformCommission = testerBonus + supertryCommission;
-    const baseCostWithoutCommission = productCost + shippingCost + platformCommission + proBonus;
+    // baseCost = produit + livraison + bonus testeur + bonus PRO (SANS commission ni Stripe)
+    // Note: supertryCommission et commissionFixedFee sont le MÊME frais (5€).
+    // On ne l'inclut PAS ici car calculateCommission() l'ajoute via commissionFixedFee.
+    const baseCostWithoutCommission = productCost + shippingCost + testerBonus + proBonus;
 
-    // Calcul via BusinessRules: commission fixe + 3.5% couverture Stripe
+    // Calcul via BusinessRules: commission fixe SuperTry + couverture Stripe 3.5%
     const { commissionFixedFee, stripeCoverage, totalPerTester } =
       await this.businessRulesService.calculateCommission(baseCostWithoutCommission);
 
@@ -95,8 +95,7 @@ export class PaymentsService {
         productCost,
         shippingCost,
         testerBonus,
-        supertryCommission,
-        commissionFixedFee,
+        supertryCommission: commissionFixedFee,
         proBonus,
         stripeFees: stripeCoverage,
       },
@@ -113,7 +112,7 @@ export class PaymentsService {
       // Champs flat (utilisés en interne par processCampaignPayment, refundUnusedSlots, etc.)
       productCost,
       shippingCost,
-      platformCommission,
+      platformCommission: testerBonus + commissionFixedFee,
       proBonus,
       supertryCommission: commissionFixedFee,
       stripeCoverage,
@@ -654,12 +653,14 @@ export class PaymentsService {
 
   async refundUnusedSlots(campaignId: string): Promise<{
     unusedSlots: number;
+    totalPriceDifference: number;
     refundAmount: number;
     refund: Stripe.Refund;
     transaction: Transaction;
   }> {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
+      include: { offers: true },
     });
 
     if (!campaign) {
@@ -670,8 +671,13 @@ export class PaymentsService {
       throw new NotFoundException('No PaymentIntent found for this campaign');
     }
 
-    // Get seller profile and completed sessions count
-    const [sellerProfile, completedSessionsCount] = await Promise.all([
+    const offer = campaign.offers[0];
+    if (!offer) {
+      throw new NotFoundException('No offer found for this campaign');
+    }
+
+    // Get seller profile, completed sessions count, and completed sessions details
+    const [sellerProfile, completedSessionsCount, completedSessionsList] = await Promise.all([
       this.prisma.profile.findUnique({
         where: { id: campaign.sellerId },
         select: { id: true, email: true, firstName: true },
@@ -679,22 +685,50 @@ export class PaymentsService {
       this.prisma.testSession.count({
         where: { campaignId, status: 'COMPLETED' },
       }),
+      this.prisma.testSession.findMany({
+        where: { campaignId, status: 'COMPLETED' },
+        select: { id: true, productPrice: true, shippingCost: true },
+      }),
     ]);
 
-    const completedSessions = completedSessionsCount;
-    const unusedSlots = campaign.totalSlots - completedSessions;
+    const unusedSlots = campaign.totalSlots - completedSessionsCount;
 
-    if (unusedSlots <= 0) {
-      throw new BadRequestException('No unused slots to refund');
+    // Calculate price differences for completed sessions
+    const maxProductPrice = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
+    const maxShippingCost = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
+
+    const priceDifferences = completedSessionsList.map((session) => {
+      const priceDiff = Math.max(0, maxProductPrice - Number(session.productPrice ?? 0));
+      const shippingDiff = Math.max(0, maxShippingCost - Number(session.shippingCost ?? 0));
+      return {
+        sessionId: session.id,
+        priceDiff: Math.round(priceDiff * 100) / 100,
+        shippingDiff: Math.round(shippingDiff * 100) / 100,
+        total: Math.round((priceDiff + shippingDiff) * 100) / 100,
+      };
+    });
+
+    const totalPriceDifference = Math.round(
+      priceDifferences.reduce((sum, d) => sum + d.total, 0) * 100,
+    ) / 100;
+
+    // Calculate refund amount: unused slots + price differences
+    const escrow = await this.calculateCampaignEscrow(campaignId);
+    const unusedSlotsRefund = unusedSlots > 0 ? escrow.perTester * unusedSlots : 0;
+    const refundAmount = Math.round((unusedSlotsRefund + totalPriceDifference) * 100) / 100;
+
+    if (refundAmount <= 0) {
+      throw new BadRequestException('No amount to refund');
     }
 
-    // Calculate refund amount
-    const escrow = await this.calculateCampaignEscrow(campaignId);
-    const refundAmount = escrow.perTester * unusedSlots;
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    this.logger.log(`💰 CAMPAIGN END REFUND for ${campaignId}`);
+    this.logger.log(`   Unused slots: ${unusedSlots} × ${escrow.perTester}€ = ${unusedSlotsRefund}€`);
+    this.logger.log(`   Price differences: ${totalPriceDifference}€ (${priceDifferences.length} sessions)`);
+    this.logger.log(`   TOTAL REFUND: ${refundAmount}€`);
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-    this.logger.log(`Refunding ${unusedSlots} unused slots for campaign ${campaignId}: ${refundAmount}€`);
-
-    // Create Stripe Refund: direct vers la carte du PRO avec metadata riches
+    // Create Stripe Refund: single refund for everything
     let refund: Stripe.Refund;
     try {
       refund = await this.stripeService.createRefund(
@@ -702,17 +736,17 @@ export class PaymentsService {
         refundAmount,
         'requested_by_customer',
         {
-          transactionType: 'UNUSED_SLOTS_REFUND',
+          transactionType: 'CAMPAIGN_END_REFUND',
           campaignId,
           campaignTitle: campaign.title || 'N/A',
           sellerId: campaign.sellerId,
           sellerEmail: sellerProfile?.email || 'N/A',
           unusedSlots: String(unusedSlots),
+          unusedSlotsRefund: unusedSlotsRefund.toFixed(2),
+          totalPriceDifference: totalPriceDifference.toFixed(2),
           totalSlots: String(campaign.totalSlots),
-          completedSlots: String(completedSessions),
-          perSlotRefund: escrow.perTester.toFixed(2),
+          completedSlots: String(completedSessionsCount),
           totalRefund: refundAmount.toFixed(2),
-          originalPaymentIntentId: campaign.stripePaymentIntentId,
           createdAt: new Date().toISOString(),
         },
       );
@@ -724,25 +758,27 @@ export class PaymentsService {
 
     // Update PlatformWallet and create transaction
     const transaction = await this.prisma.$transaction(async (tx) => {
-      // Transaction CAMPAIGN_REFUND
       const transaction = await tx.transaction.create({
         data: {
           walletId: null, // PLATEFORME
           type: TransactionType.CAMPAIGN_REFUND,
           amount: new Decimal(refundAmount),
-          reason: `Refund ${unusedSlots} unused slots: ${campaign.title}`,
+          reason: `Campaign end refund: ${campaign.title}`,
           campaignId,
           stripeRefundId: refund.id,
           status: TransactionStatus.COMPLETED,
           metadata: {
             unusedSlots,
+            unusedSlotsRefund,
+            totalPriceDifference,
+            priceDifferences,
             perSlot: escrow.perTester,
             refundMethod: 'card',
           },
         },
       });
 
-      // Update PlatformWallet: décrémenter escrow car argent rendu au PRO
+      // Update PlatformWallet
       const platformWallet = await tx.platformWallet.findFirst();
       if (!platformWallet) {
         throw new InternalServerErrorException('PlatformWallet not found');
@@ -754,7 +790,6 @@ export class PaymentsService {
           escrowBalance: {
             decrement: new Decimal(refundAmount),
           },
-          // Note: on ne compte pas comme "transferred" car c'est un refund direct
         },
       });
 
@@ -769,6 +804,8 @@ export class PaymentsService {
       {
         campaignId,
         unusedSlots,
+        unusedSlotsRefund,
+        totalPriceDifference,
         refundAmount,
         transactionId: transaction.id,
         stripeRefundId: refund.id,
@@ -776,16 +813,23 @@ export class PaymentsService {
     );
 
     // Notification
+    const refundDetails: string[] = [];
+    if (unusedSlotsRefund > 0) {
+      refundDetails.push(`${unusedSlotsRefund}€ pour ${unusedSlots} slot(s) non utilisé(s)`);
+    }
+    if (totalPriceDifference > 0) {
+      refundDetails.push(`${totalPriceDifference}€ de différence de prix (prix max - prix réel)`);
+    }
+
     await this.notificationsService.queueEmail({
       to: sellerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
-      subject: 'Campaign Refund Processed',
+      subject: 'Remboursement de fin de campagne',
       variables: {
-        firstName: sellerProfile!.firstName || 'Seller',
+        firstName: sellerProfile!.firstName || 'Pro',
         campaignTitle: campaign.title,
         refundAmount,
-        unusedSlots,
-        message: `Your refund of ${refundAmount}€ for ${unusedSlots} unused slots has been processed. The amount will be returned to your card within 5-10 business days.`,
+        message: `Votre remboursement de ${refundAmount}€ pour la campagne "${campaign.title}" a été traité. Détail : ${refundDetails.join(' + ')}. Le montant sera crédité sur votre carte sous 5 à 10 jours ouvrés.`,
       },
       metadata: {
         campaignId,
@@ -794,10 +838,11 @@ export class PaymentsService {
       },
     });
 
-    this.logger.log(`Refund processed for campaign ${campaignId}`);
+    this.logger.log(`Campaign end refund processed for ${campaignId}`);
 
     return {
       unusedSlots,
+      totalPriceDifference,
       refundAmount,
       refund,
       transaction,

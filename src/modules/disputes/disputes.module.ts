@@ -6,6 +6,7 @@ import { StripeModule } from '../stripe/stripe.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BusinessRulesModule } from '../business-rules/business-rules.module';
+import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { BusinessRulesModule } from '../business-rules/business-rules.module';
     AuditModule,
     NotificationsModule,
     BusinessRulesModule,
+    WalletModule,
   ],
   controllers: [DisputesController],
   providers: [DisputesService],

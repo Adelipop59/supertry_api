@@ -75,6 +75,19 @@ export class MessagesController {
     );
     const message = await this.messagesService.createMessage(dto, userId);
     this.messagesGateway.emitToSession(dto.sessionId, 'new_message', message);
+
+    // Broadcast via WebSocket to session room + personal rooms
+    this.messagesGateway.emitToSession(
+      dto.sessionId,
+      'new_message',
+      message,
+    );
+    const participantIds =
+      await this.messagesService.getSessionParticipantIds(dto.sessionId);
+    for (const pid of participantIds) {
+      this.messagesGateway.emitToUser(pid, 'new_message', message);
+    }
+
     return message;
   }
 

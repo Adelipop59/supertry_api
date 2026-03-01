@@ -41,6 +41,7 @@ export class StripeService {
         type,
         country,
         email,
+        business_type: 'individual',
         capabilities: {
           card_payments: { requested: true },
           transfers: { requested: true },
@@ -1003,7 +1004,6 @@ export class StripeService {
         shippingCost: number;
         testerBonus: number;
         supertryCommission: number;
-        commissionFixedFee: number;
         proBonus: number;
         stripeFees: number;
       };
@@ -1021,7 +1021,6 @@ export class StripeService {
       { description: `Bonus testeur (x${totalSlots})`, amount: breakdown.testerBonus * totalSlots },
       { description: `Bonus PRO (x${totalSlots})`, amount: breakdown.proBonus * totalSlots },
       { description: `Commission SuperTry (x${totalSlots})`, amount: breakdown.supertryCommission * totalSlots },
-      { description: `Frais fixes (x${totalSlots})`, amount: breakdown.commissionFixedFee * totalSlots },
       { description: `Couverture frais Stripe (x${totalSlots})`, amount: breakdown.stripeFees * totalSlots },
     ];
 

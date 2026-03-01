@@ -26,6 +26,7 @@ export enum MediaFolder {
   UGC = 'ugc',
   PURCHASES = 'purchases',
   MESSAGES = 'messages',
+  DISPUTES = 'disputes',
   TEMP = 'temp',
 }
 

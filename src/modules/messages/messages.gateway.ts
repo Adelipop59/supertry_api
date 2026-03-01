@@ -94,6 +94,9 @@ export class MessagesGateway
       (client as any).userName =
         `${profile.firstName ?? ''} ${profile.lastName ?? ''}`.trim();
 
+      // Auto-join personal room for global notifications (new_message, typing, read receipts)
+      client.join(`user:${profile.id}`);
+
       this.logger.log(`Client connected: ${profile.id} (${profile.role})`);
     } catch {
       client.disconnect();
@@ -172,9 +175,17 @@ export class MessagesGateway
         userId,
       );
 
+      // Broadcast to session room (for users with the conversation open)
       this.server
         .to(`session:${data.sessionId}`)
         .emit('new_message', message);
+
+      // Broadcast to personal rooms of all participants (for conversation list updates)
+      const participantIds =
+        await this.messagesService.getSessionParticipantIds(data.sessionId);
+      for (const pid of participantIds) {
+        this.server.to(`user:${pid}`).emit('new_message', message);
+      }
 
       return { success: true, message };
     } catch (error) {
@@ -192,10 +203,23 @@ export class MessagesGateway
 
     try {
       await this.messagesService.markAsRead(data.sessionId, userId);
-      client.to(`session:${data.sessionId}`).emit('messages_read', {
+      const payload = {
         sessionId: data.sessionId,
         readBy: userId,
-      });
+      };
+
+      // Broadcast to session room (for the open chat view)
+      client.to(`session:${data.sessionId}`).emit('messages_read', payload);
+
+      // Broadcast to personal rooms of participants (for conversation list read receipts)
+      const participantIds =
+        await this.messagesService.getSessionParticipantIds(data.sessionId);
+      for (const pid of participantIds) {
+        if (pid !== userId) {
+          this.server.to(`user:${pid}`).emit('messages_read', payload);
+        }
+      }
+
       return { success: true };
     } catch {
       return { success: false };
@@ -203,20 +227,37 @@ export class MessagesGateway
   }
 
   @SubscribeMessage('typing')
-  handleTyping(
+  async handleTyping(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { sessionId: string; isTyping: boolean },
   ) {
     const userId = (client as any).userId;
     const userName = (client as any).userName;
-    client.to(`session:${data.sessionId}`).emit('user_typing', {
+    const payload = {
       userId,
       userName,
+      sessionId: data.sessionId,
       isTyping: data.isTyping,
-    });
+    };
+
+    // Broadcast to session room (for the open chat view)
+    client.to(`session:${data.sessionId}`).emit('user_typing', payload);
+
+    // Broadcast to personal rooms of participants (for conversation list)
+    const participantIds =
+      await this.messagesService.getSessionParticipantIds(data.sessionId);
+    for (const pid of participantIds) {
+      if (pid !== userId) {
+        this.server.to(`user:${pid}`).emit('user_typing', payload);
+      }
+    }
   }
 
   emitToSession(sessionId: string, event: string, data: any) {
     this.server.to(`session:${sessionId}`).emit(event, data);
+  }
+
+  emitToUser(userId: string, event: string, data: any) {
+    this.server.to(`user:${userId}`).emit(event, data);
   }
 }
