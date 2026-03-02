@@ -71,26 +71,6 @@ export class SignupDto {
   lastName?: string;
 
   @ApiProperty({
-    description: 'Numéro de téléphone au format international E.164',
-    required: false,
-    example: '+33612345678',
-  })
-  @IsOptional()
-  @Matches(/^\+[1-9]\d{1,14}$/, {
-    message: 'Le numéro de téléphone doit être au format international (ex: +33612345678)',
-  })
-  phone?: string;
-
-  @ApiProperty({
-    description: 'Date de naissance (format ISO)',
-    required: false,
-    example: '1995-06-15',
-  })
-  @IsDateString()
-  @IsOptional()
-  dateOfBirth?: string;
-
-  @ApiProperty({
     description: "Nom de l'entreprise",
     required: false,
     example: 'ACME Corp',

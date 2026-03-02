@@ -64,14 +64,14 @@ export class AuthService {
     const passwordHash = await this.luciaService.hashPassword(password);
 
     // Create profile
+    // USER: seul email + country, nom/prénom/téléphone/DOB seront remplis depuis Stripe Connect après onboarding
+    // PRO: email + firstName + lastName + countries
     const profile = await this.usersService.createProfile({
       email,
       role: role || 'USER',
       country,
       firstName: profileData.firstName || '',
       lastName: profileData.lastName || '',
-      phone: profileData.phone,
-      birthDate: profileData.dateOfBirth ? new Date(profileData.dateOfBirth) : undefined,
       companyName: profileData.companyName,
       siret: profileData.siret,
     });
@@ -94,19 +94,13 @@ export class AuthService {
 
     // Create Stripe Connect account ONLY for USER (TESTEUR)
     // PRO doesn't need Connect: they pay with card and receive refunds on same card
+    // Pas de données individual pré-remplies : Stripe collectera tout pendant l'onboarding
     if (role === 'USER') {
       try {
         const stripeAccount = await this.stripeService.createConnectAccount(
           email,
-          country || 'FR', // Default to FR if no country
+          country || 'FR',
           'express',
-          {},
-          {
-            firstName: profileData.firstName,
-            lastName: profileData.lastName,
-            phone: profileData.phone,
-            dateOfBirth: profileData.dateOfBirth,
-          },
         );
 
         await this.prismaService.profile.update({
@@ -544,6 +538,34 @@ export class AuthService {
           countryCode,
         })),
       });
+    }
+
+    // Create Stripe Connect + Wallet for OAuth users who chose USER role
+    if (role === 'USER' && !updatedProfile.stripeConnectAccountId) {
+      try {
+        const stripeAccount = await this.stripeService.createConnectAccount(
+          updatedProfile.email,
+          country || 'FR',
+          'express',
+        );
+        await this.prismaService.profile.update({
+          where: { id: userId },
+          data: { stripeConnectAccountId: stripeAccount.id },
+        });
+        this.logger.log(`Stripe Connect created for OAuth USER ${updatedProfile.email}: ${stripeAccount.id}`);
+      } catch (error) {
+        this.logger.error(`Failed to create Stripe Connect for OAuth USER ${updatedProfile.email}: ${error.message}`);
+      }
+    }
+
+    // Create Wallet if not exists
+    if (role === 'PRO' || role === 'USER') {
+      try {
+        await this.walletService.createWallet(updatedProfile.id);
+        this.logger.log(`Wallet created for ${updatedProfile.email}`);
+      } catch (error) {
+        this.logger.error(`Failed to create Wallet for ${updatedProfile.email}: ${error.message}`);
+      }
     }
 
     this.logger.log(`User ${updatedProfile.email} completed onboarding as ${role}`);

@@ -157,6 +157,7 @@ export class TestSessionsService {
         stripeIdentityVerified: true,
         completedSessionsCount: true,
         tier: true,
+        verificationStatus: true,
       },
     });
 
@@ -164,6 +165,14 @@ export class TestSessionsService {
       throw new BadRequestException(
         `You are temporarily banned until ${tester.bannedUntil.toISOString()}`,
       );
+    }
+
+    // Vérification incohérence identité (Connect vs Identity KYC)
+    if (tester?.verificationStatus === 'INCOHERENT') {
+      throw new BadRequestException({
+        message: 'Votre compte a été signalé pour une incohérence de vérification d\'identité. Veuillez contacter le support.',
+        verificationBlocked: true,
+      });
     }
 
     // Vérification onboarding + KYC conditionnel

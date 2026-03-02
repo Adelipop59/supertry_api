@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { StripeService } from '../stripe.service';
 import {
   AuditCategory,
   NotificationType,
@@ -26,6 +27,8 @@ export class WebhookHandlersService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => StripeService))
+    private readonly stripeService: StripeService,
   ) {}
 
   // ==========================================================================
@@ -70,6 +73,15 @@ export class WebhookHandlersService {
           : null,
       },
     });
+
+    // 2b. Enrich profile with verified data from Stripe Connect (first time COMPLETED)
+    if (newStatus === 'COMPLETED' && previousStatus !== 'COMPLETED') {
+      try {
+        await this.enrichProfileFromConnect(account, profile.id);
+      } catch (error) {
+        this.logger.error(`Failed to enrich profile ${profile.id} from Connect: ${error.message}`);
+      }
+    }
 
     // 3. Audit log
     await this.auditService.log(profile.id, AuditCategory.USER, 'STRIPE_ACCOUNT_UPDATED', {
@@ -192,6 +204,83 @@ export class WebhookHandlersService {
     return 'IN_PROGRESS';
   }
 
+  /**
+   * Enrichir le profil SuperTry avec les données vérifiées du compte Stripe Connect.
+   * Appelé une fois quand l'onboarding passe à COMPLETED.
+   * Ne remplit que les champs vides (ne surcharge pas les données existantes).
+   */
+  private async enrichProfileFromConnect(account: Stripe.Account, profileId: string) {
+    const individual = account.individual;
+    if (!individual) {
+      this.logger.warn(`No individual data on Stripe account ${account.id}`);
+      return;
+    }
+
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: profileId },
+      select: {
+        firstName: true, lastName: true, phone: true, birthDate: true,
+        addressLine1: true, addressCity: true, addressPostalCode: true,
+        addressState: true, country: true,
+      },
+    });
+
+    if (!profile) return;
+
+    const updateData: Record<string, any> = {
+      stripeConnectDataSyncedAt: new Date(),
+    };
+
+    if (!profile.firstName && individual.first_name) {
+      updateData.firstName = individual.first_name;
+    }
+    if (!profile.lastName && individual.last_name) {
+      updateData.lastName = individual.last_name;
+    }
+    if (!profile.phone && individual.phone) {
+      updateData.phone = individual.phone;
+    }
+    if (!profile.birthDate && individual.dob) {
+      const { day, month, year } = individual.dob;
+      if (day && month && year) {
+        updateData.birthDate = new Date(Date.UTC(year, month - 1, day));
+      }
+    }
+    if (individual.address) {
+      if (!profile.addressLine1 && individual.address.line1) {
+        updateData.addressLine1 = individual.address.line1;
+      }
+      if (individual.address.line2) {
+        updateData.addressLine2 = individual.address.line2;
+      }
+      if (!profile.addressCity && individual.address.city) {
+        updateData.addressCity = individual.address.city;
+      }
+      if (!profile.addressPostalCode && individual.address.postal_code) {
+        updateData.addressPostalCode = individual.address.postal_code;
+      }
+      if (!profile.addressState && individual.address.state) {
+        updateData.addressState = individual.address.state;
+      }
+      if (!profile.country && individual.address.country) {
+        updateData.country = individual.address.country;
+      }
+    }
+
+    await this.prisma.profile.update({
+      where: { id: profileId },
+      data: updateData,
+    });
+
+    const fieldsUpdated = Object.keys(updateData).filter(k => k !== 'stripeConnectDataSyncedAt');
+    this.logger.log(`Profile ${profileId} enriched from Stripe Connect ${account.id}: ${fieldsUpdated.join(', ')}`);
+
+    await this.auditService.log(profileId, AuditCategory.USER, 'PROFILE_ENRICHED_FROM_CONNECT', {
+      stripeAccountId: account.id,
+      fieldsUpdated,
+    });
+  }
+
   async handleAccountExternalAccountCreated(event: Stripe.Event) {
     await this.auditService.log(null, AuditCategory.SYSTEM, 'STRIPE_EXTERNAL_ACCOUNT_CREATED', {
       accountId: event.account,
@@ -294,21 +383,22 @@ export class WebhookHandlersService {
   }
 
   async handleIdentitySessionVerified(session: Stripe.Identity.VerificationSession) {
-    this.logger.log(`🔔 WEBHOOK RECEIVED: identity.verification_session.verified - Session ID: ${session.id}`);
-    this.logger.log(`📋 Session metadata: ${JSON.stringify(session.metadata)}`);
+    this.logger.log(`WEBHOOK: identity.verification_session.verified - Session ID: ${session.id}`);
 
     const profileId = session.metadata?.profileId;
 
     if (!profileId) {
-      this.logger.error(`❌ No profileId in verification session ${session.id} - Metadata: ${JSON.stringify(session.metadata)}`);
+      this.logger.error(`No profileId in verification session ${session.id} - Metadata: ${JSON.stringify(session.metadata)}`);
       return;
     }
 
-    this.logger.log(`✅ Found profileId: ${profileId}`);
-
     const testerProfile = await this.prisma.profile.findUnique({
       where: { id: profileId },
-      select: { id: true, email: true, firstName: true, stripeIdentityVerified: true },
+      select: {
+        id: true, email: true, firstName: true, lastName: true,
+        phone: true, birthDate: true,
+        stripeIdentityVerified: true,
+      },
     });
 
     if (!testerProfile) {
@@ -316,31 +406,119 @@ export class WebhookHandlersService {
       return;
     }
 
-    if (!testerProfile.stripeIdentityVerified) {
-      await this.prisma.profile.update({
-        where: { id: profileId },
-        data: {
-          stripeIdentityVerified: true,
-          stripeOnboardingCompleted: true, // Auto-set car Identity > Onboarding
-          stripeIdentityStatus: 'VERIFIED',
-          stripeIdentityLastError: null,
-        },
-      });
+    if (testerProfile.stripeIdentityVerified) {
+      this.logger.log(`Profile ${profileId} already verified, skipping`);
+      return;
+    }
 
-      // Audit log
-      await this.auditService.log(profileId, AuditCategory.USER, 'STRIPE_IDENTITY_VERIFIED', {
-        verificationSessionId: session.id,
-        status: session.status,
-      });
+    // Récupérer les verified_outputs depuis Stripe Identity
+    let verifiedOutputs: any = null;
+    try {
+      const fullSession = await this.stripeService.retrieveIdentitySessionWithOutputs(session.id);
+      verifiedOutputs = (fullSession as any).verified_outputs;
+    } catch (error) {
+      this.logger.error(`Failed to retrieve verified_outputs for session ${session.id}: ${error.message}`);
+    }
 
-      // Notification
+    // Vérification de cohérence : comparer données profil (venant de Connect) vs Identity KYC
+    let verificationStatus: string | null = null;
+    let mismatchDetails: Record<string, any> | null = null;
+
+    if (verifiedOutputs && testerProfile.firstName && testerProfile.lastName) {
+      const mismatches: Record<string, { profile: string; identity: string }> = {};
+
+      // Comparer prénom (case-insensitive, trimmed)
+      const profileFirstName = (testerProfile.firstName || '').trim().toLowerCase();
+      const identityFirstName = (verifiedOutputs.first_name || '').trim().toLowerCase();
+      if (profileFirstName && identityFirstName && profileFirstName !== identityFirstName) {
+        mismatches.firstName = {
+          profile: testerProfile.firstName!,
+          identity: verifiedOutputs.first_name,
+        };
+      }
+
+      // Comparer nom
+      const profileLastName = (testerProfile.lastName || '').trim().toLowerCase();
+      const identityLastName = (verifiedOutputs.last_name || '').trim().toLowerCase();
+      if (profileLastName && identityLastName && profileLastName !== identityLastName) {
+        mismatches.lastName = {
+          profile: testerProfile.lastName!,
+          identity: verifiedOutputs.last_name,
+        };
+      }
+
+      // Comparer date de naissance
+      if (testerProfile.birthDate && verifiedOutputs.dob) {
+        const profileDob = testerProfile.birthDate;
+        const identityDob = verifiedOutputs.dob;
+        if (identityDob.day && identityDob.month && identityDob.year) {
+          const identityDate = new Date(Date.UTC(identityDob.year, identityDob.month - 1, identityDob.day));
+          if (profileDob.getTime() !== identityDate.getTime()) {
+            mismatches.dateOfBirth = {
+              profile: profileDob.toISOString().split('T')[0],
+              identity: `${identityDob.year}-${String(identityDob.month).padStart(2, '0')}-${String(identityDob.day).padStart(2, '0')}`,
+            };
+          }
+        }
+      }
+
+      if (Object.keys(mismatches).length > 0) {
+        verificationStatus = 'INCOHERENT';
+        mismatchDetails = {
+          mismatches,
+          verificationSessionId: session.id,
+          detectedAt: new Date().toISOString(),
+        };
+        this.logger.warn(`IDENTITY MISMATCH for profile ${profileId}: ${JSON.stringify(mismatches)}`);
+      } else {
+        verificationStatus = 'COHERENT';
+      }
+    }
+
+    // Mettre à jour le profil
+    await this.prisma.profile.update({
+      where: { id: profileId },
+      data: {
+        stripeIdentityVerified: true,
+        stripeOnboardingCompleted: true,
+        stripeIdentityStatus: 'VERIFIED',
+        stripeIdentityLastError: null,
+        ...(verificationStatus && { verificationStatus }),
+        ...(mismatchDetails && { verificationMismatchDetails: mismatchDetails }),
+      },
+    });
+
+    // Audit
+    await this.auditService.log(profileId, AuditCategory.USER, 'STRIPE_IDENTITY_VERIFIED', {
+      verificationSessionId: session.id,
+      verificationStatus: verificationStatus || 'NO_CHECK',
+      ...(mismatchDetails && { mismatchDetails }),
+    });
+
+    // Notification différenciée
+    if (verificationStatus === 'INCOHERENT') {
       await this.notificationsService.queueEmail({
         to: testerProfile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'Identity Verification Completed',
+        subject: 'Vérification d\'identité - Incohérence détectée',
         variables: {
-          firstName: testerProfile.firstName,
-          message: 'Your identity has been verified. You can now apply to campaigns and receive payments.',
+          firstName: testerProfile.firstName || 'Utilisateur',
+          message: 'Une incohérence a été détectée entre vos informations d\'inscription et votre pièce d\'identité. Votre compte est temporairement bloqué. Veuillez contacter le support pour résoudre ce problème.',
+        },
+        metadata: {
+          userId: profileId,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+      this.logger.warn(`ACCOUNT FLAGGED INCOHERENT: ${profileId} (${testerProfile.email})`);
+    } else {
+      await this.notificationsService.queueEmail({
+        to: testerProfile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Vérification d\'identité terminée',
+        variables: {
+          firstName: testerProfile.firstName || 'Utilisateur',
+          message: 'Votre identité a été vérifiée avec succès. Vous pouvez maintenant postuler à des campagnes et recevoir des paiements.',
         },
         metadata: {
           userId: profileId,

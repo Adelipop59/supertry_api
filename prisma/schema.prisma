@@ -255,6 +255,20 @@ model Profile {
   companyName String? @map("company_name")
   siret       String?
 
+  // Adresse (remplie depuis Stripe Connect après onboarding)
+  addressLine1      String?  @map("address_line1")
+  addressLine2      String?  @map("address_line2")
+  addressCity       String?  @map("address_city")
+  addressPostalCode String?  @map("address_postal_code")
+  addressState      String?  @map("address_state")
+
+  // Réconciliation d'identité (Connect vs Identity KYC)
+  verificationStatus          String?   @map("verification_status") // null, 'COHERENT', 'INCOHERENT'
+  verificationMismatchDetails Json?     @map("verification_mismatch_details") // Détails de l'incohérence
+  verificationResolvedAt      DateTime? @map("verification_resolved_at")
+  verificationResolvedBy      String?   @map("verification_resolved_by") // Admin profile ID
+  stripeConnectDataSyncedAt   DateTime? @map("stripe_connect_data_synced_at")
+
   // Statut compte
   isActive    Boolean @default(true) @map("is_active")
   isVerified  Boolean @default(false) @map("is_verified")

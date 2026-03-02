@@ -369,6 +369,178 @@ export class AdminModerationService {
     };
   }
 
+  // ==========================================================================
+  // Gestion des comptes flaggés (réconciliation identité)
+  // ==========================================================================
+
+  /**
+   * Lister les utilisateurs avec incohérence de vérification d'identité
+   */
+  async listFlaggedUsers(page: number = 1, limit: number = 20) {
+    const skip = (page - 1) * limit;
+
+    const [users, total] = await Promise.all([
+      this.prisma.profile.findMany({
+        where: { verificationStatus: 'INCOHERENT' },
+        skip,
+        take: limit,
+        orderBy: { updatedAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          country: true,
+          verificationStatus: true,
+          verificationMismatchDetails: true,
+          verificationResolvedAt: true,
+          verificationResolvedBy: true,
+          stripeIdentitySessionId: true,
+          stripeConnectAccountId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.profile.count({ where: { verificationStatus: 'INCOHERENT' } }),
+    ]);
+
+    return {
+      data: users,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  /**
+   * Détails de vérification d'un utilisateur
+   */
+  async getVerificationDetails(userId: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        birthDate: true,
+        country: true,
+        addressLine1: true,
+        addressCity: true,
+        addressPostalCode: true,
+        addressState: true,
+        verificationStatus: true,
+        verificationMismatchDetails: true,
+        verificationResolvedAt: true,
+        verificationResolvedBy: true,
+        stripeIdentitySessionId: true,
+        stripeConnectAccountId: true,
+        stripeConnectDataSyncedAt: true,
+        completedSessionsCount: true,
+        isActive: true,
+        createdAt: true,
+      },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('User not found');
+    }
+
+    return profile;
+  }
+
+  /**
+   * Résoudre une incohérence de vérification (action admin)
+   * APPROVE : débloquer le compte (verificationStatus = COHERENT)
+   * REJECT : désactiver le compte (isActive = false, l'utilisateur peut se connecter mais ne peut rien faire)
+   */
+  async resolveVerification(
+    userId: string,
+    adminId: string,
+    resolution: { action: 'APPROVE' | 'REJECT'; reason?: string },
+  ) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: {
+        id: true, email: true, firstName: true,
+        verificationStatus: true, verificationMismatchDetails: true,
+      },
+    });
+
+    if (!profile) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (profile.verificationStatus !== 'INCOHERENT') {
+      throw new BadRequestException('User is not flagged for verification mismatch');
+    }
+
+    if (resolution.action === 'APPROVE') {
+      await this.prisma.profile.update({
+        where: { id: userId },
+        data: {
+          verificationStatus: 'COHERENT',
+          verificationResolvedAt: new Date(),
+          verificationResolvedBy: adminId,
+        },
+      });
+
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Compte débloqué',
+        variables: {
+          firstName: profile.firstName || 'Utilisateur',
+          message: 'Votre compte a été examiné et débloqué par notre équipe. Vous pouvez à nouveau postuler aux campagnes.',
+        },
+        metadata: {
+          userId,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    } else {
+      await this.prisma.profile.update({
+        where: { id: userId },
+        data: {
+          isActive: false,
+          verificationResolvedAt: new Date(),
+          verificationResolvedBy: adminId,
+        },
+      });
+
+      await this.notificationsService.queueEmail({
+        to: profile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Compte désactivé',
+        variables: {
+          firstName: profile.firstName || 'Utilisateur',
+          message: 'Suite à une vérification, votre compte a été désactivé. Veuillez contacter le support pour plus d\'informations.',
+        },
+        metadata: {
+          userId,
+          type: NotificationType.SYSTEM_ALERT,
+        },
+      });
+    }
+
+    await this.auditService.log(adminId, AuditCategory.ADMIN, 'VERIFICATION_RESOLVED', {
+      userId,
+      action: resolution.action,
+      reason: resolution.reason,
+      previousMismatch: profile.verificationMismatchDetails,
+    });
+
+    return {
+      userId,
+      action: resolution.action,
+      resolvedAt: new Date(),
+    };
+  }
+
+  // ==========================================================================
+  // Sessions (filtres et modération)
+  // ==========================================================================
+
   /**
    * Lister les sessions avec filtres (admin)
    */

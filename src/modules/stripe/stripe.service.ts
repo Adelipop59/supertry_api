@@ -50,6 +50,8 @@ export class StripeService {
         business_type: 'individual',
         business_profile: {
           url: 'https://www.super-try.com',
+          product_description: 'Testeur de produits sur la plateforme SuperTry - teste et évalue des produits pour des professionnels',
+          mcc: '7299',
         },
         individual: {
           email,
@@ -701,6 +703,21 @@ export class StripeService {
     } catch (error) {
       this.logger.error(`Failed to retrieve Identity Verification Session ${sessionId}: ${error.message}`, error.stack);
       throw new NotFoundException('Identity verification session not found');
+    }
+  }
+
+  /**
+   * Récupérer une session Identity avec les verified_outputs (nom, DOB, adresse vérifiés)
+   * Utilisé après vérification pour comparer avec les données du profil
+   */
+  async retrieveIdentitySessionWithOutputs(sessionId: string): Promise<Stripe.Identity.VerificationSession> {
+    try {
+      return await this.stripe.identity.verificationSessions.retrieve(sessionId, {
+        expand: ['verified_outputs'],
+      });
+    } catch (error) {
+      this.logger.error(`Failed to retrieve Identity session with outputs ${sessionId}: ${error.message}`, error.stack);
+      throw error;
     }
   }
 

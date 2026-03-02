@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AdminFinanceController } from './admin-finance.controller';
 import { AdminFinanceService } from './admin-finance.service';
 import { AdminModerationController } from './admin-moderation.controller';
+import { AdminUsersController } from './admin-users.controller';
 import { AdminModerationService } from './admin-moderation.service';
 import { PrismaModule } from '../../database/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
@@ -21,7 +22,7 @@ import { MediaModule } from '../media/media.module';
     NotificationsModule,
     MediaModule,
   ],
-  controllers: [AdminFinanceController, AdminModerationController],
+  controllers: [AdminFinanceController, AdminModerationController, AdminUsersController],
   providers: [AdminFinanceService, AdminModerationService],
 })
 export class AdminModule {}
