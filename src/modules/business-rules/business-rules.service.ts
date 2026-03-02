@@ -40,6 +40,7 @@ export class BusinessRulesService {
    */
   async calculateCommission(baseCostWithoutCommission: number): Promise<{
     commissionFixedFee: number;
+    stripeFeePercent: number;
     stripeCoverage: number;
     totalPerTester: number;
   }> {
@@ -59,6 +60,7 @@ export class BusinessRulesService {
 
     return {
       commissionFixedFee,
+      stripeFeePercent,
       stripeCoverage: Math.round(stripeCoverage * 100) / 100,
       totalPerTester,
     };

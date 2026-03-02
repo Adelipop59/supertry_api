@@ -49,7 +49,7 @@ export class PaymentsController {
     const cancelUrl = `${process.env.FRONTEND_URL || 'http://localhost:3001'}/campaigns/${campaignId}/payment-cancel`;
 
     const session = await this.stripeService.createCheckoutSession(
-      escrow.total,
+      escrow.totalAmount,
       'eur',
       { campaignId, userId },
       successUrl,
@@ -59,7 +59,7 @@ export class PaymentsController {
     return {
       checkoutUrl: session.url,
       sessionId: session.id,
-      amount: escrow.total,
+      amount: escrow.totalAmount,
     };
   }
 

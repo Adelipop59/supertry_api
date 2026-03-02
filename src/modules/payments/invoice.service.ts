@@ -68,7 +68,14 @@ export class InvoiceService {
     const invoice = await this.stripeService.createInvoiceForCampaign(
       customerId,
       {
-        breakdown: escrow.breakdown,
+        breakdown: {
+          productCost: escrow.productCost,
+          shippingCost: escrow.shippingCost,
+          testerBonus: escrow.testerBonus,
+          supertryCommission: escrow.supertryCommission,
+          proBonus: escrow.proBonus,
+          stripeFees: escrow.stripeCoverage,
+        },
         totalSlots: escrow.totalSlots,
         campaignTitle: escrow.campaignTitle,
       },

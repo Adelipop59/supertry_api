@@ -58,6 +58,7 @@ export class StripeService {
           ...(individual?.phone && { phone: individual.phone }),
           ...(individual?.dateOfBirth && (() => {
             const d = new Date(individual.dateOfBirth!);
+            if (isNaN(d.getTime())) return {};
             return { dob: { day: d.getUTCDate(), month: d.getUTCMonth() + 1, year: d.getUTCFullYear() } };
           })()),
         },
@@ -85,7 +86,7 @@ export class StripeService {
       return account;
     } catch (error) {
       this.logger.error(`Failed to create Connect account: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create Stripe Connect account');
+      throw new BadRequestException(error.message || 'Failed to create Stripe Connect account');
     }
   }
 

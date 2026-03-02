@@ -77,47 +77,56 @@ export class PaymentsService {
     // On ne l'inclut PAS ici car calculateCommission() l'ajoute via commissionFixedFee.
     const baseCostWithoutCommission = productCost + shippingCost + testerBonus + proBonus;
 
-    // Calcul via BusinessRules: commission fixe SuperTry + couverture Stripe 3.5%
-    const { commissionFixedFee, stripeCoverage, totalPerTester } =
+    // Calcul via BusinessRules: commission fixe SuperTry + couverture Stripe
+    const { commissionFixedFee, stripeFeePercent, stripeCoverage, totalPerTester } =
       await this.businessRulesService.calculateCommission(baseCostWithoutCommission);
 
-    // Per tester WITHOUT Stripe fees
-    const perTesterWithoutStripeFees = Math.round((baseCostWithoutCommission + commissionFixedFee) * 100) / 100;
-
     const totalSlots = campaign.totalSlots;
+    const totalAmount = Math.round(totalPerTester * totalSlots * 100) / 100;
+
+    // Format helper: "12,99 €"
+    const fmt = (n: number) =>
+      n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+
+    // Pourcentage Stripe lisible: 0.035 → "3,5"
+    const stripePctLabel = (stripeFeePercent * 100)
+      .toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 1 });
 
     return {
       campaignId: campaign.id,
       campaignTitle: campaign.title,
       totalSlots,
-      // Détail par ligne
-      breakdown: {
-        productCost,
-        shippingCost,
-        testerBonus,
-        supertryCommission: commissionFixedFee,
-        proBonus,
-        stripeFees: stripeCoverage,
+
+      // ── Lignes prêtes à afficher côté frontend ──
+      // Le frontend itère sur displayLines et affiche label + amount tel quel
+      displayLines: [
+        { label: 'Remboursement produit', amount: fmt(productCost) },
+        { label: 'Frais de port', amount: fmt(shippingCost) },
+        { label: 'Bonus testeur', amount: fmt(testerBonus) },
+        { label: 'Bonus PRO', amount: fmt(proBonus) },
+        { label: 'Commission SuperTry', amount: fmt(commissionFixedFee) },
+        { label: `Couverture Stripe (${stripePctLabel}%)`, amount: fmt(stripeCoverage) },
+      ],
+      subtotalPerTester: {
+        label: 'Sous-total / testeur',
+        amount: fmt(totalPerTester),
       },
-      // Récap par testeur
-      perTesterSummary: {
-        withoutStripeFees: perTesterWithoutStripeFees,
-        withStripeFees: totalPerTester,
+      total: {
+        label: `TOTAL (${totalSlots} testeur${totalSlots > 1 ? 's' : ''})`,
+        detail: `${totalSlots} × ${fmt(totalPerTester)}`,
+        amount: fmt(totalAmount),
       },
-      // Récap total campagne
-      totalSummary: {
-        withoutStripeFees: Math.round(perTesterWithoutStripeFees * totalSlots * 100) / 100,
-        withStripeFees: Math.round(totalPerTester * totalSlots * 100) / 100,
-      },
-      // Champs flat (utilisés en interne par processCampaignPayment, refundUnusedSlots, etc.)
+
+      // ── Champs bruts (utilisés en interne par processCampaignPayment, refundUnusedSlots, etc.) ──
       productCost,
       shippingCost,
+      testerBonus,
       platformCommission: testerBonus + commissionFixedFee,
       proBonus,
       supertryCommission: commissionFixedFee,
       stripeCoverage,
       perTester: totalPerTester,
-      total: Math.round(totalPerTester * totalSlots * 100) / 100,
+      totalAmount,
     };
   }
 
@@ -167,10 +176,10 @@ export class PaymentsService {
     // Calculate escrow
     const escrow = await this.calculateCampaignEscrow(campaignId);
 
-    this.logger.log(`Processing payment for campaign ${campaignId}: ${escrow.total}€`);
+    this.logger.log(`Processing payment for campaign ${campaignId}: ${escrow.totalAmount}€`);
 
     // Create Stripe PaymentIntent
-    const paymentIntent = await this.stripeService.createPaymentIntent(escrow.total, 'eur', {
+    const paymentIntent = await this.stripeService.createPaymentIntent(escrow.totalAmount, 'eur', {
       campaignId,
       sellerId: userId,
       totalSlots: campaign.totalSlots.toString(),
@@ -198,7 +207,7 @@ export class PaymentsService {
         data: {
           walletId: null, // PLATEFORME
           type: TransactionType.CAMPAIGN_PAYMENT,
-          amount: new Decimal(escrow.total),
+          amount: new Decimal(escrow.totalAmount),
           reason: `Campaign payment for: ${campaign.title}`,
           campaignId,
           stripePaymentIntentId: confirmedPayment.id,
@@ -230,10 +239,10 @@ export class PaymentsService {
         where: { id: platformWallet.id },
         data: {
           escrowBalance: {
-            increment: new Decimal(escrow.total),
+            increment: new Decimal(escrow.totalAmount),
           },
           totalReceived: {
-            increment: new Decimal(escrow.total),
+            increment: new Decimal(escrow.totalAmount),
           },
         },
       });
@@ -265,7 +274,7 @@ export class PaymentsService {
       'CAMPAIGN_PAYMENT_PROCESSED',
       {
         campaignId,
-        amount: escrow.total,
+        amount: escrow.totalAmount,
         stripePaymentIntentId: confirmedPayment.id,
         escrowBreakdown: escrow,
       },
@@ -285,9 +294,9 @@ export class PaymentsService {
       variables: {
         firstName: sellerProfile!.firstName,
         campaignTitle: campaign.title,
-        amount: escrow.total,
+        amount: escrow.totalAmount,
         totalSlots: campaign.totalSlots,
-        message: `Your payment of ${escrow.total}€ has been processed successfully. Your campaign is now active!`,
+        message: `Your payment of ${escrow.totalAmount}€ has been processed successfully. Your campaign is now active!`,
       },
       metadata: {
         campaignId,

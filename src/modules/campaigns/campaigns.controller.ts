@@ -174,7 +174,7 @@ export class CampaignsController {
       supertryCommission: escrow.supertryCommission.toFixed(2),
       stripeCoverage: escrow.stripeCoverage.toFixed(2),
       perTester: escrow.perTester.toFixed(2),
-      totalAmount: escrow.total.toFixed(2),
+      totalAmount: escrow.totalAmount.toFixed(2),
       captureMethod: 'manual',
       createdAt: new Date().toISOString(),
     };
@@ -184,7 +184,7 @@ export class CampaignsController {
     // Manual capture: le PRO peut annuler dans 1h sans frais
 
     const session = await this.stripeService.createCheckoutSession(
-      escrow.total,
+      escrow.totalAmount,
       'eur',
       stripeMetadata,
       dto.successUrl,
@@ -201,7 +201,7 @@ export class CampaignsController {
       data: {
         campaignId,
         type: 'CAMPAIGN_PAYMENT' as any,
-        amount: escrow.total,
+        amount: escrow.totalAmount,
         reason: `Payment for campaign ${campaignId}`,
         status: 'PENDING' as any,
         stripeSessionId: session.id,
@@ -221,7 +221,7 @@ export class CampaignsController {
     return {
       checkoutUrl: session.url,
       sessionId: session.id,
-      amount: escrow.total * 100,
+      amount: escrow.totalAmount * 100,
       currency: 'eur',
     };
   }
@@ -304,13 +304,13 @@ export class CampaignsController {
       supertryCommission: escrow.supertryCommission.toFixed(2),
       stripeCoverage: escrow.stripeCoverage.toFixed(2),
       perTester: escrow.perTester.toFixed(2),
-      totalAmount: escrow.total.toFixed(2),
+      totalAmount: escrow.totalAmount.toFixed(2),
       captureMethod: 'manual',
       createdAt: new Date().toISOString(),
     };
 
     const paymentIntent = await this.stripeService.createPaymentIntent(
-      escrow.total,
+      escrow.totalAmount,
       'eur',
       stripeMetadata,
       {
@@ -325,7 +325,7 @@ export class CampaignsController {
         data: {
           campaignId,
           type: 'CAMPAIGN_PAYMENT' as any,
-          amount: escrow.total,
+          amount: escrow.totalAmount,
           reason: `Payment for campaign ${campaignId}`,
           status: 'PENDING' as any,
           stripePaymentIntentId: paymentIntent.id,
@@ -349,7 +349,7 @@ export class CampaignsController {
     return {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
-      amount: escrow.total * 100,
+      amount: escrow.totalAmount * 100,
       currency: 'eur',
     };
   }
