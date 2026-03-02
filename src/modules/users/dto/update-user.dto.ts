@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsOptional, IsString, Matches } from 'class-validator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'Jean' })
@@ -12,9 +12,11 @@ export class UpdateUserDto {
   @IsString()
   lastName?: string;
 
-  @ApiPropertyOptional({ example: '+33612345678' })
+  @ApiPropertyOptional({ description: 'Téléphone au format international E.164', example: '+33612345678' })
   @IsOptional()
-  @IsString()
+  @Matches(/^\+[1-9]\d{1,14}$/, {
+    message: 'Le numéro de téléphone doit être au format international (ex: +33612345678)',
+  })
   phone?: string;
 
   @ApiPropertyOptional({ description: 'Date de naissance (format ISO)', example: '1995-06-15' })

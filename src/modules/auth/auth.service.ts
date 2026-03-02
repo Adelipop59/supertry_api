@@ -21,6 +21,9 @@ import {
   ChangePasswordDto,
 } from './dto/auth.dto';
 import { Session } from 'lucia';
+import { decodeIdToken } from 'arctic';
+
+export type OAuthProvider = 'google' | 'github' | 'microsoft' | 'apple' | 'facebook' | 'discord';
 
 @Injectable()
 export class AuthService {
@@ -49,6 +52,11 @@ export class AuthService {
     });
 
     if (existingProfile) {
+      if (existingProfile.authProvider) {
+        throw new BadRequestException(
+          `Un compte existe déjà avec cet email via ${existingProfile.authProvider}. Connectez-vous avec ce provider.`,
+        );
+      }
       throw new BadRequestException('An account already exists with this email');
     }
 
@@ -253,7 +261,7 @@ export class AuthService {
    * Initiate OAuth
    */
   async initiateOAuth(
-    provider: 'google' | 'github' | 'azure',
+    provider: OAuthProvider,
   ): Promise<OAuthUrlResponseDto> {
     const state = this.generateRandomState();
 
@@ -262,13 +270,22 @@ export class AuthService {
     try {
       switch (provider) {
         case 'google':
-          url = await this.luciaService.createGoogleAuthorizationURL(state);
+          url = this.luciaService.createGoogleAuthorizationURL(state);
           break;
         case 'github':
-          url = await this.luciaService.createGitHubAuthorizationURL(state);
+          url = this.luciaService.createGitHubAuthorizationURL(state);
           break;
-        case 'azure':
-          url = await this.luciaService.createAzureAuthorizationURL(state);
+        case 'microsoft':
+          url = this.luciaService.createMicrosoftAuthorizationURL(state);
+          break;
+        case 'apple':
+          url = this.luciaService.createAppleAuthorizationURL(state);
+          break;
+        case 'facebook':
+          url = this.luciaService.createFacebookAuthorizationURL(state);
+          break;
+        case 'discord':
+          url = this.luciaService.createDiscordAuthorizationURL(state);
           break;
         default:
           throw new BadRequestException('Unsupported OAuth provider');
@@ -289,7 +306,9 @@ export class AuthService {
    */
   async handleOAuthCallback(
     code: string,
-    provider: 'google' | 'github' | 'azure',
+    provider: OAuthProvider,
+    state?: string,
+    appleUser?: string,
   ): Promise<AuthResponseDto & { sessionId: string }> {
     let providerUserId: string;
     let userEmail: string;
@@ -300,7 +319,7 @@ export class AuthService {
     try {
       switch (provider) {
         case 'google': {
-          const tokens = await this.luciaService.validateGoogleAuthorizationCode(code);
+          const tokens = await this.luciaService.validateGoogleAuthorizationCode(code, state!);
           const googleUser = await this.luciaService.fetchGoogleUser(tokens.accessToken);
           providerUserId = googleUser.sub;
           userEmail = googleUser.email;
@@ -318,13 +337,47 @@ export class AuthService {
           lastName = nameParts.slice(1).join(' ') || undefined;
           break;
         }
-        case 'azure': {
-          const tokens = await this.luciaService.validateAzureAuthorizationCode(code);
-          const azureUser = await this.luciaService.fetchAzureUser(tokens.accessToken);
-          providerUserId = azureUser.sub;
-          userEmail = azureUser.email;
-          firstName = azureUser.given_name;
-          lastName = azureUser.family_name;
+        case 'microsoft': {
+          const tokens = await this.luciaService.validateMicrosoftAuthorizationCode(code, state!);
+          const msUser = await this.luciaService.fetchMicrosoftUser(tokens.accessToken);
+          providerUserId = msUser.sub;
+          userEmail = msUser.email;
+          firstName = msUser.given_name;
+          lastName = msUser.family_name;
+          break;
+        }
+        case 'apple': {
+          const tokens = await this.luciaService.validateAppleAuthorizationCode(code);
+          const appleClaims = this.luciaService.parseAppleIdToken(tokens.idToken);
+          providerUserId = appleClaims.sub;
+          userEmail = appleClaims.email || '';
+          // Apple sends name only on first auth, via POST body
+          if (appleUser) {
+            try {
+              const userData = JSON.parse(appleUser);
+              firstName = userData.name?.firstName;
+              lastName = userData.name?.lastName;
+            } catch { /* ignore parse errors */ }
+          }
+          break;
+        }
+        case 'facebook': {
+          const tokens = await this.luciaService.validateFacebookAuthorizationCode(code);
+          const fbUser = await this.luciaService.fetchFacebookUser(tokens.accessToken);
+          providerUserId = fbUser.id;
+          userEmail = fbUser.email || '';
+          firstName = fbUser.first_name;
+          lastName = fbUser.last_name;
+          break;
+        }
+        case 'discord': {
+          const tokens = await this.luciaService.validateDiscordAuthorizationCode(code, state!);
+          const dcUser = await this.luciaService.fetchDiscordUser(tokens.accessToken);
+          providerUserId = dcUser.id;
+          userEmail = dcUser.email || '';
+          const dcNameParts = dcUser.global_name?.split(' ') || [dcUser.username];
+          firstName = dcNameParts[0];
+          lastName = dcNameParts.slice(1).join(' ') || undefined;
           break;
         }
       }
@@ -338,72 +391,97 @@ export class AuthService {
 
     this.logger.log(`OAuth callback: ${userEmail}, provider: ${provider}`);
 
-    // Check if OAuth account already exists
-    const existingOAuthAccount = await this.prismaService.oAuthAccount.findUnique({
-      where: {
-        provider_providerId: {
-          provider,
-          providerId: providerUserId,
-        },
-      },
-      include: { user: true },
-    });
+    const profile = await this.findOrCreateOAuthProfile(
+      provider,
+      providerUserId!,
+      userEmail,
+      firstName,
+      lastName,
+    );
 
-    let profile;
+    // Create session
+    const session = await this.luciaService.createSession(profile.id);
 
-    if (existingOAuthAccount) {
-      // OAuth account exists - return existing profile
-      profile = existingOAuthAccount.user;
-      this.logger.log(`Existing OAuth account found for ${userEmail}`);
-    } else {
-      // Check if email already exists (LIAISON AUTOMATIQUE)
-      const existingProfile = await this.prismaService.profile.findUnique({
-        where: { email: userEmail },
-      });
+    return {
+      access_token: session.id,
+      refresh_token: session.id,
+      token_type: 'bearer',
+      expires_in: 3600 * 24 * 30,
+      sessionId: session.id,
+      profile: this.mapProfileToResponse(profile),
+    };
+  }
 
-      if (existingProfile) {
-        // Email exists - LINK OAUTH ACCOUNT
-        this.logger.log(`Linking ${provider} to existing account: ${userEmail}`);
+  /**
+   * Handle OAuth token login - Pour les SDK natifs mobile (Google Sign-In, Sign in with Apple, etc.)
+   */
+  async handleOAuthTokenLogin(
+    provider: OAuthProvider,
+    token: string,
+  ): Promise<AuthResponseDto & { sessionId: string }> {
+    let providerUserId: string;
+    let userEmail: string;
+    let firstName: string | undefined;
+    let lastName: string | undefined;
 
-        await this.prismaService.oAuthAccount.create({
-          data: {
-            provider,
-            providerId: providerUserId,
-            userId: existingProfile.id,
-          },
-        });
-
-        if (!existingProfile.authProvider) {
-          await this.prismaService.profile.update({
-            where: { id: existingProfile.id },
-            data: { authProvider: provider },
-          });
+    try {
+      switch (provider) {
+        case 'google': {
+          // Verify Google ID token via Google's tokeninfo endpoint
+          const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(token)}`);
+          if (!response.ok) throw new Error('Invalid Google ID token');
+          const payload = await response.json();
+          providerUserId = payload.sub;
+          userEmail = payload.email;
+          firstName = payload.given_name;
+          lastName = payload.family_name;
+          break;
         }
-
-        profile = existingProfile;
-      } else {
-        // Create new profile for OAuth user
-        this.logger.log(`Creating new profile for OAuth user: ${userEmail}`);
-
-        profile = await this.usersService.createProfile({
-          email: userEmail,
-          role: undefined, // Must complete onboarding
-          firstName: firstName || undefined,
-          lastName: lastName || undefined,
-          authProvider: provider,
-          isOnboarded: false, // IMPORTANT: Must complete onboarding
-        });
-
-        // Create OAuth account link
-        await this.prismaService.oAuthAccount.create({
-          data: {
-            provider,
-            providerId: providerUserId,
-            userId: profile.id,
-          },
-        });
+        case 'apple': {
+          // Apple ID tokens can be decoded
+          const claims = decodeIdToken(token) as {
+            sub: string;
+            email?: string;
+          };
+          providerUserId = claims.sub;
+          userEmail = claims.email || '';
+          break;
+        }
+        case 'facebook': {
+          // Facebook uses access tokens, verify via /me
+          const response = await fetch(
+            `https://graph.facebook.com/v19.0/me?fields=id,email,first_name,last_name`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          if (!response.ok) throw new Error('Invalid Facebook token');
+          const user = await response.json();
+          providerUserId = user.id;
+          userEmail = user.email || '';
+          firstName = user.first_name;
+          lastName = user.last_name;
+          break;
+        }
+        default:
+          throw new BadRequestException(`Token-based login not supported for provider: ${provider}`);
       }
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      throw new BadRequestException(`Token verification failed: ${error.message}`);
     }
+
+    if (!userEmail) {
+      throw new BadRequestException('Email not provided by OAuth provider');
+    }
+
+    this.logger.log(`OAuth token login: ${userEmail}, provider: ${provider}`);
+
+    const profile = await this.findOrCreateOAuthProfile(
+      provider,
+      providerUserId!,
+      userEmail,
+      firstName,
+      lastName,
+    );
 
     // Create session
     const session = await this.luciaService.createSession(profile.id);
@@ -516,6 +594,92 @@ export class AuthService {
       user: result.user,
       session: result.session,
     };
+  }
+
+  /**
+   * Find or create a profile for an OAuth login, with automatic account linking
+   */
+  private async findOrCreateOAuthProfile(
+    provider: string,
+    providerUserId: string,
+    userEmail: string,
+    firstName?: string,
+    lastName?: string,
+  ): Promise<any> {
+    // Check if OAuth account already exists
+    const existingOAuthAccount = await this.prismaService.oAuthAccount.findUnique({
+      where: {
+        provider_providerId: {
+          provider,
+          providerId: providerUserId,
+        },
+      },
+      include: { user: true },
+    });
+
+    if (existingOAuthAccount) {
+      // OAuth account exists - check if active
+      if (!existingOAuthAccount.user.isActive) {
+        throw new UnauthorizedException('Ce compte a été désactivé.');
+      }
+      this.logger.log(`Existing OAuth account found for ${userEmail}`);
+      return existingOAuthAccount.user;
+    }
+
+    // Check if email already exists (LIAISON AUTOMATIQUE)
+    const existingProfile = await this.prismaService.profile.findUnique({
+      where: { email: userEmail },
+    });
+
+    if (existingProfile) {
+      // Check if active
+      if (!existingProfile.isActive) {
+        throw new UnauthorizedException('Ce compte a été désactivé.');
+      }
+
+      // Email exists - LINK OAUTH ACCOUNT
+      this.logger.log(`Linking ${provider} to existing account: ${userEmail}`);
+
+      await this.prismaService.oAuthAccount.create({
+        data: {
+          provider,
+          providerId: providerUserId,
+          userId: existingProfile.id,
+        },
+      });
+
+      if (!existingProfile.authProvider) {
+        await this.prismaService.profile.update({
+          where: { id: existingProfile.id },
+          data: { authProvider: provider },
+        });
+      }
+
+      return existingProfile;
+    }
+
+    // Create new profile for OAuth user
+    this.logger.log(`Creating new profile for OAuth user: ${userEmail}`);
+
+    const profile = await this.usersService.createProfile({
+      email: userEmail,
+      role: undefined, // Must complete onboarding
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      authProvider: provider,
+      isOnboarded: false, // IMPORTANT: Must complete onboarding
+    });
+
+    // Create OAuth account link
+    await this.prismaService.oAuthAccount.create({
+      data: {
+        provider,
+        providerId: providerUserId,
+        userId: profile.id,
+      },
+    });
+
+    return profile;
   }
 
   /**

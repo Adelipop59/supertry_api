@@ -10,6 +10,7 @@ import {
   IsArray,
   ArrayMinSize,
   IsDateString,
+  Matches,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -70,12 +71,14 @@ export class SignupDto {
   lastName?: string;
 
   @ApiProperty({
-    description: 'Numéro de téléphone',
+    description: 'Numéro de téléphone au format international E.164',
     required: false,
     example: '+33612345678',
   })
-  @IsString()
   @IsOptional()
+  @Matches(/^\+[1-9]\d{1,14}$/, {
+    message: 'Le numéro de téléphone doit être au format international (ex: +33612345678)',
+  })
   phone?: string;
 
   @ApiProperty({
@@ -200,7 +203,7 @@ export class OAuthUrlResponseDto {
   @ApiProperty({
     description: 'Provider OAuth',
     example: 'google',
-    enum: ['google', 'github', 'azure'],
+    enum: ['google', 'github', 'microsoft', 'apple', 'facebook', 'discord'],
   })
   provider!: string;
 
@@ -256,9 +259,11 @@ export class CompleteOnboardingDto {
   @IsOptional()
   lastName?: string;
 
-  @ApiProperty({ description: 'Téléphone', required: false })
-  @IsString()
+  @ApiProperty({ description: 'Téléphone au format international E.164', required: false, example: '+33612345678' })
   @IsOptional()
+  @Matches(/^\+[1-9]\d{1,14}$/, {
+    message: 'Le numéro de téléphone doit être au format international (ex: +33612345678)',
+  })
   phone?: string;
 
   @ApiProperty({ description: 'Date de naissance (format ISO)', required: false, example: '1995-06-15' })
@@ -305,4 +310,23 @@ export class ChangePasswordDto {
   @IsNotEmpty()
   @MinLength(6)
   newPassword!: string;
+}
+
+export class OAuthTokenLoginDto {
+  @ApiProperty({
+    description: 'ID token ou access token du SDK OAuth natif (mobile)',
+    example: 'eyJhbGciOiJSUzI1NiIs...',
+  })
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+
+  @ApiProperty({
+    description: 'Provider OAuth',
+    example: 'google',
+    enum: ['google', 'apple', 'facebook'],
+  })
+  @IsString()
+  @IsNotEmpty()
+  provider!: string;
 }

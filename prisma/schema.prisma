@@ -1270,7 +1270,7 @@ model LuciaSession {
 // Table OAuthAccount - Comptes OAuth liés
 model OAuthAccount {
   id         String @id @default(uuid())
-  provider   String // "google", "github", "azure"
+  provider   String // "google", "github", "microsoft", "apple", "facebook", "discord"
   providerId String @map("provider_id")
 
   userId String  @map("user_id")

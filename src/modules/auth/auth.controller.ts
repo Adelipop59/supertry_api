@@ -6,11 +6,11 @@ import {
   Param,
   Res,
   Req,
-  UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { AuthService } from './auth.service';
+import { AuthService, OAuthProvider } from './auth.service';
 import {
   SignupDto,
   LoginDto,
@@ -22,6 +22,7 @@ import {
   CompleteOnboardingDto,
   ChangePasswordDto,
   RefreshTokenResponseDto,
+  OAuthTokenLoginDto,
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { ApiAuthResponses, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
@@ -102,30 +103,78 @@ export class AuthController {
 
   @Get('oauth/:provider')
   @Public()
-  @ApiOperation({ summary: 'Initier OAuth (Google/GitHub/Azure)' })
+  @ApiOperation({ summary: 'Initier OAuth (Google/GitHub/Microsoft/Apple/Facebook/Discord)' })
   @ApiResponse({ status: 200, type: OAuthUrlResponseDto })
   async initiateOAuth(
-    @Param('provider') provider: 'google' | 'github' | 'azure',
+    @Param('provider') provider: string,
   ): Promise<OAuthUrlResponseDto> {
-    return this.authService.initiateOAuth(provider);
+    return this.authService.initiateOAuth(provider as OAuthProvider);
   }
 
   @Get('oauth/:provider/callback')
   @Public()
-  @ApiOperation({ summary: 'Callback OAuth' })
+  @ApiOperation({ summary: 'Callback OAuth (GET)' })
   @ApiResponse({ status: 200, type: AuthResponseDto })
   async oauthCallback(
-    @Param('provider') provider: 'google' | 'github' | 'azure',
+    @Param('provider') provider: string,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponseDto> {
     const code = req.query.code as string;
+    const state = req.query.state as string;
 
     if (!code) {
-      throw new Error('Code OAuth manquant');
+      throw new BadRequestException('Code OAuth manquant');
     }
 
-    const result = await this.authService.handleOAuthCallback(code, provider);
+    const result = await this.authService.handleOAuthCallback(code, provider as OAuthProvider, state);
+
+    // Set session cookie
+    const cookie = this.authService['luciaService'].createSessionCookie(result.sessionId);
+    res.cookie(cookie.name, cookie.value, cookie.attributes);
+
+    return result;
+  }
+
+  @Post('oauth/apple/callback')
+  @Public()
+  @ApiOperation({ summary: 'Callback OAuth Apple (POST - Apple envoie en POST)' })
+  @ApiResponse({ status: 200, type: AuthResponseDto })
+  async appleOAuthCallback(
+    @Body() body: { code: string; state?: string; user?: string },
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponseDto> {
+    if (!body.code) {
+      throw new BadRequestException('Code OAuth manquant');
+    }
+
+    const result = await this.authService.handleOAuthCallback(
+      body.code,
+      'apple',
+      body.state,
+      body.user, // Apple sends user JSON string only on first auth
+    );
+
+    // Set session cookie
+    const cookie = this.authService['luciaService'].createSessionCookie(result.sessionId);
+    res.cookie(cookie.name, cookie.value, cookie.attributes);
+
+    return result;
+  }
+
+  @Post('oauth/token')
+  @Public()
+  @ApiOperation({ summary: 'OAuth login avec token natif (mobile SDK - Google Sign-In, Sign in with Apple, etc.)' })
+  @ApiResponse({ status: 200, type: AuthResponseDto })
+  @ApiValidationErrorResponse()
+  async oauthTokenLogin(
+    @Body() dto: OAuthTokenLoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AuthResponseDto> {
+    const result = await this.authService.handleOAuthTokenLogin(
+      dto.provider as OAuthProvider,
+      dto.token,
+    );
 
     // Set session cookie
     const cookie = this.authService['luciaService'].createSessionCookie(result.sessionId);
