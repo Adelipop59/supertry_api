@@ -768,6 +768,7 @@ export class AuthService {
       siret: profile.siret || undefined,
       isActive: profile.isActive,
       isVerified: profile.isVerified,
+      verificationStatus: profile.verificationStatus || undefined,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
     };

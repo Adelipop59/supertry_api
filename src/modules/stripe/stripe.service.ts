@@ -214,6 +214,7 @@ export class StripeService {
     const profile = await this.prisma.profile.findUnique({
       where: { id: profileId },
       select: {
+        id: true,
         stripeConnectAccountId: true,
         stripeOnboardingCompleted: true,
         stripeIdentityVerified: true,
@@ -221,6 +222,17 @@ export class StripeService {
         stripeIdentityLastError: true,
         stripeIdentitySessionId: true,
         completedSessionsCount: true,
+        verificationStatus: true,
+        stripeConnectDataSyncedAt: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        birthDate: true,
+        addressLine1: true,
+        addressCity: true,
+        addressPostalCode: true,
+        addressState: true,
+        country: true,
       },
     });
 
@@ -275,6 +287,16 @@ export class StripeService {
           : null,
       },
     });
+
+    // Safety net: enrich profile from Connect if webhook missed it
+    if (status === 'COMPLETED' && !profile.stripeConnectDataSyncedAt) {
+      try {
+        await this.enrichProfileFromConnectAccount(account, profileId, profile);
+        this.logger.log(`Safety net: enriched profile ${profileId} from Connect (webhook was missed)`);
+      } catch (error) {
+        this.logger.error(`Safety net enrichment failed for ${profileId}: ${error.message}`);
+      }
+    }
 
     // Compute identity status
     const identityRequired = (profile.completedSessionsCount ?? 0) >= 3;
@@ -339,10 +361,76 @@ export class StripeService {
           : null,
         sessionId: profile.stripeIdentitySessionId,
       },
+      verificationStatus: profile.verificationStatus ?? null,
       canApplyToCampaigns: canApply,
       canReceivePayments: account.charges_enabled && account.payouts_enabled,
       userMessage: userMessages[status] ?? userMessages.IN_PROGRESS,
     };
+  }
+
+  /**
+   * Safety net: enrich profile from Stripe Connect account data.
+   * Called when getDetailedOnboardingStatus detects COMPLETED but stripeConnectDataSyncedAt is null
+   * (meaning the webhook enrichment was missed).
+   */
+  private async enrichProfileFromConnectAccount(
+    account: Stripe.Account,
+    profileId: string,
+    profile: Record<string, any>,
+  ) {
+    const individual = account.individual;
+    if (!individual) {
+      this.logger.warn(`No individual data on Stripe account ${account.id} (safety net)`);
+      return;
+    }
+
+    const updateData: Record<string, any> = {
+      stripeConnectDataSyncedAt: new Date(),
+    };
+
+    if (!profile.firstName && individual.first_name) {
+      updateData.firstName = individual.first_name;
+    }
+    if (!profile.lastName && individual.last_name) {
+      updateData.lastName = individual.last_name;
+    }
+    if (!profile.phone && individual.phone) {
+      updateData.phone = individual.phone;
+    }
+    if (!profile.birthDate && individual.dob) {
+      const { day, month, year } = individual.dob;
+      if (day && month && year) {
+        updateData.birthDate = new Date(Date.UTC(year, month - 1, day));
+      }
+    }
+    if (individual.address) {
+      if (!profile.addressLine1 && individual.address.line1) {
+        updateData.addressLine1 = individual.address.line1;
+      }
+      if (individual.address.line2) {
+        updateData.addressLine2 = individual.address.line2;
+      }
+      if (!profile.addressCity && individual.address.city) {
+        updateData.addressCity = individual.address.city;
+      }
+      if (!profile.addressPostalCode && individual.address.postal_code) {
+        updateData.addressPostalCode = individual.address.postal_code;
+      }
+      if (!profile.addressState && individual.address.state) {
+        updateData.addressState = individual.address.state;
+      }
+      if (!profile.country && individual.address.country) {
+        updateData.country = individual.address.country;
+      }
+    }
+
+    await this.prisma.profile.update({
+      where: { id: profileId },
+      data: updateData,
+    });
+
+    const fieldsUpdated = Object.keys(updateData).filter(k => k !== 'stripeConnectDataSyncedAt');
+    this.logger.log(`Profile ${profileId} enriched (safety net) from Connect ${account.id}: ${fieldsUpdated.join(', ')}`);
   }
 
   // ============================================================================
