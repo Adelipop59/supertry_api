@@ -9,8 +9,8 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  BadRequestException,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CampaignsService } from './campaigns.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
@@ -83,8 +83,11 @@ export class CampaignsController {
   @ApiResponse({ status: 200, description: 'Détail de la campagne' })
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
-  async findOne(@Param('id') id: string): Promise<CampaignResponseDto> {
-    return this.campaignsService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ): Promise<CampaignResponseDto> {
+    return this.campaignsService.findOne(id, user);
   }
 
   @Post(':id/check-eligibility')
@@ -255,12 +258,10 @@ export class CampaignsController {
       try {
         const existingPi = await this.stripeService.getPaymentIntent(campaignData.stripePaymentIntentId);
         if (existingPi.status === 'requires_capture') {
-          throw new BadRequestException(
-            'Le paiement est déjà autorisé et en attente de capture. La campagne sera activée automatiquement.',
-          );
+          throw new I18nHttpException('campaign.payment_already_authorized', 'CAMPAIGN_PAYMENT_AUTHORIZED', HttpStatus.BAD_REQUEST);
         }
       } catch (e) {
-        if (e instanceof BadRequestException) throw e;
+        if (e instanceof I18nHttpException) throw e;
         // PI introuvable ou expiré → continuer
       }
     }

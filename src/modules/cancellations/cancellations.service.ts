@@ -1,9 +1,7 @@
 import {
   Injectable,
   Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -16,6 +14,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { CancelCampaignDto } from './dto/cancel-campaign.dto';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class CancellationsService {
@@ -39,15 +38,15 @@ export class CancellationsService {
     const campaign = await this.findCampaignForCancellation(campaignId);
 
     if (campaign.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only cancel your own campaigns');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     if (campaign.status === CampaignStatus.COMPLETED) {
-      throw new BadRequestException('Cannot cancel a completed campaign');
+      throw new I18nHttpException('dispute.invalid_status', 'CAMPAIGN_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     if (!campaign.stripePaymentIntentId) {
-      throw new BadRequestException('Campaign has no payment to refund');
+      throw new I18nHttpException('common.not_found', 'CAMPAIGN_NO_PAYMENT', HttpStatus.BAD_REQUEST);
     }
 
     return this.executeCancellation(campaign, sellerId, dto, 'CAMPAIGN_CANCELLED_BY_PRO');
@@ -66,7 +65,7 @@ export class CancellationsService {
     });
 
     if (!admin || admin.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can force cancel campaigns');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     const campaign = await this.findCampaignForCancellation(campaignId);
@@ -129,11 +128,11 @@ export class CancellationsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException('Campaign not found');
+      throw new I18nHttpException('common.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (campaign.status === CampaignStatus.CANCELLED) {
-      throw new BadRequestException('Campaign is already cancelled');
+      throw new I18nHttpException('dispute.invalid_status', 'CAMPAIGN_ALREADY_CANCELLED', HttpStatus.BAD_REQUEST);
     }
 
     return campaign;
@@ -269,7 +268,7 @@ export class CancellationsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException('Campaign not found');
+      throw new I18nHttpException('common.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const user = await this.prisma.profile.findUnique({
@@ -278,7 +277,7 @@ export class CancellationsService {
 
     // Vérifier les permissions
     if (user!.role !== UserRole.ADMIN && campaign.sellerId !== userId) {
-      throw new ForbiddenException('You can only view your own campaign cancellation impact');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     if (campaign.status === CampaignStatus.CANCELLED) {

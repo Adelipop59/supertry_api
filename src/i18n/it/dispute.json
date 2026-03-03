@@ -1,0 +1,7 @@
+{
+  "not_found": "Questa controversia non è stata trovata.",
+  "session_not_found": "La sessione associata a questa controversia non è stata trovata.",
+  "created_success": "La controversia è stata creata. Il nostro team la esaminerà.",
+  "resolved_success": "La controversia è stata risolta.",
+  "invalid_status": "Questa azione non è possibile nello stato attuale della controversia."
+}

@@ -1,10 +1,9 @@
 import {
   Injectable,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { PrismaService } from '../../database/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { StripeService } from '../stripe/stripe.service';
@@ -28,6 +27,18 @@ import { SessionStatus, CampaignMarketplaceMode, AuditCategory, TesterTier } fro
 import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast } from '../gamification/gamification.constants';
 import { MessagesService } from '../messages/messages.service';
+import { MediaService } from '../media/media.service';
+import { normalizeImageEntry } from '../products/interfaces/product-image.interface';
+
+const CAMPAIGN_OFFERS_WITH_IMAGES = {
+  offers: {
+    include: {
+      product: {
+        select: { images: true },
+      },
+    },
+  },
+} as const;
 
 const SESSION_INCLUDE = {
   campaign: {
@@ -42,6 +53,7 @@ const SESSION_INCLUDE = {
           lastName: true,
         },
       },
+      ...CAMPAIGN_OFFERS_WITH_IMAGES,
     },
   },
   tester: {
@@ -78,6 +90,7 @@ const SESSION_BASIC_INCLUDE = {
           lastName: true,
         },
       },
+      ...CAMPAIGN_OFFERS_WITH_IMAGES,
     },
   },
   tester: {
@@ -114,6 +127,7 @@ export class TestSessionsService {
     private businessRulesService: BusinessRulesService,
     private gamificationService: GamificationService,
     private messagesService: MessagesService,
+    private mediaService: MediaService,
   ) {}
 
   async apply(
@@ -134,16 +148,16 @@ export class TestSessionsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException(`Campaign with ID '${campaignId}' not found`);
+      throw new I18nHttpException('campaign.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (campaign.status !== 'ACTIVE') {
-      throw new BadRequestException('Campaign is not active');
+      throw new I18nHttpException('campaign.not_active', 'CAMPAIGN_NOT_ACTIVE', HttpStatus.BAD_REQUEST);
     }
 
     // Check available slots
     if (campaign.availableSlots <= 0) {
-      throw new BadRequestException('No available slots for this campaign');
+      throw new I18nHttpException('campaign.no_slots', 'CAMPAIGN_NO_SLOTS', HttpStatus.BAD_REQUEST);
     }
 
     // Check if tester is banned
@@ -162,17 +176,12 @@ export class TestSessionsService {
     });
 
     if (tester?.bannedUntil && tester.bannedUntil > new Date()) {
-      throw new BadRequestException(
-        `You are temporarily banned until ${tester.bannedUntil.toISOString()}`,
-      );
+      throw new I18nHttpException('session.banned_until', 'SESSION_BANNED', HttpStatus.BAD_REQUEST, { date: tester.bannedUntil?.toLocaleDateString() || '' });
     }
 
     // Vérification incohérence identité (Connect vs Identity KYC)
     if (tester?.verificationStatus === 'INCOHERENT') {
-      throw new BadRequestException({
-        message: 'Votre compte a été signalé pour une incohérence de vérification d\'identité. Veuillez contacter le support.',
-        verificationBlocked: true,
-      });
+      throw new I18nHttpException('session.identity_blocked', 'SESSION_IDENTITY_BLOCKED', HttpStatus.BAD_REQUEST, undefined, { verificationBlocked: true });
     }
 
     // Vérification onboarding + KYC conditionnel
@@ -181,18 +190,12 @@ export class TestSessionsService {
     if (!skipKYC) {
       // 1. Stripe Connect créé ?
       if (!tester?.stripeConnectAccountId) {
-        throw new BadRequestException({
-          message: 'Create Stripe Connect account first',
-          identityRequired: true,
-        });
+        throw new I18nHttpException('session.stripe_required', 'SESSION_STRIPE_REQUIRED', HttpStatus.BAD_REQUEST, undefined, { identityRequired: true });
       }
 
       // 2. Onboarding Connect complété (IBAN, infos perso) ?
       if (!tester.stripeOnboardingCompleted) {
-        throw new BadRequestException({
-          message: 'Complete Stripe Connect onboarding first (bank account setup)',
-          onboardingRequired: true,
-        });
+        throw new I18nHttpException('session.onboarding_required', 'SESSION_ONBOARDING_REQUIRED', HttpStatus.BAD_REQUEST, undefined, { onboardingRequired: true });
       }
 
       // 3. KYC Identity obligatoire seulement après N tests réussis
@@ -206,12 +209,7 @@ export class TestSessionsService {
             `${process.env.FRONTEND_URL}/dashboard/identity/callback`,
           );
 
-        throw new BadRequestException({
-          message: `Identity verification required after ${kycThreshold} completed tests. Please verify your identity to continue applying.`,
-          identityRequired: true,
-          verificationUrl: verificationSession.url,
-          clientSecret: verificationSession.clientSecret,
-        });
+        throw new I18nHttpException('session.kyc_required', 'SESSION_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true, verificationUrl: verificationSession.url, clientSecret: verificationSession.clientSecret });
       }
     } else {
       console.warn('⚠️  KYC verification skipped (SKIP_KYC_VERIFICATION=true)');
@@ -225,15 +223,13 @@ export class TestSessionsService {
         Number(offer.expectedPrice),
       );
       if (!tierCheck.eligible) {
-        throw new BadRequestException(tierCheck.reason);
+        throw new I18nHttpException('session.tier_insufficient', 'SESSION_TIER_INSUFFICIENT', HttpStatus.BAD_REQUEST);
       }
 
       // Vérification palier minimum défini par le vendeur
       if (campaign.criteria?.minTier) {
         if (!isTierAtLeast(tester.tier, campaign.criteria.minTier as TesterTier)) {
-          throw new BadRequestException(
-            `Cette campagne requiert le palier ${campaign.criteria.minTier} ou supérieur. Votre palier actuel : ${tester.tier}`,
-          );
+          throw new I18nHttpException('session.criteria_not_met', 'SESSION_CRITERIA_NOT_MET', HttpStatus.BAD_REQUEST, { requiredTier: campaign.criteria.minTier, currentTier: tester.tier });
         }
       }
     }
@@ -312,7 +308,7 @@ export class TestSessionsService {
     }
 
     if (!nearestDate) {
-      throw new BadRequestException('No available distribution slots');
+      throw new I18nHttpException('campaign.no_slots', 'CAMPAIGN_NO_SLOTS', HttpStatus.BAD_REQUEST);
     }
 
     return nearestDate;
@@ -334,14 +330,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.campaign.seller.id !== sellerId) {
-      throw new ForbiddenException(
-        'You can only accept sessions for your own campaigns',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status
     if (session.status !== SessionStatus.PENDING) {
-      throw new BadRequestException('Only PENDING sessions can be accepted');
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const updatedSession = await this.prisma.testSession.update({
@@ -371,14 +365,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.campaign.seller.id !== sellerId) {
-      throw new ForbiddenException(
-        'You can only reject sessions for your own campaigns',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status
     if (session.status !== SessionStatus.PENDING) {
-      throw new BadRequestException('Only PENDING sessions can be rejected');
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const updatedSession = await this.prisma.$transaction(async (tx) => {
@@ -414,7 +406,7 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.testerId !== testerId) {
-      throw new ForbiddenException('You can only cancel your own sessions');
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status - can cancel PENDING, ACCEPTED, PRICE_VALIDATED, or PURCHASE_VALIDATED
@@ -426,9 +418,7 @@ export class TestSessionsService {
     ];
 
     if (!cancellableStatuses.includes(session.status)) {
-      throw new BadRequestException(
-        `Cannot cancel session in ${session.status} status`,
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Get business rules
@@ -526,9 +516,7 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.testerId !== testerId) {
-      throw new ForbiddenException(
-        'You can only validate price for your own sessions',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Get campaign and offer first to check mode
@@ -541,21 +529,17 @@ export class TestSessionsService {
 
     // Check marketplace mode - price validation only for PROCEDURES mode
     if (campaign?.marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK) {
-      throw new BadRequestException(
-        'Price validation not required for PRODUCT_LINK mode',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Check status - must have completed all procedures first (for PROCEDURES mode)
     if (session.status !== SessionStatus.PROCEDURES_COMPLETED) {
-      throw new BadRequestException(
-        'Can only validate price after all procedures are completed',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const offer = campaign?.offers[0];
     if (!offer) {
-      throw new NotFoundException('Offer not found for this campaign');
+      throw new I18nHttpException('session.offer_not_found', 'SESSION_OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Validate price range
@@ -582,9 +566,7 @@ export class TestSessionsService {
 
       if (attempts >= 2) {
         // After 2 failed attempts, ask for product title
-        throw new BadRequestException(
-          'Price validation failed. Please submit the product title.',
-        );
+        throw new I18nHttpException('session.price_invalid', 'SESSION_PRICE_INVALID', HttpStatus.BAD_REQUEST);
       }
 
       await this.prisma.testSession.update({
@@ -594,9 +576,7 @@ export class TestSessionsService {
         },
       });
 
-      throw new BadRequestException(
-        `Incorrect price. Expected between ${offer.priceRangeMin}€ and ${offer.priceRangeMax}€. Attempt ${attempts}/2`,
-      );
+      throw new I18nHttpException('session.price_invalid', 'SESSION_PRICE_INVALID', HttpStatus.BAD_REQUEST, { min: offer.priceRangeMin, max: offer.priceRangeMax, attempts });
     }
   }
 
@@ -609,9 +589,7 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.testerId !== testerId) {
-      throw new ForbiddenException(
-        'You can only submit purchase for your own sessions',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status - depends on marketplace mode
@@ -620,16 +598,12 @@ export class TestSessionsService {
     if (campaign.marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK) {
       // PRODUCT_LINK: can submit purchase directly after acceptance (no price validation needed)
       if (session.status !== SessionStatus.ACCEPTED) {
-        throw new BadRequestException(
-          'Can only submit purchase after acceptance for PRODUCT_LINK mode',
-        );
+        throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
       }
     } else {
       // PROCEDURES: must complete procedures and validate price first
       if (session.status !== SessionStatus.PRICE_VALIDATED) {
-        throw new BadRequestException(
-          'Can only submit purchase after price validation for PROCEDURES mode',
-        );
+        throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
       }
     }
 
@@ -644,9 +618,7 @@ export class TestSessionsService {
       );
 
       if (diffDays > 1) {
-        throw new BadRequestException(
-          `Purchase can only be submitted around ${scheduled.toISOString().split('T')[0]}`,
-        );
+        throw new I18nHttpException('session.purchase_date_invalid', 'SESSION_PURCHASE_DATE_INVALID', HttpStatus.BAD_REQUEST, { date: scheduled.toISOString().split('T')[0] });
       }
     }
 
@@ -675,16 +647,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.campaign.seller.id !== sellerId) {
-      throw new ForbiddenException(
-        'You can only validate purchases for your own campaigns',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status
     if (session.status !== SessionStatus.PURCHASE_SUBMITTED) {
-      throw new BadRequestException(
-        'Can only validate PURCHASE_SUBMITTED sessions',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Prepare update data
@@ -726,16 +694,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.campaign.seller.id !== sellerId) {
-      throw new ForbiddenException(
-        'You can only reject purchases for your own campaigns',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status
     if (session.status !== SessionStatus.PURCHASE_SUBMITTED) {
-      throw new BadRequestException(
-        'Can only reject PURCHASE_SUBMITTED sessions',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const updatedSession = await this.prisma.testSession.update({
@@ -761,9 +725,7 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.testerId !== testerId) {
-      throw new ForbiddenException(
-        'You can only complete steps for your own sessions',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status - Allow step completion after acceptance (for PROCEDURES mode)
@@ -774,9 +736,7 @@ export class TestSessionsService {
     ];
 
     if (!allowedStatuses.includes(session.status)) {
-      throw new BadRequestException(
-        'Can only complete steps after application is accepted',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Find or create step progress
@@ -865,16 +825,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.testerId !== testerId) {
-      throw new ForbiddenException(
-        'You can only submit test for your own sessions',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status - can submit test after purchase is validated
     if (session.status !== SessionStatus.PURCHASE_VALIDATED) {
-      throw new BadRequestException(
-        'Can only submit test after purchase is validated by PRO',
-      );
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const updatedSession = await this.prisma.testSession.update({
@@ -897,14 +853,12 @@ export class TestSessionsService {
 
     // Check ownership
     if (session.campaign.seller.id !== sellerId) {
-      throw new ForbiddenException(
-        'You can only complete sessions for your own campaigns',
-      );
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check status
     if (session.status !== SessionStatus.SUBMITTED) {
-      throw new BadRequestException('Can only complete SUBMITTED sessions');
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Get campaign and offer to calculate reward
@@ -917,7 +871,7 @@ export class TestSessionsService {
 
     const offer = campaign?.offers[0];
     if (!offer) {
-      throw new NotFoundException('Offer not found');
+      throw new I18nHttpException('session.offer_not_found', 'SESSION_OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Calculate reward amount: REAL productPrice + REAL shippingCost + testerBonus + proBonus
@@ -1037,11 +991,11 @@ export class TestSessionsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException(`Campaign with ID '${campaignId}' not found`);
+      throw new I18nHttpException('campaign.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (campaign.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only view sessions for your own campaigns');
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     const { page = 1, limit = 10, status } = filterDto;
@@ -1064,7 +1018,11 @@ export class TestSessionsService {
       this.prisma.testSession.count({ where }),
     ]);
 
-    return createPaginatedResponse(sessions as any, total, page, limit);
+    const sessionsWithImages = await Promise.all(
+      sessions.map((s: any) => this.resolveSessionProductImages(s)),
+    );
+
+    return createPaginatedResponse(sessionsWithImages, total, page, limit);
   }
 
   async findOne(id: string): Promise<TestSessionResponseDto> {
@@ -1074,9 +1032,56 @@ export class TestSessionsService {
     });
 
     if (!session) {
-      throw new NotFoundException(`Session with ID '${id}' not found`);
+      throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    return session as any;
+    return this.resolveSessionProductImages(session as any);
+  }
+
+  /**
+   * Résout les images produit claires pour une session.
+   * Le testeur est participant par définition → toujours images claires.
+   */
+  private async resolveSessionProductImages(
+    session: any,
+  ): Promise<any> {
+    const offers = session.campaign?.offers || [];
+    const allImages: any[] = [];
+
+    for (const offer of offers) {
+      const rawImages: any[] = Array.isArray(offer.product?.images)
+        ? offer.product.images
+        : [];
+      for (const img of rawImages) {
+        const normalized = normalizeImageEntry(img);
+        const key = normalized.clearKey;
+        if (key.startsWith('http://') || key.startsWith('https://')) {
+          const extracted = this.mediaService.extractKeyFromUrl(key);
+          if (extracted) allImages.push(extracted);
+        } else {
+          allImages.push(key);
+        }
+      }
+    }
+
+    const signedUrls =
+      allImages.length > 0
+        ? await this.mediaService.getSignedUrls(allImages)
+        : [];
+
+    // Retourner la session avec productImages et sans les données brutes du produit
+    const cleanOffers = offers.map((o: any) => {
+      const { product, ...rest } = o;
+      return rest;
+    });
+
+    return {
+      ...session,
+      campaign: {
+        ...session.campaign,
+        offers: cleanOffers,
+      },
+      productImages: signedUrls,
+    };
   }
 }

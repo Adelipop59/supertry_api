@@ -1,0 +1,13 @@
+{
+  "not_found": "Este produto n\u00e3o foi encontrado ou foi exclu\u00eddo.",
+  "access_denied": "Voc\u00ea n\u00e3o tem acesso a este produto.",
+  "deleted_soft": "Produto desativado. O hist\u00f3rico das campanhas associadas foi mantido.",
+  "deleted_hard": "Produto exclu\u00eddo permanentemente.",
+  "used_in_campaign": "Este produto est\u00e1 sendo usado em uma campanha em andamento. Finalize ou cancele a campanha antes de exclu\u00ed-lo.",
+  "invalid_files": "Os arquivos enviados s\u00e3o inv\u00e1lidos. Por favor, verifique o formato e o tamanho.",
+  "created_success": "Produto criado com sucesso.",
+  "updated_success": "Produto atualizado com sucesso.",
+  "invalid_data": "Os dados do produto são inválidos.",
+  "own_products_only": "Você só pode gerenciar seus próprios produtos.",
+  "campaign_access_only": "Você só pode ver produtos de campanhas nas quais participou."
+}

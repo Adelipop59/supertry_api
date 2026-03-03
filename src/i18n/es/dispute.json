@@ -1,0 +1,7 @@
+{
+  "not_found": "Esta disputa no se ha encontrado.",
+  "session_not_found": "La sesión asociada a esta disputa no se ha encontrado.",
+  "created_success": "La disputa ha sido creada. Nuestro equipo la examinará.",
+  "resolved_success": "La disputa ha sido resuelta.",
+  "invalid_status": "Esta acción no es posible en el estado actual de la disputa."
+}

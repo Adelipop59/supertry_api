@@ -1,9 +1,7 @@
 import {
   Injectable,
   Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
@@ -24,6 +22,7 @@ import { NotificationTemplate } from '../notifications/enums/notification-templa
 import { Decimal } from '@prisma/client/runtime/library';
 import { GamificationService } from '../gamification/gamification.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class DisputesService {
@@ -63,7 +62,7 @@ export class DisputesService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'DISPUTE_SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Vérifier que l'utilisateur est impliqué (testeur OU PRO)
@@ -71,12 +70,12 @@ export class DisputesService {
     const isPro = session.campaign.sellerId === userId;
 
     if (!isTester && !isPro) {
-      throw new ForbiddenException('You are not involved in this session');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     // Vérifier que la session n'est pas déjà en litige
     if (session.status === SessionStatus.DISPUTED) {
-      throw new BadRequestException('This session is already in dispute');
+      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_ALREADY_EXISTS', HttpStatus.BAD_REQUEST);
     }
 
     // Vérifier que la session est dans un état approprié pour litige
@@ -88,9 +87,7 @@ export class DisputesService {
     ];
 
     if (!disputeableStatuses.includes(session.status)) {
-      throw new BadRequestException(
-        `Cannot create dispute for session in ${session.status} status`,
-      );
+      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     this.logger.log(
@@ -204,7 +201,7 @@ export class DisputesService {
     });
 
     if (!admin || admin.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can resolve disputes');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     const session = await this.prisma.testSession.findUnique({
@@ -221,16 +218,16 @@ export class DisputesService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'DISPUTE_SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (session.status !== SessionStatus.DISPUTED) {
-      throw new BadRequestException('Session is not in disputed status');
+      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const offer = session.campaign.offers[0];
     if (!offer) {
-      throw new NotFoundException('No offer found for this campaign');
+      throw new I18nHttpException('common.not_found', 'OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Calculer le montant maximum possible
@@ -243,9 +240,7 @@ export class DisputesService {
 
     // Valider le montant testeur
     if (dto.testerAmount < 0 || dto.testerAmount > maxTotal) {
-      throw new BadRequestException(
-        `testerAmount must be between 0 and ${maxTotal}€ (max for this campaign)`,
-      );
+      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_INVALID_AMOUNT', HttpStatus.BAD_REQUEST, { maxTotal });
     }
 
     const testerAmount = Math.round(dto.testerAmount * 100) / 100;
@@ -263,7 +258,7 @@ export class DisputesService {
 
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new NotFoundException('PlatformWallet not found');
+      throw new I18nHttpException('common.not_found', 'PLATFORM_WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     let totalEscrowDecrement = 0;
@@ -272,7 +267,7 @@ export class DisputesService {
     if (testerAmount > 0) {
       const testerStripeAccount = session.tester.stripeConnectAccountId;
       if (!testerStripeAccount) {
-        throw new BadRequestException('Tester has no Stripe Connect account');
+        throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
       }
 
       // Ensure tester wallet exists
@@ -328,7 +323,7 @@ export class DisputesService {
     // 2. Refund to PRO if proRefundAmount > 0
     if (proRefundAmount > 0) {
       if (!session.campaign.stripePaymentIntentId) {
-        throw new NotFoundException('No payment found for PRO refund');
+        throw new I18nHttpException('common.not_found', 'PAYMENT_NOT_FOUND', HttpStatus.NOT_FOUND);
       }
 
       proRefund = await this.stripeService.createRefund(
@@ -482,7 +477,7 @@ export class DisputesService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'DISPUTE_SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Vérifier les permissions
@@ -491,7 +486,7 @@ export class DisputesService {
     const isAdmin = user!.role === UserRole.ADMIN;
 
     if (!isTester && !isPro && !isAdmin) {
-      throw new ForbiddenException('You do not have access to this dispute');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     return {

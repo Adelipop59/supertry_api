@@ -1,0 +1,11 @@
+{
+  "phone_format": "O n\u00famero de telefone deve estar no formato internacional (ex: +5511912345678).",
+  "url_format": "O endere\u00e7o URL fornecido n\u00e3o \u00e9 v\u00e1lido.",
+  "required": "Este campo \u00e9 obrigat\u00f3rio.",
+  "invalid_email": "O endere\u00e7o de e-mail n\u00e3o \u00e9 v\u00e1lido.",
+  "invalid_string": "Este campo deve ser texto.",
+  "invalid_number": "Este campo deve ser um n\u00famero.",
+  "invalid_date": "A data fornecida n\u00e3o \u00e9 v\u00e1lida.",
+  "min_length": "Este campo deve conter pelo menos {min} caracteres.",
+  "max_length": "Este campo n\u00e3o deve exceder {max} caracteres."
+}

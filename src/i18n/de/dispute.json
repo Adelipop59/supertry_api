@@ -1,0 +1,7 @@
+{
+  "not_found": "Dieser Streitfall wurde nicht gefunden.",
+  "session_not_found": "Die mit diesem Streitfall verbundene Sitzung wurde nicht gefunden.",
+  "created_success": "Der Streitfall wurde erstellt. Unser Team wird ihn pr\u00fcfen.",
+  "resolved_success": "Der Streitfall wurde gel\u00f6st.",
+  "invalid_status": "Diese Aktion ist im aktuellen Status des Streitfalls nicht m\u00f6glich."
+}

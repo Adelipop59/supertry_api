@@ -1,5 +1,6 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { I18nHttpException } from '../exceptions/i18n.exception';
 
 @Injectable()
 export class OnboardingGuard implements CanActivate {
@@ -20,7 +21,7 @@ export class OnboardingGuard implements CanActivate {
     }
 
     if (!user.isOnboarded) {
-      throw new ForbiddenException('Please complete your profile');
+      throw new I18nHttpException('common.complete_profile', 'PROFILE_INCOMPLETE', HttpStatus.FORBIDDEN);
     }
 
     return true;

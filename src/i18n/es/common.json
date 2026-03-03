@@ -1,0 +1,13 @@
+{
+  "forbidden": "No tiene los permisos necesarios para esta acción.",
+  "complete_profile": "Por favor, complete su perfil para acceder a esta funcionalidad.",
+  "internal_error": "Se ha producido un error inesperado. Por favor, inténtelo de nuevo.",
+  "not_found": "El elemento solicitado no se ha encontrado.",
+  "duplicate": "Ya existe un elemento con este {field}.",
+  "invalid_reference": "Referencia inválida. Por favor, verifique los datos.",
+  "database_error": "Se ha producido un error técnico. Por favor, inténtelo de nuevo.",
+  "file_deleted": "Archivo eliminado correctamente.",
+  "not_authenticated": "Debe iniciar sesión para realizar esta acción.",
+  "category_not_found": "Esta categoría no se ha encontrado.",
+  "business_rules_not_found": "Las reglas de negocio no se han encontrado."
+}

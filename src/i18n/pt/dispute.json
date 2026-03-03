@@ -1,0 +1,7 @@
+{
+  "not_found": "Esta disputa n\u00e3o foi encontrada.",
+  "session_not_found": "A sess\u00e3o associada a esta disputa n\u00e3o foi encontrada.",
+  "created_success": "A disputa foi criada. Nossa equipe ir\u00e1 analis\u00e1-la.",
+  "resolved_success": "A disputa foi resolvida.",
+  "invalid_status": "Esta a\u00e7\u00e3o n\u00e3o \u00e9 poss\u00edvel no estado atual da disputa."
+}

@@ -1,0 +1,13 @@
+{
+  "forbidden": "Non disponi dei permessi necessari per questa azione.",
+  "complete_profile": "Completa il tuo profilo per accedere a questa funzionalità.",
+  "internal_error": "Si è verificato un errore imprevisto. Riprova.",
+  "not_found": "L'elemento richiesto non è stato trovato.",
+  "duplicate": "Esiste già un elemento con questo {field}.",
+  "invalid_reference": "Riferimento non valido. Verifica i dati.",
+  "database_error": "Si è verificato un errore tecnico. Riprova.",
+  "file_deleted": "File eliminato con successo.",
+  "not_authenticated": "Devi effettuare l'accesso per eseguire questa azione.",
+  "category_not_found": "Questa categoria non è stata trovata.",
+  "business_rules_not_found": "Le regole operative non sono state trovate."
+}

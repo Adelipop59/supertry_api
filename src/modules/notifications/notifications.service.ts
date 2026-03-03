@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
+import { I18nService } from 'nestjs-i18n';
 import { PrismaService } from '../../database/prisma.service';
 import { NodemailerProvider } from './providers/email/nodemailer.provider';
 import { TwilioProvider } from './providers/sms/twilio.provider';
@@ -20,7 +21,29 @@ export class NotificationsService {
     @InjectQueue(NOTIFICATION_QUEUES.EMAIL) private emailQueue: Queue,
     @InjectQueue(NOTIFICATION_QUEUES.SMS) private smsQueue: Queue,
     private readonly prisma: PrismaService,
+    private readonly i18n: I18nService,
   ) {}
+
+  /**
+   * Resolve translated notification title and message for a user.
+   * Uses the user's preferredLanguage from their profile.
+   */
+  async getTranslatedNotification(
+    userId: string,
+    notificationKey: string,
+    args?: Record<string, any>,
+  ): Promise<{ title: string; message: string }> {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { preferredLanguage: true },
+    });
+    const lang = (profile?.preferredLanguage || 'FR').toLowerCase();
+
+    const title = this.i18n.t(`notification.${notificationKey}_title`, { lang, args });
+    const message = this.i18n.t(`notification.${notificationKey}_message`, { lang, args });
+
+    return { title, message };
+  }
 
   /**
    * Send email directly (synchronous)
@@ -201,13 +224,27 @@ export class NotificationsService {
       throw new Error('userId is required to save notification');
     }
 
+    // Resolve translated title/message if an i18n notification key is provided
+    let title = data.subject || data.title || '';
+    let message = data.template || data.message || '';
+
+    if (data.metadata?.notificationKey) {
+      const translated = await this.getTranslatedNotification(
+        userId,
+        data.metadata.notificationKey,
+        data.variables,
+      );
+      title = translated.title;
+      message = translated.message;
+    }
+
     return this.prisma.notification.create({
       data: {
         userId,
         type: data.type,
         channel: data.channel || (data.type === NotificationChannel.EMAIL ? 'EMAIL' : 'SMS'),
-        title: data.subject || data.title || '',
-        message: data.template || data.message || '',
+        title,
+        message,
         data: data.variables || data.metadata || {},
         isSent: false,
         retries: 0,

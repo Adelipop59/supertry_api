@@ -1,0 +1,13 @@
+{
+  "not_found": "Dieser Inhalt wurde nicht gefunden.",
+  "invalid_status": "Dieser Inhalt kann in seinem aktuellen Status nicht eingereicht werden.",
+  "file_required": "Eine Datei ist f\u00fcr diesen Inhaltstyp erforderlich ({type}).",
+  "content_url_required": "Ein Inhaltslink ist f\u00fcr diesen Inhaltstyp erforderlich.",
+  "payment_required": "Eine Zahlungsmethode ist f\u00fcr diesen kostenpflichtigen Inhalt erforderlich.",
+  "not_owner": "Sie haben keinen Zugriff auf diesen Inhalt.",
+  "submitted_success": "Inhalt erfolgreich eingereicht.",
+  "validated_success": "Inhalt erfolgreich best\u00e4tigt.",
+  "rejected_success": "Inhalt abgelehnt.",
+  "declined_success": "Inhaltsanfrage abgelehnt.",
+  "cancelled_success": "Inhaltsanfrage storniert."
+}

@@ -11,6 +11,16 @@ datasource db {
 
 // ==================== ENUMS ====================
 
+// Enum pour les langues supportées (i18n)
+enum Language {
+  FR // Français (défaut)
+  EN // English
+  ES // Español
+  DE // Deutsch
+  IT // Italiano
+  PT // Português
+}
+
 // Enum pour les rôles utilisateur
 enum UserRole {
   USER // Testeur
@@ -276,6 +286,9 @@ model Profile {
 
   // OAuth provider tracking
   authProvider String? @map("auth_provider") // 'google', 'github', 'azure', null pour email/password
+
+  // Langue préférée (i18n)
+  preferredLanguage Language @default(FR) @map("preferred_language")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

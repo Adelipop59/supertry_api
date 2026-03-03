@@ -1,0 +1,9 @@
+{
+  "not_found": "Aucun portefeuille trouvé pour votre compte.",
+  "insufficient_balance": "Solde insuffisant pour effectuer cette opération.",
+  "withdrawal_not_found": "Demande de retrait introuvable.",
+  "cannot_cancel": "Cette demande de retrait ne peut plus être annulée.",
+  "withdrawal_created": "Demande de retrait créée avec succès.",
+  "withdrawal_cancelled": "Demande de retrait annulée.",
+  "sync_success": "Synchronisation effectuée avec succès."
+}

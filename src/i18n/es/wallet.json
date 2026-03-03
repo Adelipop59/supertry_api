@@ -1,0 +1,9 @@
+{
+  "not_found": "No se ha encontrado ningún monedero para su cuenta.",
+  "insufficient_balance": "Saldo insuficiente para realizar esta operación.",
+  "withdrawal_not_found": "Solicitud de retiro no encontrada.",
+  "cannot_cancel": "Esta solicitud de retiro ya no puede ser cancelada.",
+  "withdrawal_created": "Solicitud de retiro creada correctamente.",
+  "withdrawal_cancelled": "Solicitud de retiro cancelada.",
+  "sync_success": "Sincronización realizada correctamente."
+}

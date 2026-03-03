@@ -80,7 +80,7 @@ export class MediaController {
   @ApiNotFoundErrorResponse()
   async deleteFile(@Param('path') key: string) {
     await this.mediaService.delete(key);
-    return { message: 'File deleted successfully', key };
+    return { message: 'Fichier supprimé avec succès.', key };
   }
 
   /**

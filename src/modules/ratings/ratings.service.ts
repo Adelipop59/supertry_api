@@ -1,11 +1,10 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
+  HttpStatus,
 } from '@nestjs/common';
 import { SessionStatus, AuditCategory } from '@prisma/client';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { GamificationService } from '../gamification/gamification.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../database/prisma.service';
@@ -58,12 +57,12 @@ export class RatingsService {
       },
     });
 
-    if (!session) throw new NotFoundException('Session not found');
+    if (!session) throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (session.testerId !== userId) {
-      throw new ForbiddenException('You can only review sessions you participated in');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
     if (session.status !== SessionStatus.COMPLETED) {
-      throw new BadRequestException('Can only review completed sessions');
+      throw new I18nHttpException('dispute.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // 2. Vérifier pas de doublon
@@ -71,13 +70,13 @@ export class RatingsService {
       where: { sessionId: dto.sessionId },
     });
     if (existing) {
-      throw new BadRequestException('You already reviewed this session');
+      throw new I18nHttpException('common.duplicate', 'REVIEW_DUPLICATE', HttpStatus.BAD_REQUEST, { field: 'review' });
     }
 
     // 3. Récupérer le productId depuis l'offre
     const productId = session.campaign.offers?.[0]?.productId;
     if (!productId) {
-      throw new NotFoundException('No product found for this campaign');
+      throw new I18nHttpException('common.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // 4. Créer la review
@@ -125,12 +124,12 @@ export class RatingsService {
       },
     });
 
-    if (!session) throw new NotFoundException('Session not found');
+    if (!session) throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (session.campaign.sellerId !== userId) {
-      throw new ForbiddenException('You can only rate testers on your own campaigns');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
     if (session.status !== SessionStatus.COMPLETED) {
-      throw new BadRequestException('Can only rate testers on completed sessions');
+      throw new I18nHttpException('dispute.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // 2. Vérifier pas de doublon
@@ -138,7 +137,7 @@ export class RatingsService {
       where: { sessionId: dto.sessionId },
     });
     if (existing) {
-      throw new BadRequestException('You already rated the tester for this session');
+      throw new I18nHttpException('common.duplicate', 'RATING_DUPLICATE', HttpStatus.BAD_REQUEST, { field: 'rating' });
     }
 
     // 3. Créer le rating
@@ -321,7 +320,7 @@ export class RatingsService {
       select: { id: true, role: true, averageRating: true },
     });
 
-    if (!profile) throw new NotFoundException('Profile not found');
+    if (!profile) throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
 
     if (profile.role === 'PRO') {
       // Moyenne des sellerRatings reçus

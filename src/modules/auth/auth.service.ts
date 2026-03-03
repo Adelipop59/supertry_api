@@ -1,10 +1,9 @@
 import {
   Injectable,
-  UnauthorizedException,
-  BadRequestException,
-  NotFoundException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { LuciaService } from '../lucia/lucia.service';
 import { PrismaService } from '../../database/prisma.service';
 import { UsersService } from '../users/users.service';
@@ -53,11 +52,18 @@ export class AuthService {
 
     if (existingProfile) {
       if (existingProfile.authProvider) {
-        throw new BadRequestException(
-          `Un compte existe déjà avec cet email via ${existingProfile.authProvider}. Connectez-vous avec ce provider.`,
+        throw new I18nHttpException(
+          'auth.email_linked_oauth',
+          'AUTH_EMAIL_LINKED_OAUTH',
+          HttpStatus.BAD_REQUEST,
+          { provider: existingProfile.authProvider },
         );
       }
-      throw new BadRequestException('An account already exists with this email');
+      throw new I18nHttpException(
+        'auth.email_already_exists',
+        'AUTH_EMAIL_EXISTS',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Hash password
@@ -152,16 +158,27 @@ export class AuthService {
     });
 
     if (!profile) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new I18nHttpException(
+        'auth.invalid_credentials',
+        'AUTH_INVALID_CREDENTIALS',
+        HttpStatus.UNAUTHORIZED,
+      );
     }
 
     if (!profile.isActive) {
-      throw new UnauthorizedException('Account is disabled');
+      throw new I18nHttpException(
+        'auth.account_disabled',
+        'AUTH_ACCOUNT_DISABLED',
+        HttpStatus.UNAUTHORIZED,
+      );
     }
 
     if (!profile.passwordHash) {
-      throw new UnauthorizedException(
-        'This account uses OAuth login. Please use the appropriate provider.',
+      throw new I18nHttpException(
+        'auth.oauth_login_required',
+        'AUTH_OAUTH_REQUIRED',
+        HttpStatus.UNAUTHORIZED,
+        { provider: profile.authProvider || 'OAuth' },
       );
     }
 
@@ -171,7 +188,11 @@ export class AuthService {
     );
 
     if (!isValid) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new I18nHttpException(
+        'auth.invalid_credentials',
+        'AUTH_INVALID_CREDENTIALS',
+        HttpStatus.UNAUTHORIZED,
+      );
     }
 
     const session = await this.luciaService.createSession(profile.id);
@@ -192,7 +213,7 @@ export class AuthService {
   async logout(userId: string, sessionId: string): Promise<MessageResponseDto> {
     await this.luciaService.invalidateSession(sessionId);
     this.logger.log(`User ${userId} logged out`);
-    return { message: 'Logged out successfully' };
+    return { message: 'Déconnexion réussie.' };
   }
 
   /**
@@ -202,7 +223,11 @@ export class AuthService {
     const result = await this.luciaService.validateSession(sessionId);
 
     if (!result.session) {
-      throw new UnauthorizedException('Invalid session');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_INVALID',
+        HttpStatus.UNAUTHORIZED,
+      );
     }
 
     return {
@@ -224,7 +249,11 @@ export class AuthService {
     });
 
     if (!profile || !profile.passwordHash) {
-      throw new BadRequestException('Cannot change password');
+      throw new I18nHttpException(
+        'auth.cannot_change_password',
+        'AUTH_CANNOT_CHANGE_PASSWORD',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const isValid = await this.luciaService.verifyPassword(
@@ -233,7 +262,11 @@ export class AuthService {
     );
 
     if (!isValid) {
-      throw new BadRequestException('Current password is incorrect');
+      throw new I18nHttpException(
+        'auth.incorrect_password',
+        'AUTH_INCORRECT_PASSWORD',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const newPasswordHash = await this.luciaService.hashPassword(
@@ -248,7 +281,7 @@ export class AuthService {
     // Invalidate all sessions
     await this.luciaService.invalidateUserSessions(userId);
 
-    return { message: 'Password changed successfully' };
+    return { message: 'Mot de passe modifié avec succès.' };
   }
 
   /**
@@ -282,10 +315,20 @@ export class AuthService {
           url = this.luciaService.createDiscordAuthorizationURL(state);
           break;
         default:
-          throw new BadRequestException('Unsupported OAuth provider');
+          throw new I18nHttpException(
+            'auth.unsupported_provider',
+            'AUTH_UNSUPPORTED_PROVIDER',
+            HttpStatus.BAD_REQUEST,
+          );
       }
     } catch (error) {
-      throw new BadRequestException(`OAuth failed: ${error.message}`);
+      if (error instanceof I18nHttpException) throw error;
+      throw new I18nHttpException(
+        'auth.oauth_failed',
+        'AUTH_OAUTH_FAILED',
+        HttpStatus.BAD_REQUEST,
+        { provider },
+      );
     }
 
     return {
@@ -376,11 +419,20 @@ export class AuthService {
         }
       }
     } catch (error) {
-      throw new BadRequestException(`OAuth callback failed: ${error.message}`);
+      if (error instanceof I18nHttpException) throw error;
+      throw new I18nHttpException(
+        'auth.oauth_callback_failed',
+        'AUTH_OAUTH_CALLBACK_FAILED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     if (!userEmail) {
-      throw new BadRequestException('Email not provided by OAuth provider');
+      throw new I18nHttpException(
+        'auth.email_not_provided',
+        'AUTH_EMAIL_NOT_PROVIDED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     this.logger.log(`OAuth callback: ${userEmail}, provider: ${provider}`);
@@ -456,15 +508,27 @@ export class AuthService {
           break;
         }
         default:
-          throw new BadRequestException(`Token-based login not supported for provider: ${provider}`);
+          throw new I18nHttpException(
+            'auth.token_login_unsupported',
+            'AUTH_TOKEN_UNSUPPORTED',
+            HttpStatus.BAD_REQUEST,
+          );
       }
     } catch (error) {
-      if (error instanceof BadRequestException) throw error;
-      throw new BadRequestException(`Token verification failed: ${error.message}`);
+      if (error instanceof I18nHttpException) throw error;
+      throw new I18nHttpException(
+        'auth.token_verification_failed',
+        'AUTH_TOKEN_VERIFICATION_FAILED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     if (!userEmail) {
-      throw new BadRequestException('Email not provided by OAuth provider');
+      throw new I18nHttpException(
+        'auth.email_not_provided',
+        'AUTH_EMAIL_NOT_PROVIDED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     this.logger.log(`OAuth token login: ${userEmail}, provider: ${provider}`);
@@ -504,11 +568,19 @@ export class AuthService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profile not found');
+      throw new I18nHttpException(
+        'auth.profile_not_found',
+        'AUTH_PROFILE_NOT_FOUND',
+        HttpStatus.NOT_FOUND,
+      );
     }
 
     if (profile.isOnboarded) {
-      throw new BadRequestException('Profile already completed');
+      throw new I18nHttpException(
+        'auth.profile_already_completed',
+        'AUTH_PROFILE_COMPLETED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Validate role-specific requirements
@@ -642,7 +714,11 @@ export class AuthService {
     if (existingOAuthAccount) {
       // OAuth account exists - check if active
       if (!existingOAuthAccount.user.isActive) {
-        throw new UnauthorizedException('Ce compte a été désactivé.');
+        throw new I18nHttpException(
+          'auth.account_disabled',
+          'AUTH_ACCOUNT_DISABLED',
+          HttpStatus.UNAUTHORIZED,
+        );
       }
       this.logger.log(`Existing OAuth account found for ${userEmail}`);
       return existingOAuthAccount.user;
@@ -656,7 +732,11 @@ export class AuthService {
     if (existingProfile) {
       // Check if active
       if (!existingProfile.isActive) {
-        throw new UnauthorizedException('Ce compte a été désactivé.');
+        throw new I18nHttpException(
+          'auth.account_disabled',
+          'AUTH_ACCOUNT_DISABLED',
+          HttpStatus.UNAUTHORIZED,
+        );
       }
 
       // Email exists - LINK OAUTH ACCOUNT
@@ -712,16 +792,28 @@ export class AuthService {
     data: { firstName?: string; lastName?: string; country?: string; countries?: string[] },
   ): Promise<void> {
     if (role === 'ADMIN') {
-      throw new BadRequestException('Cannot create ADMIN users via signup.');
+      throw new I18nHttpException(
+        'auth.cannot_create_admin',
+        'AUTH_CANNOT_CREATE_ADMIN',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     if (role === 'PRO') {
       if (!data.firstName || !data.lastName) {
-        throw new BadRequestException('First name and last name are required for PRO');
+        throw new I18nHttpException(
+          'auth.missing_pro_fields',
+          'AUTH_MISSING_PRO_FIELDS',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       if (!data.countries || data.countries.length === 0) {
-        throw new BadRequestException('At least one country is required for PRO');
+        throw new I18nHttpException(
+          'auth.missing_pro_country',
+          'AUTH_MISSING_COUNTRY',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       const validCountries = await this.prismaService.country.findMany({
@@ -729,18 +821,30 @@ export class AuthService {
       });
 
       if (validCountries.length !== data.countries.length) {
-        throw new BadRequestException('Invalid country code(s)');
+        throw new I18nHttpException(
+          'auth.invalid_country',
+          'AUTH_INVALID_COUNTRY',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       const availableCountries = await this.checkCountriesAvailability(data.countries);
       if (availableCountries.length === 0) {
-        throw new BadRequestException('No selected country is available');
+        throw new I18nHttpException(
+          'auth.country_not_available',
+          'AUTH_COUNTRY_NOT_AVAILABLE',
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
 
     if (!role || role === 'USER') {
       if (!data.country) {
-        throw new BadRequestException('Country code is required for USER');
+        throw new I18nHttpException(
+          'auth.country_required',
+          'AUTH_COUNTRY_REQUIRED',
+          HttpStatus.BAD_REQUEST,
+        );
       }
 
       const countryData = await this.prismaService.country.findUnique({
@@ -748,7 +852,11 @@ export class AuthService {
       });
 
       if (!countryData) {
-        throw new BadRequestException('Invalid country code');
+        throw new I18nHttpException(
+          'auth.invalid_country',
+          'AUTH_INVALID_COUNTRY',
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
   }

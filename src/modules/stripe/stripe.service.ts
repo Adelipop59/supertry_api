@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import Stripe from 'stripe';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../database/prisma.service';
@@ -19,7 +20,7 @@ export class StripeService {
     }
 
     this.stripe = new Stripe(secretKey, {
-      apiVersion: '2026-01-28.clover',
+      apiVersion: '2026-02-25.clover',
       typescript: true,
     });
 
@@ -88,7 +89,7 @@ export class StripeService {
       return account;
     } catch (error) {
       this.logger.error(`Failed to create Connect account: ${error.message}`, error.stack);
-      throw new BadRequestException(error.message || 'Failed to create Stripe Connect account');
+      throw new I18nHttpException('stripe.create_account_failed', 'STRIPE_CREATE_ACCOUNT_FAILED', HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -110,7 +111,7 @@ export class StripeService {
       return accountLink.url;
     } catch (error) {
       this.logger.error(`Failed to create account link: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create onboarding link');
+      throw new I18nHttpException('stripe.onboarding_link_failed', 'STRIPE_ONBOARDING_LINK_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -119,7 +120,7 @@ export class StripeService {
       return await this.stripe.accounts.retrieve(accountId);
     } catch (error) {
       this.logger.error(`Failed to retrieve account ${accountId}: ${error.message}`, error.stack);
-      throw new NotFoundException('Stripe Connect account not found');
+      throw new I18nHttpException('stripe.account_not_found', 'STRIPE_ACCOUNT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
   }
 
@@ -130,7 +131,7 @@ export class StripeService {
       });
     } catch (error) {
       this.logger.error(`Failed to retrieve balance for ${accountId}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to retrieve account balance');
+      throw new I18nHttpException('stripe.balance_failed', 'STRIPE_BALANCE_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -145,7 +146,7 @@ export class StripeService {
       );
     } catch (error) {
       this.logger.error(`Failed to list balance transactions for ${accountId}: ${error.message}`);
-      throw new InternalServerErrorException('Failed to list balance transactions');
+      throw new I18nHttpException('stripe.balance_transactions_failed', 'STRIPE_BALANCE_TRANSACTIONS_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -165,7 +166,7 @@ export class StripeService {
       };
     } catch (error) {
       this.logger.error(`Failed to get KYC status for ${accountId}: ${error.message}`, error.stack);
-      throw new BadRequestException('Failed to retrieve KYC status');
+      throw new I18nHttpException('stripe.kyc_failed', 'STRIPE_KYC_FAILED', HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -186,7 +187,7 @@ export class StripeService {
       return { clientSecret: accountSession.client_secret };
     } catch (error) {
       this.logger.error(`Failed to create AccountSession: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create account session');
+      throw new I18nHttpException('stripe.session_failed', 'STRIPE_SESSION_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -469,7 +470,7 @@ export class StripeService {
       return paymentIntent;
     } catch (error) {
       this.logger.error(`Failed to create PaymentIntent: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create payment intent');
+      throw new I18nHttpException('stripe.payment_intent_failed', 'STRIPE_PAYMENT_INTENT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -534,7 +535,7 @@ export class StripeService {
       this.logger.error(`Failed to create Checkout Session: ${error.message}`, error.stack);
       this.logger.error(`Stripe Error Details: ${JSON.stringify(error)}`);
       this.logger.error(`Session Params: ${JSON.stringify(sessionParams, null, 2)}`);
-      throw new InternalServerErrorException(`Failed to create checkout session: ${error.message}`);
+      throw new I18nHttpException('stripe.checkout_session_failed', 'STRIPE_CHECKOUT_SESSION_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -543,7 +544,7 @@ export class StripeService {
       return await this.stripe.paymentIntents.retrieve(paymentIntentId);
     } catch (error) {
       this.logger.error(`Failed to retrieve PaymentIntent ${paymentIntentId}: ${error.message}`);
-      throw new NotFoundException('PaymentIntent not found');
+      throw new I18nHttpException('stripe.payment_intent_not_found', 'STRIPE_PAYMENT_INTENT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
   }
 
@@ -560,7 +561,7 @@ export class StripeService {
       return paymentIntent;
     } catch (error) {
       this.logger.error(`Failed to confirm PaymentIntent ${paymentIntentId}: ${error.message}`, error.stack);
-      throw new BadRequestException('Failed to confirm payment');
+      throw new I18nHttpException('stripe.confirm_payment_failed', 'STRIPE_CONFIRM_PAYMENT_FAILED', HttpStatus.BAD_REQUEST);
     }
   }
 
@@ -571,7 +572,7 @@ export class StripeService {
       return paymentIntent;
     } catch (error) {
       this.logger.error(`Failed to capture PaymentIntent ${paymentIntentId}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to capture payment');
+      throw new I18nHttpException('stripe.capture_payment_failed', 'STRIPE_CAPTURE_PAYMENT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -588,7 +589,7 @@ export class StripeService {
       return paymentIntent;
     } catch (error) {
       this.logger.error(`Failed to cancel PaymentIntent ${paymentIntentId}: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to cancel payment');
+      throw new I18nHttpException('stripe.cancel_payment_failed', 'STRIPE_CANCEL_PAYMENT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -651,7 +652,7 @@ export class StripeService {
       return transfer;
     } catch (error) {
       this.logger.error(`Failed to create transfer: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create transfer');
+      throw new I18nHttpException('stripe.transfer_failed', 'STRIPE_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -684,7 +685,7 @@ export class StripeService {
       return transfer;
     } catch (error) {
       this.logger.error(`Failed to create Connect-to-Connect transfer: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create Connect-to-Connect transfer');
+      throw new I18nHttpException('stripe.transfer_failed', 'STRIPE_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -724,7 +725,7 @@ export class StripeService {
       return refund;
     } catch (error) {
       this.logger.error(`Failed to create refund: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create refund');
+      throw new I18nHttpException('stripe.refund_failed', 'STRIPE_REFUND_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -770,7 +771,7 @@ export class StripeService {
       };
     } catch (error) {
       this.logger.error(`Failed to create Identity Verification Session: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Failed to create identity verification session');
+      throw new I18nHttpException('stripe.identity_session_failed', 'STRIPE_IDENTITY_SESSION_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -790,7 +791,7 @@ export class StripeService {
       };
     } catch (error) {
       this.logger.error(`Failed to retrieve Identity Verification Session ${sessionId}: ${error.message}`, error.stack);
-      throw new NotFoundException('Identity verification session not found');
+      throw new I18nHttpException('stripe.identity_not_found', 'STRIPE_IDENTITY_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
   }
 
@@ -829,17 +830,13 @@ export class StripeService {
       // 1. Vérifier compte destination AVANT transfer
       const account = await this.stripe.accounts.retrieve(destinationAccount);
       if (!account.charges_enabled) {
-        throw new BadRequestException(
-          `Destination account ${destinationAccount} cannot receive transfers (charges_enabled=false)`,
-        );
+        throw new I18nHttpException('stripe.destination_charges_disabled', 'STRIPE_DESTINATION_CHARGES_DISABLED', HttpStatus.BAD_REQUEST);
       }
       if (
         account.requirements?.currently_due &&
         account.requirements.currently_due.length > 0
       ) {
-        throw new BadRequestException(
-          `Destination account has pending requirements: ${account.requirements.currently_due.join(', ')}`,
-        );
+        throw new I18nHttpException('stripe.destination_pending_requirements', 'STRIPE_DESTINATION_PENDING_REQUIREMENTS', HttpStatus.BAD_REQUEST);
       }
 
       // 2. Récupérer le Charge de la campagne pour transfer immédiat
@@ -907,7 +904,7 @@ export class StripeService {
       return transfer;
     } catch (error) {
       this.logger.error(`Failed to create Platform Transfer: ${error.message}`);
-      throw new InternalServerErrorException(`Transfer failed: ${error.message}`);
+      throw new I18nHttpException('stripe.transfer_failed', 'STRIPE_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -929,10 +926,10 @@ export class StripeService {
       // Vérifier que le compte a un external_account (IBAN)
       const account = await this.stripe.accounts.retrieve(stripeConnectAccountId);
       if (!account.external_accounts?.data?.length) {
-        throw new BadRequestException('No bank account linked. Please add an IBAN first.');
+        throw new I18nHttpException('stripe.no_bank_account', 'STRIPE_NO_BANK', HttpStatus.BAD_REQUEST);
       }
       if (!account.payouts_enabled) {
-        throw new BadRequestException('Payouts not enabled for this account');
+        throw new I18nHttpException('stripe.payouts_disabled', 'STRIPE_PAYOUTS_DISABLED', HttpStatus.BAD_REQUEST);
       }
 
       // Vérifier le solde disponible sur le Connect account
@@ -974,9 +971,11 @@ export class StripeService {
           ? `Prochaine disponibilité : ${nextAvailableDate}.`
           : `Les fonds deviennent disponibles sous quelques jours.`;
 
-        throw new BadRequestException(
-          `Solde disponible insuffisant pour ce retrait. Disponible maintenant : ${availableInEuros.toFixed(2)}€. ` +
-          `En cours de traitement : ${pendingInEuros.toFixed(2)}€. ${dateInfo}`,
+        throw new I18nHttpException(
+          'stripe.insufficient_balance',
+          'STRIPE_INSUFFICIENT_BALANCE',
+          HttpStatus.BAD_REQUEST,
+          { available: availableInEuros.toFixed(2), pending: pendingInEuros.toFixed(2), dateInfo },
         );
       }
 
@@ -996,11 +995,11 @@ export class StripeService {
       this.logger.log(`Payout created: ${payout.id} - ${amount}€ from ${stripeConnectAccountId}`);
       return payout;
     } catch (error) {
-      if (error instanceof BadRequestException) {
+      if (error instanceof I18nHttpException) {
         throw error;
       }
       this.logger.error(`Failed to create Payout: ${error.message}`, error.stack);
-      throw new InternalServerErrorException(`Payout failed: ${error.message}`);
+      throw new I18nHttpException('stripe.payout_failed', 'STRIPE_PAYOUT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -1029,7 +1028,7 @@ export class StripeService {
       return await this.stripe.balanceTransactions.list(listParams);
     } catch (error) {
       this.logger.error(`Failed to list balance transactions: ${error.message}`);
-      throw new InternalServerErrorException('Failed to list balance transactions');
+      throw new I18nHttpException('stripe.balance_transactions_failed', 'STRIPE_BALANCE_TRANSACTIONS_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -1038,7 +1037,7 @@ export class StripeService {
       return await this.stripe.balance.retrieve();
     } catch (error) {
       this.logger.error(`Failed to retrieve platform balance: ${error.message}`);
-      throw new InternalServerErrorException('Failed to retrieve platform balance');
+      throw new I18nHttpException('stripe.platform_balance_failed', 'STRIPE_PLATFORM_BALANCE_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -1063,7 +1062,7 @@ export class StripeService {
       return topup;
     } catch (error) {
       this.logger.error(`Failed to create test TopUp: ${error.message}`);
-      throw new InternalServerErrorException(`Test TopUp failed: ${error.message}`);
+      throw new I18nHttpException('stripe.topup_failed', 'STRIPE_TOPUP_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -1222,7 +1221,7 @@ export class StripeService {
       return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
     } catch (error) {
       this.logger.error(`Webhook signature verification failed: ${error.message}`);
-      throw new BadRequestException('Invalid webhook signature');
+      throw new I18nHttpException('stripe.webhook_invalid', 'STRIPE_WEBHOOK_INVALID', HttpStatus.BAD_REQUEST);
     }
   }
 }

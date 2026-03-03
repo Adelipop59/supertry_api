@@ -1,0 +1,13 @@
+{
+  "not_found": "This product could not be found or has been deleted.",
+  "access_denied": "You do not have access to this product.",
+  "deleted_soft": "Product deactivated. The associated campaign history has been preserved.",
+  "deleted_hard": "Product permanently deleted.",
+  "used_in_campaign": "This product is used in an active campaign. Please complete or cancel the campaign before deleting it.",
+  "invalid_files": "The uploaded files are invalid. Please check the format and size.",
+  "created_success": "Product created successfully.",
+  "updated_success": "Product updated successfully.",
+  "invalid_data": "The product data is invalid.",
+  "own_products_only": "You can only manage your own products.",
+  "campaign_access_only": "You can only view products from campaigns you participated in."
+}

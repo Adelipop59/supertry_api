@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bull';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { I18nModule, AcceptLanguageResolver, HeaderResolver } from 'nestjs-i18n';
+import * as path from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './database/prisma.module';
@@ -32,10 +34,12 @@ import { AdminModule } from './modules/admin/admin.module';
 import { GamificationModule } from './modules/gamification/gamification.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { TranslationModule } from './modules/translation/translation.module';
 import { LuciaAuthGuard } from './common/guards/lucia-auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
@@ -49,6 +53,17 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
         port: parseInt(process.env.REDIS_PORT || '6379', 10),
         password: process.env.REDIS_PASSWORD || undefined,
       },
+    }),
+    I18nModule.forRoot({
+      fallbackLanguage: 'fr',
+      loaderOptions: {
+        path: path.join(__dirname, '/i18n/'),
+        watch: true,
+      },
+      resolvers: [
+        new HeaderResolver(['x-lang']),
+        AcceptLanguageResolver,
+      ],
     }),
     PrismaModule,
     AuditModule,
@@ -77,10 +92,15 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
     GamificationModule,
     MessagesModule,
     DashboardModule,
+    TranslationModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    {
+      provide: APP_FILTER,
+      useClass: GlobalExceptionFilter,
+    },
     {
       provide: APP_GUARD,
       useClass: LuciaAuthGuard,

@@ -1,0 +1,13 @@
+{
+  "not_found": "Este conte\u00fado n\u00e3o foi encontrado.",
+  "invalid_status": "Este conte\u00fado n\u00e3o pode ser enviado no estado atual.",
+  "file_required": "Um arquivo \u00e9 obrigat\u00f3rio para este tipo de conte\u00fado ({type}).",
+  "content_url_required": "Um link de conte\u00fado \u00e9 obrigat\u00f3rio para este tipo de conte\u00fado.",
+  "payment_required": "Um m\u00e9todo de pagamento \u00e9 obrigat\u00f3rio para este conte\u00fado pago.",
+  "not_owner": "Voc\u00ea n\u00e3o tem acesso a este conte\u00fado.",
+  "submitted_success": "Conte\u00fado enviado com sucesso.",
+  "validated_success": "Conte\u00fado validado com sucesso.",
+  "rejected_success": "Conte\u00fado recusado.",
+  "declined_success": "Solicita\u00e7\u00e3o de conte\u00fado recusada.",
+  "cancelled_success": "Solicita\u00e7\u00e3o de conte\u00fado cancelada."
+}

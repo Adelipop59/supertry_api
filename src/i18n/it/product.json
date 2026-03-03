@@ -1,0 +1,13 @@
+{
+  "not_found": "Questo prodotto non è stato trovato o è stato eliminato.",
+  "access_denied": "Non hai accesso a questo prodotto.",
+  "deleted_soft": "Prodotto disattivato. Lo storico delle campagne associate è stato conservato.",
+  "deleted_hard": "Prodotto eliminato definitivamente.",
+  "used_in_campaign": "Questo prodotto è utilizzato in una campagna in corso. Completa o annulla la campagna prima di eliminarlo.",
+  "invalid_files": "I file inviati non sono validi. Verifica il formato e la dimensione.",
+  "created_success": "Prodotto creato con successo.",
+  "updated_success": "Prodotto aggiornato con successo.",
+  "invalid_data": "I dati del prodotto non sono validi.",
+  "own_products_only": "Puoi gestire solo i tuoi prodotti.",
+  "campaign_access_only": "Puoi visualizzare solo i prodotti delle campagne a cui hai partecipato."
+}

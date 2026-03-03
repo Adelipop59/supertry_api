@@ -6,8 +6,9 @@ import {
   Param,
   Res,
   Req,
-  BadRequestException,
+  HttpStatus,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import type { Request, Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService, OAuthProvider } from './auth.service';
@@ -124,7 +125,11 @@ export class AuthController {
     const state = req.query.state as string;
 
     if (!code) {
-      throw new BadRequestException('Code OAuth manquant');
+      throw new I18nHttpException(
+        'auth.oauth_code_missing',
+        'AUTH_OAUTH_CODE_MISSING',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const result = await this.authService.handleOAuthCallback(code, provider as OAuthProvider, state);
@@ -145,7 +150,11 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponseDto> {
     if (!body.code) {
-      throw new BadRequestException('Code OAuth manquant');
+      throw new I18nHttpException(
+        'auth.oauth_code_missing',
+        'AUTH_OAUTH_CODE_MISSING',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     const result = await this.authService.handleOAuthCallback(
@@ -195,13 +204,21 @@ export class AuthController {
     const sessionId = req.cookies?.['auth_session'] || '';
 
     if (!sessionId) {
-      throw new Error('Session manquante');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_EXPIRED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     const sessionResult = await this.authService.validateSession(sessionId);
 
     if (!sessionResult) {
-      throw new Error('Session invalide');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_INVALID',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     return this.authService.completeOnboarding(sessionResult.user.id, onboardingDto);
@@ -220,13 +237,21 @@ export class AuthController {
     const sessionId = req.cookies?.['auth_session'] || '';
 
     if (!sessionId) {
-      throw new Error('Session manquante');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_EXPIRED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     const sessionResult = await this.authService.validateSession(sessionId);
 
     if (!sessionResult) {
-      throw new Error('Session invalide');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_INVALID',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     const result = await this.authService.changePassword(
@@ -274,7 +299,11 @@ export class AuthController {
     const sessionId = req.cookies?.['auth_session'] || '';
 
     if (!sessionId) {
-      throw new Error('Session manquante');
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_EXPIRED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     return this.authService.refreshToken(sessionId);

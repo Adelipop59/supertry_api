@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { AuditService } from '../audit/audit.service';
@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class WithdrawalsService {
@@ -32,11 +33,11 @@ export class WithdrawalsService {
     });
 
     if (!wallet) {
-      throw new NotFoundException('No wallet found');
+      throw new I18nHttpException('wallet.not_found', 'WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (Number(wallet.balance) < amount) {
-      throw new BadRequestException('Insufficient balance');
+      throw new I18nHttpException('wallet.insufficient_balance', 'WALLET_INSUFFICIENT_BALANCE', HttpStatus.BAD_REQUEST);
     }
 
     // 2. Get profile
@@ -51,11 +52,11 @@ export class WithdrawalsService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profile not found');
+      throw new I18nHttpException('auth.profile_not_found', 'PROFILE_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     // 3. Créer Withdrawal PENDING
@@ -174,11 +175,11 @@ export class WithdrawalsService {
     });
 
     if (!withdrawal || withdrawal.userId !== userId) {
-      throw new NotFoundException('Withdrawal not found');
+      throw new I18nHttpException('wallet.withdrawal_not_found', 'WITHDRAWAL_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (withdrawal.status !== WithdrawalStatus.PENDING) {
-      throw new BadRequestException('Cannot cancel withdrawal in this status');
+      throw new I18nHttpException('wallet.cannot_cancel', 'WITHDRAWAL_CANNOT_CANCEL', HttpStatus.BAD_REQUEST);
     }
 
     // Rendre l'argent
@@ -257,7 +258,7 @@ export class WithdrawalsService {
     });
 
     if (!withdrawal || withdrawal.userId !== userId) {
-      throw new NotFoundException('Withdrawal not found');
+      throw new I18nHttpException('wallet.withdrawal_not_found', 'WITHDRAWAL_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return withdrawal;

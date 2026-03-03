@@ -1,0 +1,9 @@
+{
+  "not_found": "Kein Wallet f\u00fcr Ihr Konto gefunden.",
+  "insufficient_balance": "Unzureichendes Guthaben f\u00fcr diesen Vorgang.",
+  "withdrawal_not_found": "Auszahlungsanfrage nicht gefunden.",
+  "cannot_cancel": "Diese Auszahlungsanfrage kann nicht mehr storniert werden.",
+  "withdrawal_created": "Auszahlungsanfrage erfolgreich erstellt.",
+  "withdrawal_cancelled": "Auszahlungsanfrage storniert.",
+  "sync_success": "Synchronisierung erfolgreich durchgef\u00fchrt."
+}

@@ -1,10 +1,7 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
-  InternalServerErrorException,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   UGCStatus,
@@ -25,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { AuditService } from '../audit/audit.service';
 import { createPaginatedResponse, PaginatedResponse } from '../../common/dto/pagination.dto';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { CreateUgcRequestDto } from './dto/create-ugc-request.dto';
 import { SubmitUgcDto } from './dto/submit-ugc.dto';
 import { ValidateUgcDto } from './dto/validate-ugc.dto';
@@ -72,12 +70,12 @@ export class UgcService {
       },
     });
 
-    if (!session) throw new NotFoundException('Session not found');
+    if (!session) throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (session.campaign.sellerId !== userId) {
-      throw new ForbiddenException('You can only request UGC for your own campaigns');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
     if (session.status !== SessionStatus.COMPLETED) {
-      throw new BadRequestException('Can only request UGC for completed sessions');
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // 2. Vérifier pas de doublon (même type, même session)
@@ -89,7 +87,7 @@ export class UgcService {
       },
     });
     if (existing) {
-      throw new BadRequestException(`A ${dto.type} UGC request already exists for this session`);
+      throw new I18nHttpException('common.duplicate', 'UGC_DUPLICATE', HttpStatus.BAD_REQUEST, { field: dto.type });
     }
 
     // 3. Pricing
@@ -99,7 +97,7 @@ export class UgcService {
     let stripePaymentIntentId: string | null = null;
     if (pricing.isPaid) {
       if (!dto.paymentMethodId) {
-        throw new BadRequestException('paymentMethodId is required for paid UGC (VIDEO/PHOTO)');
+        throw new I18nHttpException('ugc.payment_required', 'UGC_PAYMENT_REQUIRED', HttpStatus.BAD_REQUEST);
       }
 
       const totalCharge = pricing.price + pricing.commission;
@@ -205,27 +203,27 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.submittedBy !== userId) {
-      throw new ForbiddenException('You are not the assigned tester for this UGC');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     const validStatuses: UGCStatus[] = [UGCStatus.REQUESTED, UGCStatus.REJECTED];
     if (!validStatuses.includes(ugc.status)) {
-      throw new BadRequestException(`Cannot submit UGC in ${ugc.status} status`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Upload ou URL selon le type
     let contentUrl = ugc.contentUrl;
     if (ugc.type === 'VIDEO' || ugc.type === 'PHOTO') {
-      if (!file) throw new BadRequestException(`File upload is required for ${ugc.type} UGC`);
+      if (!file) throw new I18nHttpException('ugc.file_required', 'UGC_FILE_REQUIRED', HttpStatus.BAD_REQUEST, { type: ugc.type });
       const mediaType = ugc.type === 'VIDEO' ? MediaType.VIDEO : MediaType.IMAGE;
       const result = await this.mediaService.upload(file, MediaFolder.UGC, mediaType, {
         subfolder: ugcId,
       });
       contentUrl = result.url;
     } else {
-      if (!dto.contentUrl) throw new BadRequestException(`contentUrl is required for ${ugc.type} UGC`);
+      if (!dto.contentUrl) throw new I18nHttpException('ugc.content_url_required', 'UGC_CONTENT_URL_REQUIRED', HttpStatus.BAD_REQUEST);
       contentUrl = dto.contentUrl;
     }
 
@@ -281,12 +279,12 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.requestedBy !== userId) {
-      throw new ForbiddenException('You can only validate UGC you requested');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
     if (ugc.status !== UGCStatus.SUBMITTED) {
-      throw new BadRequestException(`Cannot validate UGC in ${ugc.status} status`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const pricing = await this.businessRulesService.getUgcPricing(ugc.type);
@@ -351,12 +349,12 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.requestedBy !== userId) {
-      throw new ForbiddenException('You can only reject UGC you requested');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
     if (ugc.status !== UGCStatus.SUBMITTED) {
-      throw new BadRequestException(`Cannot reject UGC in ${ugc.status} status`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const newRejectionCount = ugc.rejectionCount + 1;
@@ -419,14 +417,14 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.submittedBy !== userId) {
-      throw new ForbiddenException('You are not the assigned tester for this UGC');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     const validStatuses: UGCStatus[] = [UGCStatus.REQUESTED, UGCStatus.REJECTED];
     if (!validStatuses.includes(ugc.status)) {
-      throw new BadRequestException(`Cannot decline UGC in ${ugc.status} status`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Annuler le PI si payant (0 frais)
@@ -481,12 +479,12 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.requestedBy !== userId) {
-      throw new ForbiddenException('You can only cancel UGC you requested');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
     if (ugc.status !== UGCStatus.REQUESTED) {
-      throw new BadRequestException('Can only cancel UGC in REQUESTED status (before tester submits)');
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     // Annuler le PI si payant (0 frais)
@@ -542,17 +540,17 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
 
     const isRequester = ugc.requestedBy === userId;
     const isSubmitter = ugc.submittedBy === userId;
     if (!isRequester && !isSubmitter) {
-      throw new ForbiddenException('You are not involved in this UGC');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     const disputeableStatuses: UGCStatus[] = [UGCStatus.SUBMITTED, UGCStatus.REJECTED];
     if (!disputeableStatuses.includes(ugc.status)) {
-      throw new BadRequestException(`Cannot dispute UGC in ${ugc.status} status`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const updated = await this.prisma.uGC.update({
@@ -584,7 +582,7 @@ export class UgcService {
   async resolveUgcDispute(ugcId: string, adminId: string, dto: ResolveUgcDisputeDto) {
     const admin = await this.prisma.profile.findUnique({ where: { id: adminId } });
     if (!admin || admin.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('Only admins can resolve UGC disputes');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     const ugc = await this.prisma.uGC.findUnique({
@@ -592,9 +590,9 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
     if (ugc.status !== UGCStatus.DISPUTED) {
-      throw new BadRequestException('Can only resolve UGC in DISPUTED status');
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
     const pricing = await this.businessRulesService.getUgcPricing(ugc.type);
@@ -616,7 +614,7 @@ export class UgcService {
 
       case UgcDisputeResolutionType.PARTIAL_PAYMENT:
         if (!dto.partialAmount || dto.partialAmount <= 0) {
-          throw new BadRequestException('partialAmount is required for partial payment');
+          throw new I18nHttpException('ugc.payment_required', 'UGC_PARTIAL_AMOUNT_REQUIRED', HttpStatus.BAD_REQUEST);
         }
         if (pricing.isPaid && ugc.stripePaymentIntentId) {
           await this.processPartialUgcPayment(ugc, pricing, dto.partialAmount);
@@ -731,13 +729,13 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    if (!ugc) throw new NotFoundException('UGC not found');
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
 
     // Vérifier accès : requester, submitter, ou admin
     const profile = await this.prisma.profile.findUnique({ where: { id: userId } });
     const isInvolved = ugc.requestedBy === userId || ugc.submittedBy === userId;
     if (!isInvolved && profile?.role !== UserRole.ADMIN) {
-      throw new ForbiddenException('You do not have access to this UGC');
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     return ugc;
@@ -757,11 +755,11 @@ export class UgcService {
       include: { campaign: { select: { sellerId: true } } },
     });
 
-    if (!session) throw new NotFoundException('Session not found');
+    if (!session) throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
 
     const isInvolved = session.testerId === userId || session.campaign.sellerId === userId;
     if (!isInvolved) {
-      throw new ForbiddenException('You are not involved in this session');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     return this.prisma.uGC.findMany({
@@ -784,7 +782,7 @@ export class UgcService {
       || ugc.session?.tester?.stripeConnectAccountId;
 
     if (!testerStripeAccount) {
-      throw new NotFoundException('Tester has no Stripe Connect account. Cannot transfer payment.');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.NOT_FOUND);
     }
 
     // 3. Transfert Stripe vers le testeur
@@ -871,7 +869,7 @@ export class UgcService {
 
   private async processPartialUgcPayment(ugc: any, pricing: { price: number; commission: number }, partialAmount: number) {
     if (partialAmount > pricing.price) {
-      throw new BadRequestException(`Partial amount (${partialAmount}€) cannot exceed UGC price (${pricing.price}€)`);
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_PARTIAL_AMOUNT_EXCEEDS', HttpStatus.BAD_REQUEST);
     }
 
     // 1. Capturer le PI
@@ -882,7 +880,7 @@ export class UgcService {
       || ugc.session?.tester?.stripeConnectAccountId;
 
     if (!testerStripeAccount) {
-      throw new NotFoundException('Tester has no Stripe Connect account');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.NOT_FOUND);
     }
 
     const transfer = await this.stripeService.createPlatformToConnectTransfer(
@@ -994,7 +992,7 @@ export class UgcService {
       this.logger.log(`UGC PaymentIntent cancelled: ${paymentIntentId}`);
     } catch (error) {
       this.logger.error(`Failed to cancel UGC PaymentIntent ${paymentIntentId}: ${error.message}`);
-      throw new InternalServerErrorException('Failed to cancel UGC payment');
+      throw new I18nHttpException('common.internal_error', 'UGC_CANCEL_PAYMENT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 

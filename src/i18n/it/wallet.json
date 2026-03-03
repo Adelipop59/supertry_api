@@ -1,0 +1,9 @@
+{
+  "not_found": "Nessun portafoglio trovato per il tuo account.",
+  "insufficient_balance": "Saldo insufficiente per effettuare questa operazione.",
+  "withdrawal_not_found": "Richiesta di prelievo non trovata.",
+  "cannot_cancel": "Questa richiesta di prelievo non può più essere annullata.",
+  "withdrawal_created": "Richiesta di prelievo creata con successo.",
+  "withdrawal_cancelled": "Richiesta di prelievo annullata.",
+  "sync_success": "Sincronizzazione effettuata con successo."
+}

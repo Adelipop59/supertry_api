@@ -10,6 +10,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as crypto from 'crypto';
 import * as path from 'path';
+import sharp from 'sharp';
 
 export enum MediaType {
   IMAGE = 'image',
@@ -338,6 +339,51 @@ export class MediaService {
     }
   }
 
+  /**
+   * Compresse une image : redimensionne + convertit en WebP
+   */
+  async compressImage(
+    buffer: Buffer,
+    options: { maxWidth?: number; quality?: number } = {},
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    const { maxWidth = 1920, quality = 80 } = options;
+
+    const compressed = await sharp(buffer)
+      .resize(maxWidth, undefined, { fit: 'inside', withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer();
+
+    return { buffer: compressed, mimeType: 'image/webp' };
+  }
+
+  /**
+   * Génère une version floue + compressée d'un buffer image
+   */
+  async generateBlurredImage(
+    buffer: Buffer,
+    options: { sigma?: number; maxWidth?: number; quality?: number } = {},
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    const { sigma = 20, maxWidth = 800, quality = 50 } = options;
+
+    const blurred = await sharp(buffer)
+      .resize(maxWidth, undefined, { fit: 'inside', withoutEnlargement: true })
+      .blur(sigma)
+      .webp({ quality })
+      .toBuffer();
+
+    return { buffer: blurred, mimeType: 'image/webp' };
+  }
+
+  /**
+   * Génère un nom de fichier unique (timestamp + random hex + extension)
+   */
+  generateFilename(originalFilename: string): string {
+    const ext = path.extname(originalFilename);
+    const timestamp = Date.now();
+    const randomString = crypto.randomBytes(8).toString('hex');
+    return `${timestamp}-${randomString}${ext}`;
+  }
+
   // ==================== PRIVATE METHODS ====================
 
   private validateMimeType(mimeType: string, mediaType: MediaType): void {
@@ -360,13 +406,6 @@ export class MediaService {
         `File too large. Max size for ${mediaType}: ${maxSizeMB}MB (uploaded: ${fileSizeMB}MB)`,
       );
     }
-  }
-
-  private generateFilename(originalFilename: string): string {
-    const ext = path.extname(originalFilename);
-    const timestamp = Date.now();
-    const randomString = crypto.randomBytes(8).toString('hex');
-    return `${timestamp}-${randomString}${ext}`;
   }
 
   private buildKey(folder: MediaFolder, filename: string, subfolder?: string): string {

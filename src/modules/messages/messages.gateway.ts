@@ -117,7 +117,7 @@ export class MessagesGateway
   ) {
     const userId = (client as any).userId;
     const userRole = (client as any).userRole;
-    if (!userId) return { success: false, error: 'Not authenticated' };
+    if (!userId) return { success: false, error: 'Non authentifié.' };
 
     try {
       await this.messagesService.validateAccess(
@@ -156,7 +156,7 @@ export class MessagesGateway
   ) {
     const userId = (client as any).userId;
     const userRole = (client as any).userRole;
-    if (!userId) return { success: false, error: 'Not authenticated' };
+    if (!userId) return { success: false, error: 'Non authentifié.' };
 
     try {
       await this.messagesService.validateAccess(

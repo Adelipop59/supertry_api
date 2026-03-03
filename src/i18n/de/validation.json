@@ -1,0 +1,11 @@
+{
+  "phone_format": "Die Telefonnummer muss im internationalen Format vorliegen (z.B.: +49151234567890).",
+  "url_format": "Die angegebene URL ist ung\u00fcltig.",
+  "required": "Dieses Feld ist erforderlich.",
+  "invalid_email": "Die E-Mail-Adresse ist ung\u00fcltig.",
+  "invalid_string": "Dieses Feld muss Text enthalten.",
+  "invalid_number": "Dieses Feld muss eine Zahl enthalten.",
+  "invalid_date": "Das angegebene Datum ist ung\u00fcltig.",
+  "min_length": "Dieses Feld muss mindestens {min} Zeichen enthalten.",
+  "max_length": "Dieses Feld darf nicht mehr als {max} Zeichen enthalten."
+}

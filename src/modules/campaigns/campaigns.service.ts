@@ -1,10 +1,9 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
+  HttpStatus,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { PrismaService } from '../../database/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
 import { StripeService } from '../stripe/stripe.service';
@@ -25,6 +24,8 @@ import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast, TIER_ORDER } from '../gamification/gamification.constants';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
+import { MediaService } from '../media/media.service';
+import { normalizeImageEntry } from '../products/interfaces/product-image.interface';
 
 const CAMPAIGN_FULL_INCLUDE = {
   seller: {
@@ -44,7 +45,15 @@ const CAMPAIGN_FULL_INCLUDE = {
       icon: true,
     },
   },
-  offers: true,
+  offers: {
+    include: {
+      product: {
+        select: {
+          images: true,
+        },
+      },
+    },
+  },
   procedures: {
     include: {
       steps: {
@@ -78,6 +87,7 @@ export class CampaignsService {
     private auditService: AuditService,
     private notificationsService: NotificationsService,
     private gamificationService: GamificationService,
+    private mediaService: MediaService,
   ) {}
 
   async create(
@@ -89,37 +99,27 @@ export class CampaignsService {
       createDto.marketplaceMode === CampaignMarketplaceMode.PROCEDURES &&
       (!createDto.procedures || createDto.procedures.length === 0)
     ) {
-      throw new BadRequestException(
-        'Procedures are required when marketplaceMode is PROCEDURES',
-      );
+      throw new I18nHttpException('campaign.procedures_required', 'CAMPAIGN_PROCEDURES_REQUIRED', HttpStatus.BAD_REQUEST);
     }
 
     if (
       createDto.marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK &&
       !createDto.amazonLink
     ) {
-      throw new BadRequestException(
-        'amazonLink is required when marketplaceMode is PRODUCT_LINK',
-      );
+      throw new I18nHttpException('campaign.amazon_link_required', 'CAMPAIGN_LINK_REQUIRED', HttpStatus.BAD_REQUEST);
     }
 
     // Validation 2: Distributions validation
     if (!createDto.distributions || createDto.distributions.length === 0) {
-      throw new BadRequestException(
-        'At least one distribution date is required',
-      );
+      throw new I18nHttpException('campaign.distribution_date_required', 'CAMPAIGN_DISTRIBUTION_REQUIRED', HttpStatus.BAD_REQUEST);
     }
 
     for (const dist of createDto.distributions) {
       if (dist.type === 'RECURRING' && dist.dayOfWeek === undefined) {
-        throw new BadRequestException(
-          'dayOfWeek is required for RECURRING distribution',
-        );
+        throw new I18nHttpException('campaign.day_of_week_required', 'CAMPAIGN_DAY_REQUIRED', HttpStatus.BAD_REQUEST);
       }
       if (dist.type === 'SPECIFIC_DATE' && !dist.specificDate) {
-        throw new BadRequestException(
-          'specificDate is required for SPECIFIC_DATE distribution',
-        );
+        throw new I18nHttpException('campaign.specific_date_required', 'CAMPAIGN_DATE_REQUIRED', HttpStatus.BAD_REQUEST);
       }
     }
 
@@ -303,12 +303,44 @@ export class CampaignsService {
       this.prisma.campaign.count({ where }),
     ]);
 
-    const campaignsWithStats = campaigns.map((c: any) => ({
-      ...c,
-      sessionsCount: c._count.testSessions,
-    }));
+    // Déterminer la participation du user pour chaque campagne
+    let participatingCampaignIds = new Set<string>();
+    if (user?.role === UserRole.USER) {
+      const campaignIds = campaigns.map((c: any) => c.id);
+      if (campaignIds.length > 0) {
+        const userSessions = await this.prisma.testSession.findMany({
+          where: {
+            testerId: user.id,
+            campaignId: { in: campaignIds },
+          },
+          select: { campaignId: true },
+        });
+        participatingCampaignIds = new Set(
+          userSessions.map((s) => s.campaignId),
+        );
+      }
+    }
 
-    return createPaginatedResponse(campaignsWithStats, total, page, limit);
+    const alwaysClear =
+      !user || user.role === UserRole.ADMIN;
+
+    const campaignsWithImages = await Promise.all(
+      campaigns.map(async (c: any) => {
+        const showClear =
+          alwaysClear || participatingCampaignIds.has(c.id);
+        const offersWithImages = await this.resolveOffersWithImages(
+          c.offers || [],
+          showClear,
+        );
+        return {
+          ...c,
+          offers: offersWithImages,
+          sessionsCount: c._count.testSessions,
+        };
+      }),
+    );
+
+    return createPaginatedResponse(campaignsWithImages, total, page, limit);
   }
 
   async findMyCampaigns(
@@ -344,26 +376,58 @@ export class CampaignsService {
       this.prisma.campaign.count({ where }),
     ]);
 
-    const campaignsWithStats = campaigns.map((c: any) => ({
-      ...c,
-      sessionsCount: c._count.testSessions,
-    }));
+    // PRO voit toujours ses images en clair
+    const campaignsWithImages = await Promise.all(
+      campaigns.map(async (c: any) => {
+        const offersWithImages = await this.resolveOffersWithImages(
+          c.offers || [],
+          true,
+        );
+        return {
+          ...c,
+          offers: offersWithImages,
+          sessionsCount: c._count.testSessions,
+        };
+      }),
+    );
 
-    return createPaginatedResponse(campaignsWithStats, total, page, limit);
+    return createPaginatedResponse(campaignsWithImages, total, page, limit);
   }
 
-  async findOne(id: string): Promise<CampaignResponseDto> {
+  async findOne(
+    id: string,
+    user?: { id: string; role: UserRole },
+  ): Promise<CampaignResponseDto> {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id },
       include: CAMPAIGN_LIST_INCLUDE,
     });
 
     if (!campaign) {
-      throw new NotFoundException(`Campaign with ID '${id}' not found`);
+      throw new I18nHttpException('campaign.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
+
+    // Déterminer si on montre les images claires ou floues
+    let showClear = true;
+    if (user?.role === UserRole.USER) {
+      const hasSession = await this.prisma.testSession.findFirst({
+        where: {
+          testerId: user.id,
+          campaignId: id,
+        },
+        select: { id: true },
+      });
+      showClear = !!hasSession;
+    }
+
+    const offersWithImages = await this.resolveOffersWithImages(
+      (campaign as any).offers || [],
+      showClear,
+    );
 
     return {
       ...campaign,
+      offers: offersWithImages,
       sessionsCount: (campaign as any)._count.testSessions,
     } as any;
   }
@@ -384,7 +448,7 @@ export class CampaignsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException(`Campaign with ID '${campaignId}' not found`);
+      throw new I18nHttpException('campaign.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const tester = await this.prisma.profile.findUnique({
@@ -401,7 +465,7 @@ export class CampaignsService {
     });
 
     if (!tester) {
-      throw new NotFoundException(`Tester with ID '${testerId}' not found`);
+      throw new I18nHttpException('campaign.tester_not_found', 'TESTER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const reasons: string[] = [];
@@ -522,6 +586,42 @@ export class CampaignsService {
   }
 
   /**
+   * Résout les images produit pour chaque offer d'une campagne.
+   * Retourne les signed URLs (floues ou claires selon showClear).
+   */
+  private async resolveOffersWithImages(
+    offers: any[],
+    showClear: boolean,
+  ): Promise<any[]> {
+    return Promise.all(
+      offers.map(async (offer: any) => {
+        const productImages: any[] = Array.isArray(offer.product?.images)
+          ? offer.product.images
+          : [];
+
+        const normalized = productImages.map(normalizeImageEntry);
+        const keys = normalized.map((entry) => {
+          const key = showClear ? entry.clearKey : entry.blurredKey;
+          if (key.startsWith('http://') || key.startsWith('https://')) {
+            return this.mediaService.extractKeyFromUrl(key) ?? key;
+          }
+          return key;
+        });
+
+        const signedUrls =
+          keys.length > 0 ? await this.mediaService.getSignedUrls(keys) : [];
+
+        // Retourner l'offer sans le champ product brut
+        const { product, ...offerData } = offer;
+        return {
+          ...offerData,
+          productImages: signedUrls,
+        };
+      }),
+    );
+  }
+
+  /**
    * Calcule automatiquement la fourchette de prix à partir du expectedPrice
    * et des paliers définis dans BusinessRules.priceRangeTiers.
    *
@@ -565,7 +665,7 @@ export class CampaignsService {
 
     // Check ownership
     if (campaign.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only update your own campaigns');
+      throw new I18nHttpException('campaign.not_owner', 'CAMPAIGN_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check if campaign can be updated (not ACTIVE with sessions)
@@ -574,9 +674,7 @@ export class CampaignsService {
       campaign.sessionsCount &&
       campaign.sessionsCount > 0
     ) {
-      throw new BadRequestException(
-        'Cannot update an active campaign with ongoing sessions',
-      );
+      throw new I18nHttpException('campaign.cannot_update_active_sessions', 'CAMPAIGN_CANNOT_UPDATE', HttpStatus.BAD_REQUEST);
     }
 
     // Recalculate price range if offer changes
@@ -646,11 +744,11 @@ export class CampaignsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException(`Campaign with ID '${id}' not found`);
+      throw new I18nHttpException('campaign.not_found', 'CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (campaign.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only delete your own campaigns');
+      throw new I18nHttpException('campaign.not_owner', 'CAMPAIGN_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     const sellerProfile = await this.prisma.profile.findUnique({
@@ -738,9 +836,7 @@ export class CampaignsService {
       });
 
       if (activeSessions > 0) {
-        throw new BadRequestException(
-          `Cannot cancel campaign with ${activeSessions} active test session(s). Wait for sessions to complete or be cancelled.`,
-        );
+        throw new I18nHttpException('campaign.cannot_cancel_active_sessions', 'CAMPAIGN_CANNOT_CANCEL_SESSIONS', HttpStatus.BAD_REQUEST, { count: activeSessions });
       }
 
       const completedSessions = await this.prisma.testSession.count({
@@ -880,12 +976,12 @@ export class CampaignsService {
 
     // Check ownership
     if (campaign.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only activate your own campaigns');
+      throw new I18nHttpException('campaign.not_owner', 'CAMPAIGN_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
     // Check if campaign is in DRAFT status
     if (campaign.status !== CampaignStatus.DRAFT) {
-      throw new BadRequestException('Only DRAFT campaigns can be activated');
+      throw new I18nHttpException('campaign.only_draft_activate', 'CAMPAIGN_ONLY_DRAFT', HttpStatus.BAD_REQUEST);
     }
 
     // PRO n'a PAS besoin de Stripe Connect ni de KYC

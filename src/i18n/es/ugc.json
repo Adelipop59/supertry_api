@@ -1,0 +1,13 @@
+{
+  "not_found": "Este contenido no se ha encontrado.",
+  "invalid_status": "Este contenido no puede ser enviado en su estado actual.",
+  "file_required": "Se requiere un archivo para este tipo de contenido ({type}).",
+  "content_url_required": "Se requiere un enlace de contenido para este tipo de contenido.",
+  "payment_required": "Se requiere un método de pago para este contenido de pago.",
+  "not_owner": "No tiene acceso a este contenido.",
+  "submitted_success": "Contenido enviado correctamente.",
+  "validated_success": "Contenido validado correctamente.",
+  "rejected_success": "Contenido rechazado.",
+  "declined_success": "Solicitud de contenido rechazada.",
+  "cancelled_success": "Solicitud de contenido cancelada."
+}

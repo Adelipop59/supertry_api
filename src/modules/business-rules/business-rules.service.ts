@@ -1,9 +1,10 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
 import { UGCType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateBusinessRulesDto } from './dto/create-business-rules.dto';
 import { UpdateBusinessRulesDto } from './dto/update-business-rules.dto';
 import { BusinessRulesResponseDto } from './dto/business-rules-response.dto';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class BusinessRulesService {
@@ -90,7 +91,7 @@ export class BusinessRulesService {
     });
 
     if (!rules) {
-      throw new NotFoundException('No business rules found');
+      throw new I18nHttpException('common.business_rules_not_found', 'BUSINESS_RULES_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return this.toResponseDto(rules);
@@ -102,7 +103,7 @@ export class BusinessRulesService {
     });
 
     if (!rules) {
-      throw new NotFoundException(`Business rules with ID '${id}' not found`);
+      throw new I18nHttpException('common.business_rules_not_found', 'BUSINESS_RULES_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return this.toResponseDto(rules);
@@ -225,7 +226,7 @@ export class BusinessRulesService {
       case 'EXTERNAL_REVIEW':
         return { price: 0, commission: 0, isPaid: false };
       default:
-        throw new BadRequestException(`Unknown UGC type: ${type}`);
+        throw new I18nHttpException('ugc.invalid_status', 'UGC_UNKNOWN_TYPE', HttpStatus.BAD_REQUEST);
     }
   }
 

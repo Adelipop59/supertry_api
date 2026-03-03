@@ -7,10 +7,9 @@ import {
   Req,
   HttpCode,
   HttpStatus,
-  BadRequestException,
-  NotFoundException,
   Logger,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
@@ -63,14 +62,14 @@ export class StripeController {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profile not found');
+      throw new I18nHttpException('auth.profile_not_found', 'PROFILE_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Check if Connect account already exists
     if (profile.stripeConnectAccountId) {
       return {
         accountId: profile.stripeConnectAccountId,
-        message: 'Connect account already exists',
+        message: 'Votre compte de paiement est déjà configuré.',
       };
     }
 
@@ -112,7 +111,7 @@ export class StripeController {
 
     return {
       accountId: account.id,
-      message: 'Connect account created successfully',
+      message: 'Compte de paiement créé avec succès.',
     };
   }
 
@@ -134,7 +133,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account found');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     const url = await this.stripeService.createAccountLink(
@@ -160,7 +159,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account found');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     const account = await this.stripeService.getConnectAccount(profile.stripeConnectAccountId);
@@ -192,7 +191,7 @@ export class StripeController {
       return {
         kycRequired: true,
         accountExists: false,
-        message: 'Create Stripe Connect account first',
+        message: 'Veuillez configurer votre compte de paiement.',
       };
     }
 
@@ -225,7 +224,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account found. Create one first.');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     return this.stripeService.createAccountSession(profile.stripeConnectAccountId);
@@ -253,7 +252,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account found');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     const balance = await this.stripeService.getConnectAccountBalance(
@@ -288,7 +287,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('Create Stripe Connect account first');
+      throw new I18nHttpException('stripe.identity_create_account_first', 'STRIPE_CREATE_ACCOUNT_FIRST', HttpStatus.BAD_REQUEST);
     }
 
     return this.stripeService.createIdentityVerificationSession(profile.id, dto.returnUrl);
@@ -317,7 +316,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('Create Stripe Connect account first');
+      throw new I18nHttpException('stripe.identity_create_account_first', 'STRIPE_CREATE_ACCOUNT_FIRST', HttpStatus.BAD_REQUEST);
     }
 
     // Le SDK mobile natif ne nécessite pas de returnUrl — on passe une URL factice
@@ -362,7 +361,7 @@ export class StripeController {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new BadRequestException('No Stripe Connect account');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     return this.stripeService.createPayout(dto.amount, profile.stripeConnectAccountId, 'eur', {
@@ -382,7 +381,7 @@ export class StripeController {
   @HttpCode(HttpStatus.OK)
   async handleWebhook(@Req() req: Request, @Headers('stripe-signature') signature: string) {
     if (!signature) {
-      throw new BadRequestException('Missing stripe-signature header');
+      throw new I18nHttpException('stripe.webhook_invalid', 'STRIPE_WEBHOOK_INVALID', HttpStatus.BAD_REQUEST);
     }
 
     const event = this.stripeService.constructEvent((req as any).rawBody, signature);

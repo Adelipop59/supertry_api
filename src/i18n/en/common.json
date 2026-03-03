@@ -1,0 +1,13 @@
+{
+  "forbidden": "You do not have the required permissions for this action.",
+  "complete_profile": "Please complete your profile to access this feature.",
+  "internal_error": "An unexpected error occurred. Please try again.",
+  "not_found": "The requested item could not be found.",
+  "duplicate": "An item with this {field} already exists.",
+  "invalid_reference": "Invalid reference. Please check the data.",
+  "database_error": "A technical error occurred. Please try again.",
+  "file_deleted": "File deleted successfully.",
+  "not_authenticated": "You must be logged in to perform this action.",
+  "category_not_found": "This category could not be found.",
+  "business_rules_not_found": "Business rules could not be found."
+}

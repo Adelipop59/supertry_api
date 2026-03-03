@@ -1,8 +1,8 @@
 import {
   Injectable,
-  NotFoundException,
-  ForbiddenException,
+  HttpStatus,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { MediaService, MediaFolder, MediaType } from '../media/media.service';
@@ -16,6 +16,10 @@ import {
   PaginatedResponse,
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
+import {
+  ProductImage,
+  normalizeImageEntry,
+} from './interfaces/product-image.interface';
 
 const PRODUCT_INCLUDE = {
   seller: {
@@ -55,15 +59,18 @@ export class ProductsService {
   ) {}
 
   private async toResponseDto(product: any): Promise<ProductResponseDto> {
-    const imageEntries: string[] = Array.isArray(product.images) ? product.images : [];
+    const rawEntries: any[] = Array.isArray(product.images) ? product.images : [];
 
-    // Convertir toutes les entrées en keys S3 si nécessaire
-    const keys = imageEntries.map((entry) => {
-      if (entry.startsWith('http://') || entry.startsWith('https://')) {
-        // Ancienne URL complète -> extraire la key S3
-        return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+    // Normaliser les entrées (legacy string → { clearKey, blurredKey })
+    const normalized = rawEntries.map(normalizeImageEntry);
+
+    // PRO/ADMIN endpoints → toujours retourner les images claires
+    const keys = normalized.map((entry) => {
+      const key = entry.clearKey;
+      if (key.startsWith('http://') || key.startsWith('https://')) {
+        return this.mediaService.extractKeyFromUrl(key) ?? key;
       }
-      return entry;
+      return key;
     });
 
     // Générer des signed URLs S3 (valides 1h) pour l'accès aux images
@@ -234,12 +241,12 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException(`Product with ID '${id}' not found`);
+      throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // PRO can only see their own products
     if (role === UserRole.PRO && userId && product.sellerId !== userId) {
-      throw new ForbiddenException('You can only view your own products');
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
     // Testers can only see products from campaigns they participated in
@@ -256,7 +263,7 @@ export class ProductsService {
       });
 
       if (!hasAccess) {
-        throw new ForbiddenException('You can only view products from campaigns you participated in');
+        throw new I18nHttpException('product.campaign_access_only', 'PRODUCT_CAMPAIGN_ACCESS_ONLY', HttpStatus.FORBIDDEN);
       }
     }
 
@@ -272,7 +279,7 @@ export class ProductsService {
 
     // Check ownership
     if (product.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only update your own products');
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
     const updatedProduct = await this.prisma.product.update({
@@ -295,11 +302,11 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException(`Product with ID '${id}' not found`);
+      throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (product.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only delete your own products');
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
     // Bloquer si le produit est dans une campagne active
@@ -309,9 +316,7 @@ export class ProductsService {
     );
 
     if (hasActiveCampaign) {
-      throw new ForbiddenException(
-        'Ce produit est utilisé dans une campagne en cours. Terminez ou annulez la campagne avant de supprimer le produit.',
-      );
+      throw new I18nHttpException('product.used_in_campaign', 'PRODUCT_IN_USE', HttpStatus.BAD_REQUEST);
     }
 
     const hasAnyCampaign = product.offers.length > 0;
@@ -326,14 +331,23 @@ export class ProductsService {
       return { type: 'soft' };
     } else {
       // Hard delete : le produit n'a jamais été utilisé dans aucune campagne
-      const imageEntries = (Array.isArray(product.images) ? product.images : []) as string[];
-      if (imageEntries.length > 0) {
-        const keys = imageEntries.map((entry) => {
-          if (entry.startsWith('http://') || entry.startsWith('https://')) {
-            return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+      const rawEntries: any[] = Array.isArray(product.images)
+        ? product.images
+        : [];
+      if (rawEntries.length > 0) {
+        const keys: string[] = [];
+        for (const entry of rawEntries) {
+          const normalized = normalizeImageEntry(entry);
+          // Ajouter clearKey et blurredKey (supprimer les deux versions)
+          for (const key of [normalized.clearKey, normalized.blurredKey]) {
+            if (key.startsWith('http://') || key.startsWith('https://')) {
+              const extracted = this.mediaService.extractKeyFromUrl(key);
+              if (extracted) keys.push(extracted);
+            } else {
+              keys.push(key);
+            }
           }
-          return entry;
-        });
+        }
         // Non-bloquant : un échec S3 ne doit pas empêcher la suppression du produit
         try {
           await this.mediaService.deleteMultiple(keys);
@@ -358,7 +372,7 @@ export class ProductsService {
 
     // Check ownership
     if (product.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only modify your own products');
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
     const updatedProduct = await this.prisma.product.update({
@@ -379,21 +393,52 @@ export class ProductsService {
     sellerId: string,
     removeImagesDto: RemoveImagesDto,
   ): Promise<ProductResponseDto> {
-    const product = await this.findOne(id);
+    const rawProduct = await this.prisma.product.findUnique({
+      where: { id },
+      include: PRODUCT_INCLUDE,
+    });
 
-    // Check ownership
-    if (product.sellerId !== sellerId) {
-      throw new ForbiddenException('You can only modify your own products');
+    if (!rawProduct) {
+      throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    const newImages = product.images.filter(
-      (img) => !removeImagesDto.images.includes(img),
-    );
+    // Check ownership
+    if (rawProduct.sellerId !== sellerId) {
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
+    }
+
+    const rawEntries: any[] = Array.isArray(rawProduct.images)
+      ? rawProduct.images
+      : [];
+    const urlsToRemove = new Set(removeImagesDto.images);
+
+    // Filtrer les entrées à garder et collecter les clés S3 à supprimer
+    const keysToDelete: string[] = [];
+    const remaining: ProductImage[] = [];
+
+    for (const entry of rawEntries) {
+      const normalized = normalizeImageEntry(entry);
+      // Vérifier si la clearKey (ou son signed URL) correspond à une URL à supprimer
+      if (urlsToRemove.has(normalized.clearKey)) {
+        keysToDelete.push(normalized.clearKey, normalized.blurredKey);
+      } else {
+        remaining.push(normalized);
+      }
+    }
+
+    // Supprimer les fichiers S3 (non-bloquant)
+    if (keysToDelete.length > 0) {
+      try {
+        await this.mediaService.deleteMultiple(keysToDelete);
+      } catch {
+        // Les fichiers orphelins seront nettoyés ultérieurement
+      }
+    }
 
     const updatedProduct = await this.prisma.product.update({
       where: { id },
       data: {
-        images: newImages,
+        images: remaining as any,
       },
       include: PRODUCT_INCLUDE,
     });
@@ -407,18 +452,22 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException('Product not found');
+      throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    const imageEntries = (Array.isArray(product.images) ? product.images : []) as string[];
-    if (imageEntries.length === 0) return [];
+    const rawEntries: any[] = Array.isArray(product.images)
+      ? product.images
+      : [];
+    if (rawEntries.length === 0) return [];
 
-    // Convertir les anciennes URLs complètes en keys S3
-    const keys = imageEntries.map((entry) => {
-      if (entry.startsWith('http://') || entry.startsWith('https://')) {
-        return this.mediaService.extractKeyFromUrl(entry) ?? entry;
+    // Normaliser et extraire les clés claires
+    const keys = rawEntries.map((entry) => {
+      const normalized = normalizeImageEntry(entry);
+      const key = normalized.clearKey;
+      if (key.startsWith('http://') || key.startsWith('https://')) {
+        return this.mediaService.extractKeyFromUrl(key) ?? key;
       }
-      return entry;
+      return key;
     });
 
     return this.mediaService.getSignedUrls(keys);
@@ -435,36 +484,62 @@ export class ProductsService {
     });
 
     if (!product) {
-      throw new NotFoundException('Product not found');
+      throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (product.sellerId !== userId) {
-      throw new ForbiddenException('You can only upload images to your own products');
+      throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
-    // Upload les images vers S3
-    const uploadResults = await this.mediaService.uploadMultiple(
-      files,
-      MediaFolder.PRODUCTS,
-      MediaType.IMAGE,
-      {
-        subfolder: productId,
-        makePublic: true,
-      },
-    );
+    const newImageEntries: ProductImage[] = [];
 
-    // Extraire les keys S3 (pas les URLs)
-    const newImageKeys = uploadResults.map((result) => result.key);
+    for (const file of files) {
+      // 1. Compresser l'image originale (claire) : qualité 80%, max 1920px, WebP
+      const compressed = await this.mediaService.compressImage(file.buffer, {
+        maxWidth: 1920,
+        quality: 80,
+      });
+      const clearFilename = this.mediaService.generateFilename('image.webp');
+      const clearResult = await this.mediaService.uploadFromBuffer(
+        compressed.buffer,
+        clearFilename,
+        compressed.mimeType,
+        MediaFolder.PRODUCTS,
+        MediaType.IMAGE,
+        { subfolder: productId, makePublic: true },
+      );
 
-    // Ajouter les nouvelles keys aux images existantes
-    const currentImages = product.images as string[];
-    const updatedImages = [...currentImages, ...newImageKeys];
+      // 2. Générer la version floue + compressée : qualité 50%, max 800px, WebP
+      const blurred = await this.mediaService.generateBlurredImage(
+        file.buffer,
+        { sigma: 20, maxWidth: 800, quality: 50 },
+      );
+      const blurredFilename = this.mediaService.generateFilename('image.webp');
+      const blurredResult = await this.mediaService.uploadFromBuffer(
+        blurred.buffer,
+        blurredFilename,
+        blurred.mimeType,
+        MediaFolder.PRODUCTS,
+        MediaType.IMAGE,
+        { subfolder: productId, makePublic: true },
+      );
+
+      newImageEntries.push({
+        clearKey: clearResult.key,
+        blurredKey: blurredResult.key,
+      });
+    }
+
+    // Fusionner avec les images existantes (gérer le format legacy)
+    const currentImages = (product.images as any[]) || [];
+    const normalizedCurrent = currentImages.map(normalizeImageEntry);
+    const updatedImages = [...normalizedCurrent, ...newImageEntries];
 
     // Mettre à jour le produit
     const updatedProduct = await this.prisma.product.update({
       where: { id: productId },
       data: {
-        images: updatedImages,
+        images: updatedImages as any,
       },
       include: PRODUCT_INCLUDE,
     });

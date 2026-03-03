@@ -1,8 +1,7 @@
 import {
   Injectable,
   Logger,
-  NotFoundException,
-  BadRequestException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
@@ -23,6 +22,7 @@ import { CreditTesterMaxDto } from './dto/credit-tester-max.dto';
 import { RequestDocumentsDto } from './dto/request-documents.dto';
 import { AdminSessionFilterDto } from './dto/admin-session-filter.dto';
 import { v4 as uuidv4 } from 'uuid';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class AdminModerationService {
@@ -55,17 +55,17 @@ export class AdminModerationService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const offer = session.campaign.offers[0];
     if (!offer) {
-      throw new NotFoundException('No offer found for this campaign');
+      throw new I18nHttpException('common.not_found', 'OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const testerStripeAccount = session.tester.stripeConnectAccountId;
     if (!testerStripeAccount) {
-      throw new BadRequestException('Tester has no Stripe Connect account');
+      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
     }
 
     // Calculate MAX reward
@@ -89,9 +89,7 @@ export class AdminModerationService {
     const transferAmount = Math.round((maxReward - alreadyPaid) * 100) / 100;
 
     if (transferAmount <= 0) {
-      throw new BadRequestException(
-        `Tester already received ${alreadyPaid}€ which is >= max reward of ${maxReward}€`,
-      );
+      throw new I18nHttpException('wallet.insufficient_balance', 'TESTER_ALREADY_PAID_MAX', HttpStatus.BAD_REQUEST);
     }
 
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -229,7 +227,7 @@ export class AdminModerationService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const targetProfile = dto.target === 'tester' ? session.tester : session.campaign.seller;
@@ -306,14 +304,14 @@ export class AdminModerationService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Verify user is tester or PRO
     const isTester = session.testerId === userId;
     const isPro = session.campaign.sellerId === userId;
     if (!isTester && !isPro) {
-      throw new BadRequestException('You are not involved in this session');
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
     // Upload files to S3
@@ -443,7 +441,7 @@ export class AdminModerationService {
     });
 
     if (!profile) {
-      throw new NotFoundException('User not found');
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return profile;
@@ -468,11 +466,11 @@ export class AdminModerationService {
     });
 
     if (!profile) {
-      throw new NotFoundException('User not found');
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (profile.verificationStatus !== 'INCOHERENT') {
-      throw new BadRequestException('User is not flagged for verification mismatch');
+      throw new I18nHttpException('dispute.invalid_status', 'VERIFICATION_NOT_FLAGGED', HttpStatus.BAD_REQUEST);
     }
 
     if (resolution.action === 'APPROVE') {
@@ -606,7 +604,7 @@ export class AdminModerationService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('dispute.session_not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const offer = session.campaign.offers[0];

@@ -1,0 +1,7 @@
+{
+  "not_found": "Ce litige est introuvable.",
+  "session_not_found": "La session associée à ce litige est introuvable.",
+  "created_success": "Le litige a été créé. Notre équipe va l'examiner.",
+  "resolved_success": "Le litige a été résolu.",
+  "invalid_status": "Cette action n'est pas possible dans l'état actuel du litige."
+}

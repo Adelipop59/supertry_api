@@ -1,7 +1,8 @@
-import { Injectable, CanActivate, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext, HttpStatus } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { LuciaService } from '../../modules/lucia/lucia.service';
 import { PrismaService } from '../../database/prisma.service';
+import { I18nHttpException } from '../exceptions/i18n.exception';
 
 @Injectable()
 export class LuciaAuthGuard implements CanActivate {
@@ -27,13 +28,13 @@ export class LuciaAuthGuard implements CanActivate {
     const sessionId = request.cookies?.['auth_session'] || bearerSessionId || '';
 
     if (!sessionId) {
-      throw new UnauthorizedException('Missing session');
+      throw new I18nHttpException('auth.session_expired', 'AUTH_SESSION_EXPIRED', HttpStatus.UNAUTHORIZED);
     }
 
     const result = await this.luciaService.validateSession(sessionId);
 
     if (!result.session || !result.user) {
-      throw new UnauthorizedException('Invalid session');
+      throw new I18nHttpException('auth.session_expired', 'AUTH_SESSION_INVALID', HttpStatus.UNAUTHORIZED);
     }
 
     // Attach user to request
@@ -42,7 +43,7 @@ export class LuciaAuthGuard implements CanActivate {
     });
 
     if (!profile || !profile.isActive) {
-      throw new UnauthorizedException('Account is inactive');
+      throw new I18nHttpException('auth.account_inactive', 'AUTH_ACCOUNT_INACTIVE', HttpStatus.UNAUTHORIZED);
     }
 
     request.user = profile;

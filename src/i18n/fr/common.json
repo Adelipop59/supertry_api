@@ -1,0 +1,13 @@
+{
+  "forbidden": "Vous n'avez pas les permissions nécessaires pour cette action.",
+  "complete_profile": "Veuillez compléter votre profil pour accéder à cette fonctionnalité.",
+  "internal_error": "Une erreur inattendue s'est produite. Veuillez réessayer.",
+  "not_found": "L'élément demandé est introuvable.",
+  "duplicate": "Un élément avec ce {field} existe déjà.",
+  "invalid_reference": "Référence invalide. Veuillez vérifier les données.",
+  "database_error": "Une erreur technique s'est produite. Veuillez réessayer.",
+  "file_deleted": "Fichier supprimé avec succès.",
+  "not_authenticated": "Vous devez être connecté pour effectuer cette action.",
+  "category_not_found": "Cette catégorie est introuvable.",
+  "business_rules_not_found": "Les règles métier sont introuvables."
+}

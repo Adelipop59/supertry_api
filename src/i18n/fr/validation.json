@@ -1,0 +1,11 @@
+{
+  "phone_format": "Le numéro de téléphone doit être au format international (ex: +33612345678).",
+  "url_format": "L'adresse URL fournie n'est pas valide.",
+  "required": "Ce champ est obligatoire.",
+  "invalid_email": "L'adresse e-mail n'est pas valide.",
+  "invalid_string": "Ce champ doit être du texte.",
+  "invalid_number": "Ce champ doit être un nombre.",
+  "invalid_date": "La date fournie n'est pas valide.",
+  "min_length": "Ce champ doit contenir au moins {min} caractères.",
+  "max_length": "Ce champ ne doit pas dépasser {max} caractères."
+}

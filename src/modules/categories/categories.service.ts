@@ -1,12 +1,12 @@
 import {
   Injectable,
-  NotFoundException,
-  ConflictException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { CategoryResponseDto } from './dto/category-response.dto';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class CategoriesService {
@@ -29,9 +29,7 @@ export class CategoriesService {
     });
 
     if (existingCategory) {
-      throw new ConflictException(
-        `Category with slug '${createCategoryDto.slug}' already exists`,
-      );
+      throw new I18nHttpException('common.duplicate', 'CATEGORY_DUPLICATE', HttpStatus.CONFLICT, { field: 'slug' });
     }
 
     const category = await this.prisma.category.create({
@@ -56,7 +54,7 @@ export class CategoriesService {
     });
 
     if (!category) {
-      throw new NotFoundException(`Category with ID '${id}' not found`);
+      throw new I18nHttpException('common.category_not_found', 'CATEGORY_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return this.toResponseDto(category);
@@ -79,9 +77,7 @@ export class CategoriesService {
       });
 
       if (existingCategory) {
-        throw new ConflictException(
-          `Category with slug '${updateCategoryDto.slug}' already exists`,
-        );
+        throw new I18nHttpException('common.duplicate', 'CATEGORY_DUPLICATE', HttpStatus.CONFLICT, { field: 'slug' });
       }
     }
 

@@ -228,6 +228,13 @@ export class TestSessionResponseDto {
   })
   cancellationReason?: string;
 
+  @ApiPropertyOptional({
+    description: 'URLs des images du produit (toujours claires pour le participant)',
+    example: ['https://signed-url.com/image1.webp'],
+    type: [String],
+  })
+  productImages?: string[];
+
   @ApiProperty({
     description: 'Date de création de la session',
     example: '2026-03-01T10:00:00.000Z',

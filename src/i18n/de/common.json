@@ -1,0 +1,13 @@
+{
+  "forbidden": "Sie haben nicht die erforderlichen Berechtigungen f\u00fcr diese Aktion.",
+  "complete_profile": "Bitte vervollst\u00e4ndigen Sie Ihr Profil, um auf diese Funktion zuzugreifen.",
+  "internal_error": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
+  "not_found": "Das angeforderte Element wurde nicht gefunden.",
+  "duplicate": "Ein Element mit diesem {field} existiert bereits.",
+  "invalid_reference": "Ung\u00fcltige Referenz. Bitte \u00fcberpr\u00fcfen Sie die Daten.",
+  "database_error": "Ein technischer Fehler ist aufgetreten. Bitte versuchen Sie es erneut.",
+  "file_deleted": "Datei erfolgreich gel\u00f6scht.",
+  "not_authenticated": "Sie m\u00fcssen angemeldet sein, um diese Aktion durchzuf\u00fchren.",
+  "category_not_found": "Diese Kategorie wurde nicht gefunden.",
+  "business_rules_not_found": "Die Gesch\u00e4ftsregeln wurden nicht gefunden."
+}

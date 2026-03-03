@@ -1,0 +1,9 @@
+{
+  "not_found": "No wallet found for your account.",
+  "insufficient_balance": "Insufficient balance to complete this operation.",
+  "withdrawal_not_found": "Withdrawal request not found.",
+  "cannot_cancel": "This withdrawal request can no longer be cancelled.",
+  "withdrawal_created": "Withdrawal request created successfully.",
+  "withdrawal_cancelled": "Withdrawal request cancelled.",
+  "sync_success": "Synchronization completed successfully."
+}

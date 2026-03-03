@@ -1,0 +1,7 @@
+{
+  "not_found": "This dispute could not be found.",
+  "session_not_found": "The session associated with this dispute could not be found.",
+  "created_success": "The dispute has been created. Our team will review it.",
+  "resolved_success": "The dispute has been resolved.",
+  "invalid_status": "This action is not possible in the current dispute state."
+}

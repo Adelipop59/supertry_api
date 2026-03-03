@@ -1,11 +1,9 @@
 import {
   Injectable,
   Logger,
-  BadRequestException,
-  NotFoundException,
-  ForbiddenException,
-  InternalServerErrorException,
+  HttpStatus,
 } from '@nestjs/common';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -49,7 +47,7 @@ export class PaymentsService {
     });
 
     if (!campaign || !campaign.offers || campaign.offers.length === 0) {
-      throw new NotFoundException('Campaign or offer not found');
+      throw new I18nHttpException('payment.campaign_not_found', 'PAYMENT_CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Si userId fourni, vérifier ownership (PRO owner ou ADMIN)
@@ -60,7 +58,7 @@ export class PaymentsService {
       });
 
       if (user?.role !== 'ADMIN' && campaign.sellerId !== userId) {
-        throw new ForbiddenException('Not authorized to view this campaign price summary');
+        throw new I18nHttpException('payment.not_authorized', 'PAYMENT_NOT_AUTHORIZED', HttpStatus.FORBIDDEN);
       }
     }
 
@@ -152,25 +150,21 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException('Campaign not found');
+      throw new I18nHttpException('payment.campaign_not_found', 'PAYMENT_CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (campaign.sellerId !== userId) {
-      throw new ForbiddenException('Not authorized');
+      throw new I18nHttpException('payment.not_authorized', 'PAYMENT_NOT_AUTHORIZED', HttpStatus.FORBIDDEN);
     }
 
     // Idempotency: block payment if campaign is not in DRAFT status
     if (campaign.status !== CampaignStatus.DRAFT) {
-      throw new BadRequestException(
-        `Campaign is already in status "${campaign.status}". Payment can only be processed for DRAFT campaigns.`,
-      );
+      throw new I18nHttpException('payment.already_in_status', 'PAYMENT_ALREADY_IN_STATUS', HttpStatus.BAD_REQUEST, { status: campaign.status });
     }
 
     // Idempotency: block if a PaymentIntent already exists for this campaign
     if (campaign.stripePaymentIntentId) {
-      throw new BadRequestException(
-        'A payment has already been initiated for this campaign. Please contact support if you believe this is an error.',
-      );
+      throw new I18nHttpException('payment.already_initiated', 'PAYMENT_ALREADY_INITIATED', HttpStatus.BAD_REQUEST);
     }
 
     // Calculate escrow
@@ -197,7 +191,7 @@ export class PaymentsService {
     );
 
     if (confirmedPayment.status !== 'succeeded') {
-      throw new BadRequestException('Payment confirmation failed');
+      throw new I18nHttpException('payment.confirmation_failed', 'PAYMENT_CONFIRMATION_FAILED', HttpStatus.BAD_REQUEST);
     }
 
     // Separate Charges and Transfers: Argent va sur PlatformWallet
@@ -351,7 +345,7 @@ export class PaymentsService {
     ]);
 
     if (!session) {
-      throw new NotFoundException('Test session not found');
+      throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Get business rules
@@ -369,7 +363,7 @@ export class PaymentsService {
     // Vérifier TESTEUR Identity KYC (obligatoire)
     const testerStripeAccount = testerProfile?.stripeConnectAccountId;
     if (!testerStripeAccount) {
-      throw new InternalServerErrorException('Tester has no Stripe Connect account');
+      throw new I18nHttpException('payment.tester_no_stripe', 'PAYMENT_TESTER_NO_STRIPE', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -401,10 +395,7 @@ export class PaymentsService {
     // Donc ici ">" sur le compteur APRÈS incrément = même filtre effectif.
     // Résultat: si le testeur a pu postuler, il sera forcément payé.
     if (completedCount > kycThreshold && !testerIdentity?.stripeIdentityVerified) {
-      throw new BadRequestException({
-        message: `Tester must complete Identity verification after ${kycThreshold} completed tests to continue receiving payments`,
-        identityRequired: true,
-      });
+      throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
     }
 
     // NOTE: Pour les TESTEURS, on vérifie uniquement stripeIdentityVerified (après le seuil KYC)
@@ -486,7 +477,7 @@ export class PaymentsService {
         },
       );
 
-      throw new InternalServerErrorException(`Failed to transfer funds to tester: ${error.message}`);
+      throw new I18nHttpException('payment.transfer_failed', 'PAYMENT_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
     // Create transactions in database
@@ -558,7 +549,7 @@ export class PaymentsService {
       // Update PlatformWallet
       const platformWallet = await tx.platformWallet.findFirst();
       if (!platformWallet) {
-        throw new InternalServerErrorException('PlatformWallet not found');
+        throw new I18nHttpException('payment.platform_wallet_not_found', 'PAYMENT_PLATFORM_WALLET_NOT_FOUND', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       await tx.platformWallet.update({
@@ -673,16 +664,16 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException('Campaign not found');
+      throw new I18nHttpException('payment.campaign_not_found', 'PAYMENT_CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (!campaign.stripePaymentIntentId) {
-      throw new NotFoundException('No PaymentIntent found for this campaign');
+      throw new I18nHttpException('payment.no_payment_found', 'PAYMENT_NO_PAYMENT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const offer = campaign.offers[0];
     if (!offer) {
-      throw new NotFoundException('No offer found for this campaign');
+      throw new I18nHttpException('payment.no_offer_found', 'PAYMENT_NO_OFFER_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Get seller profile, completed sessions count, and completed sessions details
@@ -727,7 +718,7 @@ export class PaymentsService {
     const refundAmount = Math.round((unusedSlotsRefund + totalPriceDifference) * 100) / 100;
 
     if (refundAmount <= 0) {
-      throw new BadRequestException('No amount to refund');
+      throw new I18nHttpException('payment.nothing_to_refund', 'PAYMENT_NOTHING_TO_REFUND', HttpStatus.BAD_REQUEST);
     }
 
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -762,7 +753,7 @@ export class PaymentsService {
       this.logger.log(`Refund created: ${refund.id} - ${refundAmount}€ → PRO card`);
     } catch (error) {
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
-      throw new InternalServerErrorException('Refund failed. Contact support.');
+      throw new I18nHttpException('payment.refund_failed', 'PAYMENT_REFUND_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
     // Update PlatformWallet and create transaction
@@ -790,7 +781,7 @@ export class PaymentsService {
       // Update PlatformWallet
       const platformWallet = await tx.platformWallet.findFirst();
       if (!platformWallet) {
-        throw new InternalServerErrorException('PlatformWallet not found');
+        throw new I18nHttpException('payment.platform_wallet_not_found', 'PAYMENT_PLATFORM_WALLET_NOT_FOUND', HttpStatus.INTERNAL_SERVER_ERROR);
       }
 
       await tx.platformWallet.update({
@@ -887,17 +878,17 @@ export class PaymentsService {
     });
 
     if (!campaign) {
-      throw new NotFoundException('Campaign not found');
+      throw new I18nHttpException('payment.campaign_not_found', 'PAYMENT_CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (!campaign.stripePaymentIntentId) {
-      throw new NotFoundException('No payment found for this campaign');
+      throw new I18nHttpException('payment.no_payment_found', 'PAYMENT_NO_PAYMENT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new NotFoundException('No platform wallet found');
+      throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
     const totalEscrowAmount = Number(platformWallet.escrowBalance);
@@ -1130,17 +1121,17 @@ export class PaymentsService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (!session.campaign.stripePaymentIntentId) {
-      throw new NotFoundException('No payment found for this campaign');
+      throw new I18nHttpException('payment.no_payment_found', 'PAYMENT_NO_PAYMENT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new NotFoundException('No platform wallet found');
+      throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
     const rules = await this.businessRulesService.findLatest();
@@ -1310,17 +1301,17 @@ export class PaymentsService {
     });
 
     if (!session) {
-      throw new NotFoundException('Session not found');
+      throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     if (!session.tester.stripeConnectAccountId) {
-      throw new NotFoundException('Tester has no Stripe Connect account');
+      throw new I18nHttpException('payment.tester_no_stripe', 'PAYMENT_TESTER_NO_STRIPE', HttpStatus.NOT_FOUND);
     }
 
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
-      throw new NotFoundException('No platform wallet found');
+      throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
     // Récupérer le montant de compensation via BusinessRules
@@ -1426,18 +1417,18 @@ export class PaymentsService {
     });
 
     if (!profile?.stripeConnectAccountId) {
-      throw new NotFoundException('No Stripe Connect account found');
+      throw new I18nHttpException('payment.no_stripe_connect', 'PAYMENT_NO_STRIPE_CONNECT', HttpStatus.NOT_FOUND);
     }
 
     if (!profile.stripeOnboardingCompleted) {
-      throw new BadRequestException('Complete Stripe onboarding first');
+      throw new I18nHttpException('payment.onboarding_incomplete', 'PAYMENT_ONBOARDING_INCOMPLETE', HttpStatus.BAD_REQUEST);
     }
 
     // Check KYC status
     const kycStatus = await this.stripeService.getKycStatus(profile.stripeConnectAccountId);
 
     if (!kycStatus.chargesEnabled) {
-      throw new BadRequestException('Stripe account not enabled for charges');
+      throw new I18nHttpException('payment.charges_not_enabled', 'PAYMENT_CHARGES_NOT_ENABLED', HttpStatus.BAD_REQUEST);
     }
 
     return true;

@@ -12,6 +12,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiConsumes } from '@nestjs/swagger
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateLanguageDto } from './dto/update-language.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
@@ -38,6 +39,18 @@ export class UsersController {
     @Body() updateUserDto: UpdateUserDto,
   ) {
     return this.usersService.updateMe(userId, updateUserDto);
+  }
+
+  @Patch('me/language')
+  @ApiOperation({ summary: 'Changer ma langue préférée' })
+  @ApiResponse({ status: 200, description: 'Langue mise à jour avec succès' })
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
+  async updateLanguage(
+    @CurrentUser('id') userId: string,
+    @Body() updateLanguageDto: UpdateLanguageDto,
+  ) {
+    return this.usersService.updateLanguage(userId, updateLanguageDto.language);
   }
 
   @Put('me/avatar')

@@ -7,6 +7,7 @@ import { StripeModule } from '../stripe/stripe.module';
 import { BusinessRulesModule } from '../business-rules/business-rules.module';
 import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { MediaModule } from '../media/media.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     BusinessRulesModule,
     AuditModule,
     NotificationsModule,
+    MediaModule,
   ],
   controllers: [CampaignsController],
   providers: [CampaignsService, CampaignActivationScheduler],

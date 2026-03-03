@@ -46,6 +46,13 @@ export class OfferResponseDto {
   @ApiProperty({ description: 'Quantité', example: 1 })
   quantity: number;
 
+  @ApiPropertyOptional({
+    description: 'URLs des images du produit (floues si non participant, claires si participant)',
+    example: ['https://signed-url.com/image1.jpg'],
+    type: [String],
+  })
+  productImages?: string[];
+
   @ApiProperty({ description: 'Date de création', example: '2026-02-15T10:30:00.000Z' })
   createdAt: Date;
 

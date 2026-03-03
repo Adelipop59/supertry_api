@@ -1,7 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { MediaService, MediaFolder, MediaType } from '../media/media.service';
-import { Profile } from '@prisma/client';
+import { Language, Profile } from '@prisma/client';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 export interface CreateProfileDto {
   email: string;
@@ -31,7 +32,7 @@ export class UsersService {
     });
 
     if (existingProfile) {
-      throw new BadRequestException('Email already in use');
+      throw new I18nHttpException('auth.email_already_exists', 'EMAIL_ALREADY_EXISTS', HttpStatus.BAD_REQUEST);
     }
 
     return this.prismaService.profile.create({
@@ -69,7 +70,7 @@ export class UsersService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profil introuvable');
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     const { passwordHash, ...result } = profile;
@@ -91,7 +92,7 @@ export class UsersService {
     });
 
     if (!profile) {
-      throw new NotFoundException('Profil introuvable');
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return profile;
@@ -147,6 +148,19 @@ export class UsersService {
     const profile = await this.prismaService.profile.update({
       where: { id: userId },
       data: { avatar: uploadResult.url },
+    });
+
+    const { passwordHash, ...result } = profile;
+    return result;
+  }
+
+  async updateLanguage(
+    userId: string,
+    language: Language,
+  ): Promise<Omit<Profile, 'passwordHash'>> {
+    const profile = await this.prismaService.profile.update({
+      where: { id: userId },
+      data: { preferredLanguage: language },
     });
 
     const { passwordHash, ...result } = profile;

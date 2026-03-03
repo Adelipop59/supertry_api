@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { AuditService } from '../audit/audit.service';
 import { Wallet, Transaction, AuditCategory } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class WalletService {
@@ -48,7 +49,7 @@ export class WalletService {
     });
 
     if (!wallet) {
-      throw new NotFoundException('Wallet not found');
+      throw new I18nHttpException('wallet.not_found', 'WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return wallet;
@@ -69,7 +70,7 @@ export class WalletService {
     });
 
     if (!wallet) {
-      throw new NotFoundException('Wallet not found');
+      throw new I18nHttpException('wallet.not_found', 'WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
     return wallet;
@@ -113,7 +114,7 @@ export class WalletService {
     const wallet = await this.getWallet(userId);
 
     if (wallet.pendingBalance.toNumber() < amount) {
-      throw new BadRequestException('Insufficient pending balance');
+      throw new I18nHttpException('wallet.insufficient_balance', 'WALLET_INSUFFICIENT_BALANCE', HttpStatus.BAD_REQUEST);
     }
 
     const updatedWallet = await this.prisma.wallet.update({
@@ -186,7 +187,7 @@ export class WalletService {
     const wallet = await this.getWallet(userId);
 
     if (wallet.balance.toNumber() < amount) {
-      throw new BadRequestException('Insufficient balance');
+      throw new I18nHttpException('wallet.insufficient_balance', 'WALLET_INSUFFICIENT_BALANCE', HttpStatus.BAD_REQUEST);
     }
 
     const updatedWallet = await this.prisma.wallet.update({
