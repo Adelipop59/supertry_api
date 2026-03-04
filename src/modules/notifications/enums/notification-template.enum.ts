@@ -5,6 +5,8 @@ export enum NotificationTemplate {
   ACCOUNT_DELETION = 'account-deletion',
   ORDER_CONFIRMATION = 'order-confirmation',
   GENERIC_NOTIFICATION = 'generic-notification',
+  WELCOME_TESTER = 'welcome-tester',
+  WELCOME_PRO = 'welcome-pro',
 
   // SMS templates
   OTP_CODE = 'otp-code',

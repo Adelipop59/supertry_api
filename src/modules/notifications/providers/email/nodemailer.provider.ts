@@ -46,6 +46,8 @@ export class NodemailerProvider implements INotificationProvider {
       NotificationTemplate.ACCOUNT_DELETION,
       NotificationTemplate.ORDER_CONFIRMATION,
       NotificationTemplate.GENERIC_NOTIFICATION,
+      NotificationTemplate.WELCOME_TESTER,
+      NotificationTemplate.WELCOME_PRO,
     ];
 
     emailTemplates.forEach((template) => {
@@ -134,6 +136,8 @@ export class NodemailerProvider implements INotificationProvider {
       [NotificationTemplate.ACCOUNT_DELETION]: 'Compte supprimé',
       [NotificationTemplate.ORDER_CONFIRMATION]: 'Confirmation de commande',
       [NotificationTemplate.GENERIC_NOTIFICATION]: 'Notification',
+      [NotificationTemplate.WELCOME_TESTER]: 'Bienvenue sur SuperTry !',
+      [NotificationTemplate.WELCOME_PRO]: 'Bienvenue sur SuperTry Pro !',
     };
 
     return subjects[template] || 'Notification';

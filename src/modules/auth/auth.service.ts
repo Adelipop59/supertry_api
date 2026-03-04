@@ -9,6 +9,8 @@ import { PrismaService } from '../../database/prisma.service';
 import { UsersService } from '../users/users.service';
 import { StripeService } from '../stripe/stripe.service';
 import { WalletService } from '../wallet/wallet.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import {
   SignupDto,
   LoginDto,
@@ -34,6 +36,7 @@ export class AuthService {
     private usersService: UsersService,
     private stripeService: StripeService,
     private walletService: WalletService,
+    private notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -130,6 +133,53 @@ export class AuthService {
         this.logger.error(`Failed to create Wallet for ${email}: ${error.message}`);
         // Don't fail signup if Wallet creation fails
       }
+    }
+
+    // Generate OTP and send verification email
+    const otpCode = this.generateOTPCode();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await this.prismaService.profile.update({
+      where: { id: profile.id },
+      data: {
+        emailVerificationCode: otpCode,
+        emailVerificationExpiresAt: otpExpiresAt,
+      },
+    });
+
+    // Send verification email (sync - critical)
+    try {
+      await this.notificationsService.sendEmail({
+        to: email,
+        template: NotificationTemplate.ACCOUNT_VERIFICATION,
+        variables: {
+          username: profileData.firstName || email.split('@')[0],
+          verificationCode: otpCode,
+          expiresIn: '15 minutes',
+        },
+      });
+      this.logger.log(`Verification email sent to ${email}`);
+    } catch (error) {
+      this.logger.error(`Failed to send verification email to ${email}: ${error.message}`);
+    }
+
+    // Queue welcome email (async - non-critical)
+    try {
+      const welcomeTemplate = role === 'PRO'
+        ? NotificationTemplate.WELCOME_PRO
+        : NotificationTemplate.WELCOME_TESTER;
+
+      await this.notificationsService.queueEmail({
+        to: email,
+        template: welcomeTemplate,
+        variables: {
+          username: profileData.firstName || email.split('@')[0],
+          email,
+          companyName: profileData.companyName,
+        },
+      });
+    } catch (error) {
+      this.logger.error(`Failed to queue welcome email for ${email}: ${error.message}`);
     }
 
     // Create session
@@ -646,6 +696,132 @@ export class AuthService {
   }
 
   /**
+   * Verify email with OTP code
+   */
+  async verifyEmail(userId: string, code: string): Promise<MessageResponseDto> {
+    const profile = await this.prismaService.profile.findUnique({
+      where: { id: userId },
+    });
+
+    if (!profile) {
+      throw new I18nHttpException(
+        'auth.profile_not_found',
+        'AUTH_PROFILE_NOT_FOUND',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (profile.emailVerifiedAt) {
+      throw new I18nHttpException(
+        'auth.email_already_verified',
+        'AUTH_EMAIL_ALREADY_VERIFIED',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (!profile.emailVerificationCode || !profile.emailVerificationExpiresAt) {
+      throw new I18nHttpException(
+        'auth.no_verification_pending',
+        'AUTH_NO_VERIFICATION_PENDING',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (new Date() > profile.emailVerificationExpiresAt) {
+      throw new I18nHttpException(
+        'auth.verification_code_expired',
+        'AUTH_VERIFICATION_CODE_EXPIRED',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (profile.emailVerificationCode !== code) {
+      throw new I18nHttpException(
+        'auth.invalid_verification_code',
+        'AUTH_INVALID_VERIFICATION_CODE',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    await this.prismaService.profile.update({
+      where: { id: userId },
+      data: {
+        emailVerifiedAt: new Date(),
+        isVerified: true,
+        emailVerificationCode: null,
+        emailVerificationExpiresAt: null,
+      },
+    });
+
+    this.logger.log(`Email verified for user ${userId}`);
+
+    return { message: 'Email vérifié avec succès.' };
+  }
+
+  /**
+   * Resend verification email
+   */
+  async resendVerificationEmail(userId: string): Promise<MessageResponseDto> {
+    const profile = await this.prismaService.profile.findUnique({
+      where: { id: userId },
+    });
+
+    if (!profile) {
+      throw new I18nHttpException(
+        'auth.profile_not_found',
+        'AUTH_PROFILE_NOT_FOUND',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    if (profile.emailVerifiedAt) {
+      throw new I18nHttpException(
+        'auth.email_already_verified',
+        'AUTH_EMAIL_ALREADY_VERIFIED',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Rate limit: 60s cooldown
+    if (profile.emailVerificationExpiresAt) {
+      const codeGeneratedAt = new Date(profile.emailVerificationExpiresAt.getTime() - 15 * 60 * 1000);
+      const elapsedSeconds = (Date.now() - codeGeneratedAt.getTime()) / 1000;
+      if (elapsedSeconds < 60) {
+        throw new I18nHttpException(
+          'auth.verification_rate_limit',
+          'AUTH_VERIFICATION_RATE_LIMIT',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
+    const otpCode = this.generateOTPCode();
+    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await this.prismaService.profile.update({
+      where: { id: userId },
+      data: {
+        emailVerificationCode: otpCode,
+        emailVerificationExpiresAt: otpExpiresAt,
+      },
+    });
+
+    await this.notificationsService.sendEmail({
+      to: profile.email,
+      template: NotificationTemplate.ACCOUNT_VERIFICATION,
+      variables: {
+        username: profile.firstName || profile.email.split('@')[0],
+        verificationCode: otpCode,
+        expiresIn: '15 minutes',
+      },
+    });
+
+    this.logger.log(`Verification email resent to ${profile.email}`);
+
+    return { message: 'Email de vérification renvoyé.' };
+  }
+
+  /**
    * Check email exists
    */
   async checkEmailExists(
@@ -876,6 +1052,7 @@ export class AuthService {
       siret: profile.siret || undefined,
       isActive: profile.isActive,
       isVerified: profile.isVerified,
+      emailVerifiedAt: profile.emailVerifiedAt || undefined,
       verificationStatus: profile.verificationStatus || undefined,
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
@@ -887,6 +1064,13 @@ export class AuthService {
    */
   private async checkCountriesAvailability(countries: string[]): Promise<string[]> {
     return this.usersService.checkCountriesAvailability(countries);
+  }
+
+  /**
+   * Helper: Generate 6-digit OTP code
+   */
+  private generateOTPCode(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
   /**

@@ -24,8 +24,10 @@ import {
   ChangePasswordDto,
   RefreshTokenResponseDto,
   OAuthTokenLoginDto,
+  VerifyEmailDto,
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
+import { SkipOnboarding } from '../../common/decorators/skip-onboarding.decorator';
 import { ApiAuthResponses, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 @ApiTags('auth')
@@ -264,6 +266,70 @@ export class AuthController {
     res.cookie(cookie.name, cookie.value, cookie.attributes);
 
     return result;
+  }
+
+  @Post('verify-email')
+  @SkipOnboarding()
+  @ApiOperation({ summary: 'Vérifier email avec code OTP' })
+  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiAuthResponses()
+  @ApiValidationErrorResponse()
+  async verifyEmail(
+    @Req() req: Request,
+    @Body() verifyEmailDto: VerifyEmailDto,
+  ): Promise<MessageResponseDto> {
+    const sessionId = req.cookies?.['auth_session'] || '';
+
+    if (!sessionId) {
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_EXPIRED',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    const sessionResult = await this.authService.validateSession(sessionId);
+
+    if (!sessionResult) {
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_INVALID',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    return this.authService.verifyEmail(sessionResult.user.id, verifyEmailDto.code);
+  }
+
+  @Post('resend-verification')
+  @SkipOnboarding()
+  @ApiOperation({ summary: 'Renvoyer email de vérification' })
+  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiAuthResponses()
+  async resendVerification(
+    @Req() req: Request,
+  ): Promise<MessageResponseDto> {
+    const sessionId = req.cookies?.['auth_session'] || '';
+
+    if (!sessionId) {
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_EXPIRED',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    const sessionResult = await this.authService.validateSession(sessionId);
+
+    if (!sessionResult) {
+      throw new I18nHttpException(
+        'auth.session_expired',
+        'AUTH_SESSION_INVALID',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+
+    return this.authService.resendVerificationEmail(sessionResult.user.id);
   }
 
   @Get('session')

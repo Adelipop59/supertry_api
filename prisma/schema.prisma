@@ -282,6 +282,9 @@ model Profile {
   // Statut compte
   isActive    Boolean @default(true) @map("is_active")
   isVerified  Boolean @default(false) @map("is_verified")
+  emailVerifiedAt            DateTime? @map("email_verified_at")
+  emailVerificationCode      String?   @map("email_verification_code")
+  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
   isOnboarded Boolean @default(true) @map("is_onboarded") // false pour OAuth jusqu'à finalisation
 
   // OAuth provider tracking

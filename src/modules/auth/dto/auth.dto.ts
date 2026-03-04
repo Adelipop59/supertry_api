@@ -136,6 +136,7 @@ class ProfileInAuthResponse {
   @ApiProperty({ required: false }) siret?: string;
   @ApiProperty() isActive!: boolean;
   @ApiProperty() isVerified!: boolean;
+  @ApiProperty({ required: false, description: 'Date de vérification email' }) emailVerifiedAt?: Date;
   @ApiProperty() createdAt!: Date;
   @ApiProperty() updatedAt!: Date;
 }
@@ -290,6 +291,14 @@ export class ChangePasswordDto {
   @IsNotEmpty()
   @MinLength(6)
   newPassword!: string;
+}
+
+export class VerifyEmailDto {
+  @ApiProperty({ description: 'Code OTP de vérification (6 chiffres)', example: '123456' })
+  @IsString()
+  @IsNotEmpty()
+  @Length(6, 6)
+  code!: string;
 }
 
 export class OAuthTokenLoginDto {
