@@ -13,7 +13,7 @@ const envVars = envContent.split('\n').reduce((acc, line) => {
 
 const prisma = new PrismaClient();
 const stripe = new Stripe(envVars.STRIPE_SECRET_KEY, {
-  apiVersion: '2026-02-25.clover',
+  apiVersion: '2026-01-28.clover',
 });
 
 async function checkProAccount() {

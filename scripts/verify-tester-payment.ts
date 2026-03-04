@@ -8,7 +8,7 @@ import Stripe from 'stripe';
 
 const prisma = new PrismaClient();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2026-02-25.clover',
+  apiVersion: '2026-01-28.clover',
 });
 
 async function verifyTesterPayment(testSessionId?: string) {
