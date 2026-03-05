@@ -195,6 +195,7 @@ export class AuthController {
   }
 
   @Post('complete-onboarding')
+  @SkipOnboarding()
   @ApiOperation({ summary: 'Finaliser onboarding (OAuth users)' })
   @ApiResponse({ status: 200 })
   @ApiAuthResponses()
