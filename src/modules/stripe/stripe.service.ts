@@ -555,6 +555,7 @@ export class StripeService {
     try {
       const paymentIntent = await this.stripe.paymentIntents.confirm(paymentIntentId, {
         payment_method: paymentMethodId,
+        return_url: `${this.configService.get('FRONTEND_URL')}/payment/confirm`,
       });
 
       this.logger.log(`PaymentIntent confirmed: ${paymentIntentId}`);
