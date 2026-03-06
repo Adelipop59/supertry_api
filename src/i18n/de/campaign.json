@@ -21,5 +21,6 @@
   "tester_not_found": "Tester nicht gefunden.",
   "cannot_update_active_sessions": "Eine aktive Kampagne mit laufenden Sitzungen kann nicht aktualisiert werden.",
   "cannot_cancel_active_sessions": "Diese Kampagne kann nicht storniert werden, da {count} Testsitzung(en) aktiv sind.",
-  "cancelled_success": "Kampagne erfolgreich storniert."
+  "cancelled_success": "Kampagne erfolgreich storniert.",
+  "distribution_exceeds_slots": "Die Gesamtanzahl der Verteilungseinheiten darf die Gesamtanzahl der Kampagnenplätze nicht überschreiten."
 }

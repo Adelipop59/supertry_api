@@ -21,5 +21,6 @@
   "tester_not_found": "Tester no encontrado.",
   "cannot_update_active_sessions": "No se puede modificar una campaña activa con sesiones en curso.",
   "cannot_cancel_active_sessions": "No se puede cancelar esta campaña porque hay {count} sesión(es) de prueba en curso.",
-  "cancelled_success": "Campaña cancelada correctamente."
+  "cancelled_success": "Campaña cancelada correctamente.",
+  "distribution_exceeds_slots": "El número total de unidades de distribución no puede superar el número de plazas de la campaña."
 }

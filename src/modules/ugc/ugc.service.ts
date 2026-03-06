@@ -74,7 +74,13 @@ export class UgcService {
     if (session.campaign.sellerId !== userId) {
       throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
-    if (session.status !== SessionStatus.COMPLETED) {
+    const ugcIneligibleStatuses: SessionStatus[] = [
+      SessionStatus.PENDING,
+      SessionStatus.REJECTED,
+      SessionStatus.CANCELLED,
+      SessionStatus.DISPUTED,
+    ];
+    if (ugcIneligibleStatuses.includes(session.status)) {
       throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 

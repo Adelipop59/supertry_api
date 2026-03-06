@@ -114,6 +114,7 @@ export class CampaignsService {
       throw new I18nHttpException('campaign.distribution_date_required', 'CAMPAIGN_DISTRIBUTION_REQUIRED', HttpStatus.BAD_REQUEST);
     }
 
+    let totalDistributionUnits = 0;
     for (const dist of createDto.distributions) {
       if (dist.type === 'RECURRING' && dist.dayOfWeek === undefined) {
         throw new I18nHttpException('campaign.day_of_week_required', 'CAMPAIGN_DAY_REQUIRED', HttpStatus.BAD_REQUEST);
@@ -121,6 +122,11 @@ export class CampaignsService {
       if (dist.type === 'SPECIFIC_DATE' && !dist.specificDate) {
         throw new I18nHttpException('campaign.specific_date_required', 'CAMPAIGN_DATE_REQUIRED', HttpStatus.BAD_REQUEST);
       }
+      totalDistributionUnits += dist.maxUnits;
+    }
+
+    if (totalDistributionUnits > createDto.totalSlots) {
+      throw new I18nHttpException('campaign.distribution_exceeds_slots', 'CAMPAIGN_DISTRIBUTION_EXCEEDS_SLOTS', HttpStatus.BAD_REQUEST);
     }
 
     // Auto-calculate price range from business rules

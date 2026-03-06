@@ -21,5 +21,6 @@
   "tester_not_found": "Ce testeur est introuvable.",
   "cannot_update_active_sessions": "Impossible de modifier une campagne active avec des sessions en cours.",
   "cannot_cancel_active_sessions": "Impossible d'annuler cette campagne car {count} session(s) de test sont en cours. Veuillez attendre leur fin ou les annuler.",
-  "cancelled_success": "Campagne annulée avec succès."
+  "cancelled_success": "Campagne annulée avec succès.",
+  "distribution_exceeds_slots": "Le nombre total d'unités de distribution ne peut pas dépasser le nombre de testeurs de la campagne."
 }

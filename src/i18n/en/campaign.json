@@ -21,5 +21,6 @@
   "tester_not_found": "Tester not found.",
   "cannot_update_active_sessions": "Cannot update an active campaign with ongoing sessions.",
   "cannot_cancel_active_sessions": "Cannot cancel campaign with {count} active test session(s). Wait for sessions to complete or be cancelled.",
-  "cancelled_success": "Campaign cancelled successfully."
+  "cancelled_success": "Campaign cancelled successfully.",
+  "distribution_exceeds_slots": "Total distribution units cannot exceed the campaign's total slots."
 }
