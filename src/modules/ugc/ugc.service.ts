@@ -227,7 +227,7 @@ export class UgcService {
       const result = await this.mediaService.upload(file, MediaFolder.UGC, mediaType, {
         subfolder: ugcId,
       });
-      contentUrl = result.url;
+      contentUrl = result.key;
     } else {
       if (!dto.contentUrl) throw new I18nHttpException('ugc.content_url_required', 'UGC_CONTENT_URL_REQUIRED', HttpStatus.BAD_REQUEST);
       contentUrl = dto.contentUrl;
@@ -703,7 +703,8 @@ export class UgcService {
       this.prisma.uGC.count({ where }),
     ]);
 
-    return createPaginatedResponse(ugcs, total, page, limit);
+    const resolved = await this.resolveUgcListContentUrls(ugcs);
+    return createPaginatedResponse(resolved, total, page, limit);
   }
 
   async getMySubmissions(userId: string, filterDto: UgcFilterDto): Promise<PaginatedResponse<any>> {
@@ -726,7 +727,8 @@ export class UgcService {
       this.prisma.uGC.count({ where }),
     ]);
 
-    return createPaginatedResponse(ugcs, total, page, limit);
+    const resolved = await this.resolveUgcListContentUrls(ugcs);
+    return createPaginatedResponse(resolved, total, page, limit);
   }
 
   async getUgcDetail(ugcId: string, userId: string) {
@@ -744,15 +746,16 @@ export class UgcService {
       throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
-    return ugc;
+    return this.resolveUgcContentUrls(ugc);
   }
 
   async getUgcDisputes(): Promise<any[]> {
-    return this.prisma.uGC.findMany({
+    const ugcs = await this.prisma.uGC.findMany({
       where: { status: UGCStatus.DISPUTED },
       include: UGC_INCLUDE,
       orderBy: { disputedAt: 'desc' },
     });
+    return this.resolveUgcListContentUrls(ugcs);
   }
 
   async getSessionUgcs(sessionId: string, userId: string) {
@@ -768,11 +771,47 @@ export class UgcService {
       throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
     }
 
-    return this.prisma.uGC.findMany({
+    const ugcs = await this.prisma.uGC.findMany({
       where: { sessionId },
       include: UGC_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
+    return this.resolveUgcListContentUrls(ugcs);
+  }
+
+  // ============================================================================
+  // SIGNED URL HELPERS
+  // ============================================================================
+
+  /**
+   * Résout le contentUrl d'un UGC : si c'est une key S3 (pas une URL), génère une signed URL.
+   * Les URLs externes (TEXT_REVIEW, EXTERNAL_REVIEW) et les anciennes URLs publiques sont retournées telles quelles.
+   */
+  private async resolveContentUrl(contentUrl: string | null): Promise<string | null> {
+    if (!contentUrl) return null;
+    // Si c'est déjà une URL (http/https), retourner tel quel
+    if (contentUrl.startsWith('http://') || contentUrl.startsWith('https://')) {
+      // Pour les anciennes URLs publiques Supabase qui ne fonctionnent pas,
+      // on extrait la key et on génère une signed URL
+      const key = this.mediaService.extractKeyFromUrl(contentUrl);
+      if (key) {
+        return this.mediaService.getSignedUrl(key, 3600);
+      }
+      return contentUrl;
+    }
+    // C'est une key S3 → générer une signed URL (1h)
+    return this.mediaService.getSignedUrl(contentUrl, 3600);
+  }
+
+  private async resolveUgcContentUrls<T extends { contentUrl?: string | null }>(ugc: T): Promise<T> {
+    if (ugc.contentUrl) {
+      return { ...ugc, contentUrl: await this.resolveContentUrl(ugc.contentUrl) };
+    }
+    return ugc;
+  }
+
+  private async resolveUgcListContentUrls<T extends { contentUrl?: string | null }>(ugcs: T[]): Promise<T[]> {
+    return Promise.all(ugcs.map((ugc) => this.resolveUgcContentUrls(ugc)));
   }
 
   // ============================================================================

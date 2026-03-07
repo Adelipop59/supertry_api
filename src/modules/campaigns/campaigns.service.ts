@@ -19,7 +19,7 @@ import {
   PaginatedResponse,
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
-import { CampaignMarketplaceMode, CampaignStatus, AuditCategory, NotificationType, TesterTier, UserRole } from '@prisma/client';
+import { CampaignMarketplaceMode, CampaignStatus, AuditCategory, NotificationType, SessionStatus, TesterTier, UserRole } from '@prisma/client';
 import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast, TIER_ORDER } from '../gamification/gamification.constants';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
@@ -372,6 +372,7 @@ export class CampaignsService {
           where: {
             testerId: user.id,
             campaignId: { in: campaignIds },
+            status: { notIn: [SessionStatus.PENDING, SessionStatus.REJECTED, SessionStatus.CANCELLED] },
           },
           select: { campaignId: true },
         });
@@ -471,14 +472,15 @@ export class CampaignsService {
     // Déterminer si on montre les images claires ou floues
     let showClear = true;
     if (user?.role === UserRole.USER) {
-      const hasSession = await this.prisma.testSession.findFirst({
+      const hasAcceptedSession = await this.prisma.testSession.findFirst({
         where: {
           testerId: user.id,
           campaignId: id,
+          status: { notIn: [SessionStatus.PENDING, SessionStatus.REJECTED, SessionStatus.CANCELLED] },
         },
         select: { id: true },
       });
-      showClear = !!hasSession;
+      showClear = !!hasAcceptedSession;
     }
 
     const offersWithImages = await this.resolveOffersWithImages(
