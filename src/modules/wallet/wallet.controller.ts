@@ -136,12 +136,15 @@ export class WalletController {
         totalEarned: walletWithTransactions.totalEarned.toNumber(),
         totalWithdrawn: walletWithTransactions.totalWithdrawn.toNumber(),
       },
-      transactions: walletWithTransactions.transactions.map((tx) => ({
+      transactions: walletWithTransactions.transactions.map((tx: any) => ({
         id: tx.id,
         type: tx.type,
         amount: tx.amount.toNumber(),
         reason: tx.reason,
         status: tx.status,
+        campaignId: tx.campaignId,
+        campaignTitle: tx.campaign?.title || null,
+        sessionId: tx.sessionId,
         createdAt: tx.createdAt,
         metadata: tx.metadata,
       })),

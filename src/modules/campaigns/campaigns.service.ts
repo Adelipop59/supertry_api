@@ -90,6 +90,60 @@ export class CampaignsService {
     private mediaService: MediaService,
   ) {}
 
+  /**
+   * Supprime les champs sensibles d'une campagne avant de l'envoyer au frontend.
+   * - isOwner = true (PRO qui possède la campagne, ou ADMIN) → garde escrowAmount, enlève Stripe IDs
+   * - isOwner = false (testeur) → enlève escrowAmount, Stripe IDs, et masque expectedPrice si !isPriceRevealed
+   */
+  private sanitizeCampaign(campaign: any, isOwner: boolean): any {
+    const {
+      stripePaymentIntentId,
+      stripeInvoiceId,
+      stripeInvoiceUrl,
+      paymentAuthorizedAt,
+      paymentCapturedAt,
+      activationGracePeriodEndsAt,
+      cancelledBy,
+      ...clean
+    } = campaign;
+
+    // Pour les testeurs, masquer aussi escrowAmount
+    if (!isOwner) {
+      delete clean.escrowAmount;
+    }
+
+    // Sanitiser les offres
+    if (clean.offers) {
+      clean.offers = clean.offers.map((offer: any) =>
+        this.sanitizeOffer(offer, isOwner),
+      );
+    }
+
+    return clean;
+  }
+
+  /**
+   * Supprime les champs sensibles d'une offre.
+   * - Si le PRO n'a pas révélé le prix (isPriceRevealed=false) et que ce n'est pas le owner,
+   *   on masque expectedPrice, priceRangeMin, priceRangeMax, maxReimbursedPrice, maxReimbursedShipping
+   */
+  private sanitizeOffer(offer: any, isOwner: boolean): any {
+    if (isOwner || offer.isPriceRevealed) {
+      return offer;
+    }
+
+    const {
+      expectedPrice,
+      priceRangeMin,
+      priceRangeMax,
+      maxReimbursedPrice,
+      maxReimbursedShipping,
+      ...cleanOffer
+    } = offer;
+
+    return cleanOffer;
+  }
+
   async create(
     sellerId: string,
     createDto: CreateCampaignDto,
@@ -212,7 +266,7 @@ export class CampaignsService {
       return createdCampaign;
     });
 
-    return campaign as any;
+    return this.sanitizeCampaign(campaign, true);
   }
 
   async findAll(
@@ -332,17 +386,18 @@ export class CampaignsService {
 
     const campaignsWithImages = await Promise.all(
       campaigns.map(async (c: any) => {
+        const isOwner = alwaysClear || (user?.role === UserRole.PRO && c.sellerId === user.id);
         const showClear =
           alwaysClear || participatingCampaignIds.has(c.id);
         const offersWithImages = await this.resolveOffersWithImages(
           c.offers || [],
           showClear,
         );
-        return {
+        return this.sanitizeCampaign({
           ...c,
           offers: offersWithImages,
           sessionsCount: c._count.testSessions,
-        };
+        }, isOwner);
       }),
     );
 
@@ -389,11 +444,11 @@ export class CampaignsService {
           c.offers || [],
           true,
         );
-        return {
+        return this.sanitizeCampaign({
           ...c,
           offers: offersWithImages,
           sessionsCount: c._count.testSessions,
-        };
+        }, true);
       }),
     );
 
@@ -431,11 +486,21 @@ export class CampaignsService {
       showClear,
     );
 
-    return {
+    const isOwner = !user || user.role === UserRole.ADMIN || (campaign as any).sellerId === user.id;
+
+    const result = this.sanitizeCampaign({
       ...campaign,
       offers: offersWithImages,
       sessionsCount: (campaign as any)._count.testSessions,
-    } as any;
+    }, isOwner);
+
+    if (isOwner && campaign.escrowAmount && Number(campaign.escrowAmount) > 0) {
+      try {
+        result.pricingBreakdown = await this.paymentsService.calculateCampaignEscrow(id);
+      } catch {}
+    }
+
+    return result;
   }
 
   async checkEligibility(
@@ -730,7 +795,7 @@ export class CampaignsService {
       include: CAMPAIGN_FULL_INCLUDE,
     });
 
-    return updatedCampaign as any;
+    return this.sanitizeCampaign(updatedCampaign, true);
   }
 
   async remove(id: string, sellerId: string): Promise<void> {
@@ -1043,6 +1108,6 @@ export class CampaignsService {
       include: CAMPAIGN_FULL_INCLUDE,
     });
 
-    return updatedCampaign as any;
+    return this.sanitizeCampaign(updatedCampaign, true);
   }
 }

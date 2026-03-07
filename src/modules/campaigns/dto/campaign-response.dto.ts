@@ -91,6 +91,21 @@ export class CampaignResponseDto {
   @ApiPropertyOptional({ description: 'Nombre de sessions complétées', example: 3 })
   completedSessionsCount?: number;
 
+  @ApiPropertyOptional({ description: 'Détail du pricing (visible uniquement par le PRO owner)' })
+  pricingBreakdown?: {
+    displayLines: { label: string; amount: string }[];
+    subtotalPerTester: { label: string; amount: string };
+    total: { label: string; detail: string; amount: string };
+    productCost: number;
+    shippingCost: number;
+    testerBonus: number;
+    proBonus: number;
+    supertryCommission: number;
+    stripeCoverage: number;
+    perTester: number;
+    totalAmount: number;
+  };
+
   @ApiProperty({ description: 'Date de création', example: '2026-02-15T10:30:00.000Z' })
   createdAt: Date;
 

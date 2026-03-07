@@ -61,19 +61,33 @@ export class WalletService {
   ): Promise<Wallet & { transactions: Transaction[] }> {
     const wallet = await this.prisma.wallet.findUnique({
       where: { userId: userId },
-      include: {
-        transactions: {
-          orderBy: { createdAt: 'desc' },
-          take: limit,
-        },
-      },
     });
 
     if (!wallet) {
       throw new I18nHttpException('wallet.not_found', 'WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    return wallet;
+    // Fetch transactions linked to this wallet OR platform transactions
+    // linked to the user's campaigns (CAMPAIGN_PAYMENT, CAMPAIGN_REFUND, etc.)
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        OR: [
+          { walletId: wallet.id },
+          {
+            walletId: null,
+            campaign: { sellerId: userId },
+          },
+        ],
+      },
+      include: {
+        campaign: { select: { id: true, title: true } },
+        session: { select: { id: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return { ...wallet, transactions };
   }
 
   // ============================================================================
