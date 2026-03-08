@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsDateString, IsOptional, IsString, Matches } from 'class-validator';
+import { IsArray, IsDateString, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'Jean' })
@@ -33,4 +33,10 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   deviceToken?: string;
+
+  @ApiPropertyOptional({ description: 'IDs des catégories préférées', example: ['550e8400-e29b-41d4-a716-446655440000'] })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  preferredCategories?: string[];
 }

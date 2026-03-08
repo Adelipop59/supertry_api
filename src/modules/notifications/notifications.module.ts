@@ -2,6 +2,7 @@ import { Module, Global } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { NotificationsService } from './notifications.service';
+import { NotificationsController } from './notifications.controller';
 import { NodemailerProvider } from './providers/email/nodemailer.provider';
 import { TwilioProvider } from './providers/sms/twilio.provider';
 import { EmailProcessor } from './processors/email.processor';
@@ -40,6 +41,7 @@ import notificationConfig from './config/notification.config';
       },
     ),
   ],
+  controllers: [NotificationsController],
   providers: [
     NotificationsService,
     NodemailerProvider,

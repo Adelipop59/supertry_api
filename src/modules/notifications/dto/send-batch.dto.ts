@@ -1,6 +1,6 @@
 import { IsArray, IsEnum, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import { NotificationChannel } from '../enums';
+import { NotificationChannel } from '@prisma/client';
 
 class BatchNotificationItem {
   @IsEnum(NotificationChannel)

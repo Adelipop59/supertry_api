@@ -7,8 +7,8 @@ import { NodemailerProvider } from './providers/email/nodemailer.provider';
 import { TwilioProvider } from './providers/sms/twilio.provider';
 import { SendEmailDto, SendSmsDto } from './dto';
 import { NotificationResult } from './interfaces/notification-result.interface';
-import { NotificationStatus, NotificationChannel } from './enums';
-import { NotificationType } from '@prisma/client';
+import { NotificationStatus } from './enums';
+import { NotificationType, NotificationChannel, SessionStatus, UGCStatus, UGCType, CampaignStatus } from '@prisma/client';
 import { NOTIFICATION_QUEUES } from './constants/notification.constants';
 
 @Injectable()
@@ -52,7 +52,8 @@ export class NotificationsService {
     this.logger.log(`Sending email to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationChannel.EMAIL,
+      type: dto.metadata?.type || NotificationType.SYSTEM_ALERT,
+      channel: NotificationChannel.EMAIL,
       recipient: dto.to,
       template: dto.template,
       subject: dto.subject,
@@ -81,6 +82,7 @@ export class NotificationsService {
 
     const notification = await this.saveNotification({
       type: dto.metadata?.type || NotificationType.SYSTEM_ALERT,
+      channel: NotificationChannel.EMAIL,
       recipient: dto.to,
       template: dto.template,
       subject: dto.subject,
@@ -107,7 +109,8 @@ export class NotificationsService {
     this.logger.log(`Sending SMS to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationChannel.SMS,
+      type: dto.metadata?.type || NotificationType.SYSTEM_ALERT,
+      channel: NotificationChannel.SMS,
       recipient: dto.to,
       template: dto.template,
       variables: dto.variables,
@@ -134,7 +137,8 @@ export class NotificationsService {
     this.logger.log(`Queueing SMS to ${dto.to}`);
 
     const notification = await this.saveNotification({
-      type: NotificationChannel.SMS,
+      type: dto.metadata?.type || NotificationType.SYSTEM_ALERT,
+      channel: NotificationChannel.SMS,
       recipient: dto.to,
       template: dto.template,
       variables: dto.variables,
@@ -205,6 +209,65 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * Get pending action counts for PRO sidebar badges.
+   * Uses groupBy/count queries — no data is fetched.
+   */
+  async getProActionCounts(sellerId: string) {
+    const proSessionStatuses: SessionStatus[] = [
+      SessionStatus.PENDING,
+      SessionStatus.PURCHASE_SUBMITTED,
+      SessionStatus.SUBMITTED,
+    ];
+
+    const [sessionGroups, ugcGroups] = await Promise.all([
+      this.prisma.testSession.groupBy({
+        by: ['status'],
+        where: {
+          status: { in: proSessionStatuses },
+          campaign: { sellerId, status: CampaignStatus.ACTIVE },
+        },
+        _count: true,
+      }),
+      this.prisma.uGC.groupBy({
+        by: ['type'],
+        where: {
+          status: UGCStatus.SUBMITTED,
+          session: {
+            campaign: { sellerId, status: CampaignStatus.ACTIVE },
+          },
+        },
+        _count: true,
+      }),
+    ]);
+
+    const sessions: Record<string, number> = {
+      PENDING: 0,
+      PURCHASE_SUBMITTED: 0,
+      SUBMITTED: 0,
+    };
+    for (const g of sessionGroups) {
+      sessions[g.status] = g._count;
+    }
+
+    const ugcs: Record<string, number> = { SUBMITTED: 0 };
+    const pictures: Record<string, number> = { SUBMITTED: 0 };
+    for (const g of ugcGroups) {
+      if (g.type === UGCType.VIDEO) {
+        ugcs.SUBMITTED = g._count;
+      } else if (g.type === UGCType.PHOTO) {
+        pictures.SUBMITTED = g._count;
+      }
+    }
+
+    const total =
+      Object.values(sessions).reduce((s, v) => s + v, 0) +
+      ugcs.SUBMITTED +
+      pictures.SUBMITTED;
+
+    return { sessions, ugcs, pictures, total };
+  }
+
   private async saveNotification(data: any) {
     // Try to get userId from metadata or data
     let userId = data.metadata?.userId || data.userId;
@@ -242,7 +305,7 @@ export class NotificationsService {
       data: {
         userId,
         type: data.type,
-        channel: data.channel || (data.type === NotificationChannel.EMAIL ? 'EMAIL' : 'SMS'),
+        channel: data.channel || NotificationChannel.EMAIL,
         title,
         message,
         data: data.variables || data.metadata || {},

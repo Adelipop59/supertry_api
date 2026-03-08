@@ -819,8 +819,21 @@ export class UgcService {
   // ============================================================================
 
   private async processUgcPayment(ugc: any, pricing: { price: number; commission: number }) {
-    // 1. Capturer le PaymentIntent
-    await this.stripeService.capturePaymentIntent(ugc.stripePaymentIntentId);
+    // 1. Vérifier le statut du PI avant capture
+    const pi = await this.stripeService.getPaymentIntent(ugc.stripePaymentIntentId);
+
+    if (pi.status === 'succeeded') {
+      this.logger.log(`PI ${ugc.stripePaymentIntentId} already captured (succeeded), skipping capture`);
+    } else if (pi.status === 'requires_capture') {
+      await this.stripeService.capturePaymentIntent(ugc.stripePaymentIntentId);
+    } else {
+      this.logger.error(`PI ${ugc.stripePaymentIntentId} in unexpected status: ${pi.status}`);
+      throw new I18nHttpException(
+        'stripe.capture_payment_failed',
+        'STRIPE_CAPTURE_PAYMENT_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
 
     // 2. Vérifier que le testeur a un compte Stripe Connect
     const testerStripeAccount = ugc.submitter?.stripeConnectAccountId

@@ -6,7 +6,8 @@ import * as path from 'path';
 import { INotificationProvider } from '../../interfaces/notification-provider.interface';
 import { NotificationOptions } from '../../interfaces/notification-options.interface';
 import { NotificationResult } from '../../interfaces/notification-result.interface';
-import { NotificationChannel, NotificationTemplate } from '../../enums';
+import { NotificationTemplate } from '../../enums';
+import { NotificationChannel } from '@prisma/client';
 import { NOTIFICATION_PROVIDERS } from '../../constants/notification.constants';
 
 interface SmsTemplate {

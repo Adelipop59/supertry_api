@@ -107,14 +107,28 @@ export class UsersService {
       avatar?: string;
       deviceToken?: string;
       dateOfBirth?: string;
+      preferredCategories?: string[];
     },
   ): Promise<Omit<Profile, 'passwordHash'>> {
-    const { dateOfBirth, ...rest } = data;
+    const { dateOfBirth, preferredCategories, ...rest } = data;
+
+    // Valider que les catégories existent en base
+    if (preferredCategories?.length) {
+      const existingCategories = await this.prismaService.category.findMany({
+        where: { id: { in: preferredCategories } },
+        select: { id: true },
+      });
+      if (existingCategories.length !== preferredCategories.length) {
+        throw new I18nHttpException('user.invalid_categories', 'INVALID_CATEGORIES', HttpStatus.BAD_REQUEST);
+      }
+    }
+
     const profile = await this.prismaService.profile.update({
       where: { id: userId },
       data: {
         ...rest,
         ...(dateOfBirth && { birthDate: new Date(dateOfBirth) }),
+        ...(preferredCategories !== undefined && { preferredCategories }),
       },
     });
 

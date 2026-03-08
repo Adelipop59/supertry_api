@@ -1,4 +1,4 @@
-import { NotificationChannel } from '../enums';
+import { NotificationChannel } from '@prisma/client';
 
 export interface NotificationResult {
   success: boolean;
