@@ -4,6 +4,7 @@ import {
   IsInt,
   IsBoolean,
   IsArray,
+  ArrayMinSize,
   ValidateNested,
   Min,
   MaxLength,
@@ -39,6 +40,7 @@ export class CreateProcedureDto {
   @ApiProperty({ description: 'Étapes de la procédure', type: () => [CreateStepDto] })
   @IsNotEmpty()
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => CreateStepDto)
   steps: CreateStepDto[];

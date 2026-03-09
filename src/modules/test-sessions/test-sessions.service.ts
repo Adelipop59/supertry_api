@@ -338,10 +338,22 @@ export class TestSessionsService {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
+    // Count total steps across all procedures for this campaign
+    const totalSteps = await this.prisma.step.count({
+      where: {
+        procedure: { campaignId: session.campaignId },
+      },
+    });
+
+    // If no steps, skip directly to PROCEDURES_COMPLETED
+    const acceptStatus = totalSteps === 0
+      ? SessionStatus.PROCEDURES_COMPLETED
+      : SessionStatus.ACCEPTED;
+
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
       data: {
-        status: SessionStatus.ACCEPTED,
+        status: acceptStatus,
         acceptedAt: new Date(),
       },
       include: SESSION_INCLUDE,
