@@ -1,0 +1,9 @@
+{
+  "not_found": "未找到您账户的钱包。",
+  "insufficient_balance": "余额不足，无法完成此操作。",
+  "withdrawal_not_found": "未找到提现请求。",
+  "cannot_cancel": "此提现请求已无法取消。",
+  "withdrawal_created": "提现请求创建成功。",
+  "withdrawal_cancelled": "提现请求已取消。",
+  "sync_success": "同步成功。"
+}

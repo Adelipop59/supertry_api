@@ -1,0 +1,13 @@
+{
+  "not_found": "未找到该产品或已被删除。",
+  "access_denied": "您无权访问此产品。",
+  "deleted_soft": "产品已停用。关联活动的历史记录已保留。",
+  "deleted_hard": "产品已永久删除。",
+  "used_in_campaign": "该产品正在进行中的活动中使用。请先完成或取消活动再删除。",
+  "invalid_files": "上传的文件无效。请检查格式和大小。",
+  "created_success": "产品创建成功。",
+  "updated_success": "产品更新成功。",
+  "invalid_data": "产品数据无效。",
+  "own_products_only": "您只能管理自己的产品。",
+  "campaign_access_only": "您只能查看您参与过的活动的产品。"
+}

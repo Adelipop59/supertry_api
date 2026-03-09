@@ -1,0 +1,11 @@
+{
+  "phone_format": "电话号码必须为国际格式（例如：+33612345678）。",
+  "url_format": "提供的网址无效。",
+  "required": "此字段为必填项。",
+  "invalid_email": "邮箱地址无效。",
+  "invalid_string": "此字段必须为文本。",
+  "invalid_number": "此字段必须为数字。",
+  "invalid_date": "提供的日期无效。",
+  "min_length": "此字段至少需要 {min} 个字符。",
+  "max_length": "此字段不能超过 {max} 个字符。"
+}

@@ -1,0 +1,7 @@
+{
+  "not_found": "未找到该争议。",
+  "session_not_found": "未找到与此争议关联的会话。",
+  "created_success": "争议已创建。我们的团队将进行审核。",
+  "resolved_success": "争议已解决。",
+  "invalid_status": "当前争议状态下无法执行此操作。"
+}

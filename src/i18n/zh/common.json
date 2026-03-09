@@ -1,0 +1,13 @@
+{
+  "forbidden": "您没有执行此操作的权限。",
+  "complete_profile": "请完善您的个人资料以使用此功能。",
+  "internal_error": "发生意外错误。请重试。",
+  "not_found": "未找到请求的内容。",
+  "duplicate": "已存在具有相同 {field} 的内容。",
+  "invalid_reference": "引用无效。请检查数据。",
+  "database_error": "发生技术错误。请重试。",
+  "file_deleted": "文件删除成功。",
+  "not_authenticated": "请先登录后再进行此操作。",
+  "category_not_found": "未找到该分类。",
+  "business_rules_not_found": "未找到业务规则。"
+}

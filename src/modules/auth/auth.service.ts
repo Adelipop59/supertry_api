@@ -137,13 +137,13 @@ export class AuthService {
 
     // Generate OTP and send verification email
     const otpCode = this.generateOTPCode();
-    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    await this.prismaService.profile.update({
-      where: { id: profile.id },
+    await this.prismaService.emailVerificationOtp.create({
       data: {
-        emailVerificationCode: otpCode,
-        emailVerificationExpiresAt: otpExpiresAt,
+        userId: profile.id,
+        code: otpCode,
+        expiresAt: otpExpiresAt,
       },
     });
 
@@ -155,7 +155,7 @@ export class AuthService {
         variables: {
           username: profileData.firstName || email.split('@')[0],
           verificationCode: otpCode,
-          expiresIn: '15 minutes',
+          expiresIn: '10 minutes',
         },
       });
       this.logger.log(`Verification email sent to ${email}`);
@@ -698,7 +698,7 @@ export class AuthService {
   /**
    * Verify email with OTP code
    */
-  async verifyEmail(userId: string, code: string): Promise<MessageResponseDto> {
+  async verifyEmail(userId: string, code: string): Promise<{ verified: boolean }> {
     const profile = await this.prismaService.profile.findUnique({
       where: { id: userId },
     });
@@ -719,7 +719,16 @@ export class AuthService {
       );
     }
 
-    if (!profile.emailVerificationCode || !profile.emailVerificationExpiresAt) {
+    // Find the latest unused, non-expired OTP for this user
+    const otp = await this.prismaService.emailVerificationOtp.findFirst({
+      where: {
+        userId,
+        used: false,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otp) {
       throw new I18nHttpException(
         'auth.no_verification_pending',
         'AUTH_NO_VERIFICATION_PENDING',
@@ -727,7 +736,8 @@ export class AuthService {
       );
     }
 
-    if (new Date() > profile.emailVerificationExpiresAt) {
+    // Check expiry
+    if (new Date() > otp.expiresAt) {
       throw new I18nHttpException(
         'auth.verification_code_expired',
         'AUTH_VERIFICATION_CODE_EXPIRED',
@@ -735,7 +745,36 @@ export class AuthService {
       );
     }
 
-    if (profile.emailVerificationCode !== code) {
+    // Check max attempts
+    if (otp.attempts >= 5) {
+      throw new I18nHttpException(
+        'auth.too_many_attempts',
+        'AUTH_TOO_MANY_ATTEMPTS',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // Check code
+    if (otp.code !== code) {
+      // Increment attempts
+      const updated = await this.prismaService.emailVerificationOtp.update({
+        where: { id: otp.id },
+        data: { attempts: { increment: 1 } },
+      });
+
+      if (updated.attempts >= 5) {
+        // Invalidate the code
+        await this.prismaService.emailVerificationOtp.update({
+          where: { id: otp.id },
+          data: { used: true },
+        });
+        throw new I18nHttpException(
+          'auth.too_many_attempts',
+          'AUTH_TOO_MANY_ATTEMPTS',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
       throw new I18nHttpException(
         'auth.invalid_verification_code',
         'AUTH_INVALID_VERIFICATION_CODE',
@@ -743,25 +782,30 @@ export class AuthService {
       );
     }
 
-    await this.prismaService.profile.update({
-      where: { id: userId },
-      data: {
-        emailVerifiedAt: new Date(),
-        isVerified: true,
-        emailVerificationCode: null,
-        emailVerificationExpiresAt: null,
-      },
-    });
+    // Code is correct - mark OTP as used and verify email
+    await this.prismaService.$transaction([
+      this.prismaService.emailVerificationOtp.update({
+        where: { id: otp.id },
+        data: { used: true },
+      }),
+      this.prismaService.profile.update({
+        where: { id: userId },
+        data: {
+          emailVerifiedAt: new Date(),
+          isVerified: true,
+        },
+      }),
+    ]);
 
     this.logger.log(`Email verified for user ${userId}`);
 
-    return { message: 'Email vérifié avec succès.' };
+    return { verified: true };
   }
 
   /**
    * Resend verification email
    */
-  async resendVerificationEmail(userId: string): Promise<MessageResponseDto> {
+  async resendVerificationEmail(userId: string): Promise<{ sent: boolean }> {
     const profile = await this.prismaService.profile.findUnique({
       where: { id: userId },
     });
@@ -782,10 +826,14 @@ export class AuthService {
       );
     }
 
-    // Rate limit: 60s cooldown
-    if (profile.emailVerificationExpiresAt) {
-      const codeGeneratedAt = new Date(profile.emailVerificationExpiresAt.getTime() - 15 * 60 * 1000);
-      const elapsedSeconds = (Date.now() - codeGeneratedAt.getTime()) / 1000;
+    // Rate limit: 1 resend per minute (check createdAt of last OTP)
+    const lastOtp = await this.prismaService.emailVerificationOtp.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (lastOtp) {
+      const elapsedSeconds = (Date.now() - lastOtp.createdAt.getTime()) / 1000;
       if (elapsedSeconds < 60) {
         throw new I18nHttpException(
           'auth.verification_rate_limit',
@@ -795,30 +843,38 @@ export class AuthService {
       }
     }
 
-    const otpCode = this.generateOTPCode();
-    const otpExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    // Invalidate all previous OTPs for this user
+    await this.prismaService.emailVerificationOtp.updateMany({
+      where: { userId, used: false },
+      data: { used: true },
+    });
 
-    await this.prismaService.profile.update({
-      where: { id: userId },
+    // Generate new OTP
+    const otpCode = this.generateOTPCode();
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    await this.prismaService.emailVerificationOtp.create({
       data: {
-        emailVerificationCode: otpCode,
-        emailVerificationExpiresAt: otpExpiresAt,
+        userId,
+        code: otpCode,
+        expiresAt: otpExpiresAt,
       },
     });
 
+    // Send verification email
     await this.notificationsService.sendEmail({
       to: profile.email,
       template: NotificationTemplate.ACCOUNT_VERIFICATION,
       variables: {
         username: profile.firstName || profile.email.split('@')[0],
         verificationCode: otpCode,
-        expiresIn: '15 minutes',
+        expiresIn: '10 minutes',
       },
     });
 
     this.logger.log(`Verification email resent to ${profile.email}`);
 
-    return { message: 'Email de vérification renvoyé.' };
+    return { sent: true };
   }
 
   /**

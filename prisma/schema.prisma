@@ -283,8 +283,6 @@ model Profile {
   isActive    Boolean @default(true) @map("is_active")
   isVerified  Boolean @default(false) @map("is_verified")
   emailVerifiedAt            DateTime? @map("email_verified_at")
-  emailVerificationCode      String?   @map("email_verification_code")
-  emailVerificationExpiresAt DateTime? @map("email_verification_expires_at")
   isOnboarded Boolean @default(true) @map("is_onboarded") // false pour OAuth jusqu'à finalisation
 
   // OAuth provider tracking
@@ -319,6 +317,7 @@ model Profile {
   testerRatingsGiven      TesterRating[]          @relation("TesterRatingGiver") // Notes données aux testeurs (PRO)
   testerRatingsReceived   TesterRating[]          @relation("TesterRatingReceiver") // Notes reçues (USER)
   xpEvents                XpEvent[] // Historique des événements XP (gamification)
+  emailVerificationOtps   EmailVerificationOtp[] // Codes OTP de vérification email
 
   @@index([email])
   @@index([role])
@@ -1311,6 +1310,22 @@ model OAuthAccount {
   @@unique([provider, providerId])
   @@index([userId])
   @@map("oauth_accounts")
+}
+
+// Table EmailVerificationOtp - Codes OTP de vérification email
+model EmailVerificationOtp {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  code      String
+  attempts  Int      @default(0)
+  used      Boolean  @default(false)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, used])
+  @@map("email_verification_otps")
 }
 
 // Enum pour catégories d'audit

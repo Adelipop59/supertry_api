@@ -271,14 +271,14 @@ export class AuthController {
 
   @Post('verify-email')
   @SkipOnboarding()
-  @ApiOperation({ summary: 'Vérifier email avec code OTP' })
-  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiOperation({ summary: 'Vérifier email avec code OTP à 6 chiffres' })
+  @ApiResponse({ status: 200, description: 'Email vérifié', schema: { properties: { verified: { type: 'boolean' } } } })
   @ApiAuthResponses()
   @ApiValidationErrorResponse()
   async verifyEmail(
     @Req() req: Request,
     @Body() verifyEmailDto: VerifyEmailDto,
-  ): Promise<MessageResponseDto> {
+  ): Promise<{ verified: boolean }> {
     const sessionId = req.cookies?.['auth_session'] || '';
 
     if (!sessionId) {
@@ -304,12 +304,12 @@ export class AuthController {
 
   @Post('resend-verification')
   @SkipOnboarding()
-  @ApiOperation({ summary: 'Renvoyer email de vérification' })
-  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiOperation({ summary: 'Renvoyer code de vérification email OTP' })
+  @ApiResponse({ status: 200, description: 'Code renvoyé', schema: { properties: { sent: { type: 'boolean' } } } })
   @ApiAuthResponses()
   async resendVerification(
     @Req() req: Request,
-  ): Promise<MessageResponseDto> {
+  ): Promise<{ sent: boolean }> {
     const sessionId = req.cookies?.['auth_session'] || '';
 
     if (!sessionId) {

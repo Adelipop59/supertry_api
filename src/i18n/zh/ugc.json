@@ -1,0 +1,13 @@
+{
+  "not_found": "未找到该内容。",
+  "invalid_status": "该内容在当前状态下无法提交。",
+  "file_required": "此内容类型（{type}）需要上传文件。",
+  "content_url_required": "此内容类型需要提供内容链接。",
+  "payment_required": "此付费内容需要支付方式。",
+  "not_owner": "您无权访问此内容。",
+  "submitted_success": "内容提交成功。",
+  "validated_success": "内容验证成功。",
+  "rejected_success": "内容已被拒绝。",
+  "declined_success": "内容请求已拒绝。",
+  "cancelled_success": "内容请求已取消。"
+}
