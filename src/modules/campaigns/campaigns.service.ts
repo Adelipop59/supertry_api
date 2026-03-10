@@ -284,19 +284,36 @@ export class CampaignsService {
     } = filterDto;
     const skip = (page - 1) * limit;
 
-    // Endpoint testeur : sans filtre status, on ne montre que les campagnes ACTIVE
-    const where: any = {
-      status: status || CampaignStatus.ACTIVE,
-    };
+    const where: any = {};
+
+    // Endpoint testeur : sans filtre status, on montre ACTIVE + COMPLETED récentes (< 10 min)
+    if (!status && user?.role === UserRole.USER) {
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      where.OR = [
+        { status: CampaignStatus.ACTIVE },
+        {
+          status: CampaignStatus.COMPLETED,
+          completedAt: { gte: tenMinutesAgo },
+        },
+      ];
+    } else {
+      where.status = status || CampaignStatus.ACTIVE;
+    }
 
     if (categoryId) {
       where.categoryId = categoryId;
     }
 
     if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
+      // Utiliser AND pour ne pas écraser le OR du filtre status/completed
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { title: { contains: search, mode: 'insensitive' } },
+            { description: { contains: search, mode: 'insensitive' } },
+          ],
+        },
       ];
     }
 
@@ -394,10 +411,18 @@ export class CampaignsService {
           c.offers || [],
           showClear,
         );
+
+        // Calculer la prochaine date disponible pour les testeurs
+        let nextAvailableDate: Date | null = null;
+        if (c.status === CampaignStatus.ACTIVE && c.distributions?.length > 0) {
+          nextAvailableDate = await this.calculateNextAvailableDate(c.id, c.distributions);
+        }
+
         return this.sanitizeCampaign({
           ...c,
           offers: offersWithImages,
           sessionsCount: c._count.testSessions,
+          nextAvailableDate,
         }, isOwner);
       }),
     );
@@ -490,10 +515,17 @@ export class CampaignsService {
 
     const isOwner = !user || user.role === UserRole.ADMIN || (campaign as any).sellerId === user.id;
 
+    // Calculer la prochaine date disponible
+    let nextAvailableDate: Date | null = null;
+    if ((campaign as any).status === CampaignStatus.ACTIVE && (campaign as any).distributions?.length > 0) {
+      nextAvailableDate = await this.calculateNextAvailableDate(id, (campaign as any).distributions);
+    }
+
     const result = this.sanitizeCampaign({
       ...campaign,
       offers: offersWithImages,
       sessionsCount: (campaign as any)._count.testSessions,
+      nextAvailableDate,
     }, isOwner);
 
     if (isOwner && campaign.escrowAmount && Number(campaign.escrowAmount) > 0) {
@@ -692,6 +724,58 @@ export class CampaignsService {
         };
       }),
     );
+  }
+
+  /**
+   * Calcule la prochaine date de distribution disponible pour une campagne.
+   * Retourne null si aucune date n'est disponible.
+   */
+  private async calculateNextAvailableDate(
+    campaignId: string,
+    distributions: any[],
+  ): Promise<Date | null> {
+    const now = new Date();
+    let nearestDate: Date | null = null;
+
+    for (const dist of distributions) {
+      if (!dist.isActive) continue;
+
+      let candidateDate: Date;
+
+      if (dist.type === 'RECURRING') {
+        const result = new Date(now);
+        const currentDay = result.getDay();
+        const distance = (dist.dayOfWeek - currentDay + 7) % 7;
+        result.setDate(result.getDate() + (distance === 0 ? 7 : distance));
+        result.setHours(0, 0, 0, 0);
+        candidateDate = result;
+      } else if (dist.type === 'SPECIFIC_DATE') {
+        candidateDate = new Date(dist.specificDate);
+        // Ignorer les dates passées
+        if (candidateDate < now) continue;
+      } else {
+        continue;
+      }
+
+      // Vérifier que le max n'est pas atteint pour cette date
+      const sessionsOnDate = await this.prisma.testSession.count({
+        where: {
+          campaignId,
+          scheduledPurchaseDate: candidateDate,
+          status: {
+            notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED],
+          },
+        },
+      });
+
+      if (sessionsOnDate >= dist.maxUnits) continue;
+
+      if (!nearestDate || candidateDate < nearestDate) {
+        nearestDate = candidateDate;
+      }
+    }
+
+    return nearestDate;
   }
 
   /**

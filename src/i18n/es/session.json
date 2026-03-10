@@ -25,5 +25,7 @@
   "step_completed_success": "Paso completado correctamente.",
   "submission_invalid": "Los datos de envío son inválidos.",
   "tier_insufficient": "Su nivel actual no le permite postularse a esta campaña.",
-  "criteria_not_met": "No cumple con los criterios requeridos para esta campaña."
+  "criteria_not_met": "No cumple con los criterios requeridos para esta campaña.",
+  "not_scheduled_today": "Solo puedes realizar esta prueba el día previsto ({date}).",
+  "purchase_date_invalid": "La fecha de compra programada es el {date}. Por favor espera esa fecha."
 }

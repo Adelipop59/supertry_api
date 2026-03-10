@@ -91,6 +91,12 @@ export class CampaignResponseDto {
   @ApiPropertyOptional({ description: 'Nombre de sessions complétées', example: 3 })
   completedSessionsCount?: number;
 
+  @ApiPropertyOptional({ description: 'Prochaine date disponible pour postuler', example: '2026-03-15T00:00:00.000Z' })
+  nextAvailableDate?: Date | null;
+
+  @ApiPropertyOptional({ description: 'Date de complétion de la campagne', example: '2026-03-10T14:30:00.000Z' })
+  completedAt?: Date | null;
+
   @ApiPropertyOptional({ description: 'Détail du pricing (visible uniquement par le PRO owner)' })
   pricingBreakdown?: {
     displayLines: { label: string; amount: string }[];

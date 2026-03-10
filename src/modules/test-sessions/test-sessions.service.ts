@@ -239,8 +239,30 @@ export class TestSessionsService {
       campaign.distributions,
     );
 
-    // Create test session
+    // Create test session with pessimistic locking to prevent race conditions
     const session = await this.prisma.$transaction(async (tx) => {
+      // Lock the campaign row to prevent concurrent slot allocation
+      const [lockedCampaign] = await tx.$queryRaw<any[]>`
+        SELECT "available_slots" FROM "campaigns"
+        WHERE "id" = ${campaignId}
+        FOR UPDATE
+      `;
+
+      if (!lockedCampaign || lockedCampaign.available_slots <= 0) {
+        throw new I18nHttpException('campaign.no_slots', 'CAMPAIGN_NO_SLOTS', HttpStatus.BAD_REQUEST);
+      }
+
+      // Re-calculate scheduled date inside transaction to prevent double-booking
+      const distributions = await tx.distribution.findMany({
+        where: { campaignId, isActive: true },
+      });
+
+      const txScheduledDate = await this.calculateScheduledPurchaseDateTx(
+        tx,
+        campaignId,
+        distributions,
+      );
+
       // Decrement available slots
       await tx.campaign.update({
         where: { id: campaignId },
@@ -258,7 +280,7 @@ export class TestSessionsService {
             ? SessionStatus.ACCEPTED
             : SessionStatus.PENDING,
           applicationMessage: dto.applicationMessage,
-          scheduledPurchaseDate,
+          scheduledPurchaseDate: txScheduledDate,
           acceptedAt: campaign.autoAcceptApplications ? new Date() : null,
         },
         include: SESSION_BASIC_INCLUDE,
@@ -302,6 +324,57 @@ export class TestSessionsService {
       if (sessionsOnDate >= dist.maxUnits) continue;
 
       // Keep the nearest date
+      if (!nearestDate || candidateDate < nearestDate) {
+        nearestDate = candidateDate;
+      }
+    }
+
+    if (!nearestDate) {
+      throw new I18nHttpException('campaign.no_slots', 'CAMPAIGN_NO_SLOTS', HttpStatus.BAD_REQUEST);
+    }
+
+    return nearestDate;
+  }
+
+  /**
+   * Version transactionnelle de calculateScheduledPurchaseDate.
+   * Utilise le client tx pour compter les sessions, garantissant la cohérence
+   * grâce au lock FOR UPDATE sur la campagne.
+   */
+  private async calculateScheduledPurchaseDateTx(
+    tx: any,
+    campaignId: string,
+    distributions: any[],
+  ): Promise<Date> {
+    const now = new Date();
+    let nearestDate: Date | null = null;
+
+    for (const dist of distributions) {
+      if (!dist.isActive) continue;
+
+      let candidateDate: Date;
+
+      if (dist.type === 'RECURRING') {
+        candidateDate = this.getNextDayOfWeek(now, dist.dayOfWeek);
+      } else if (dist.type === 'SPECIFIC_DATE') {
+        candidateDate = new Date(dist.specificDate);
+      } else {
+        continue;
+      }
+
+      // Count within the transaction to get accurate numbers
+      const sessionsOnDate = await tx.testSession.count({
+        where: {
+          campaignId,
+          scheduledPurchaseDate: candidateDate,
+          status: {
+            notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED],
+          },
+        },
+      });
+
+      if (sessionsOnDate >= dist.maxUnits) continue;
+
       if (!nearestDate || candidateDate < nearestDate) {
         nearestDate = candidateDate;
       }
@@ -549,6 +622,9 @@ export class TestSessionsService {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
+    // Guard: vérifier que c'est le jour prévu par la distribution
+    this.assertScheduledDateIsToday(session);
+
     const offer = campaign?.offers[0];
     if (!offer) {
       throw new I18nHttpException('session.offer_not_found', 'SESSION_OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
@@ -750,6 +826,9 @@ export class TestSessionsService {
     if (!allowedStatuses.includes(session.status)) {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
+
+    // Guard: vérifier que c'est le jour prévu par la distribution
+    this.assertScheduledDateIsToday(session);
 
     // Find or create step progress
     let stepProgress = await this.prisma.sessionStepProgress.findFirst({
@@ -1048,6 +1127,30 @@ export class TestSessionsService {
     }
 
     return this.resolveSessionProductImages(session as any);
+  }
+
+  /**
+   * Vérifie que la date du jour correspond à la scheduledPurchaseDate de la session.
+   * Si ce n'est pas le bon jour, lève une erreur 400.
+   * Bypass possible via BYPASS_BUSINESS_RULES=true.
+   */
+  private assertScheduledDateIsToday(session: any): void {
+    if (!session.scheduledPurchaseDate) return;
+    if (process.env.BYPASS_BUSINESS_RULES === 'true') return;
+
+    const today = new Date().toISOString().split('T')[0];
+    const scheduled = new Date(session.scheduledPurchaseDate);
+    const scheduledDay = scheduled.toISOString().split('T')[0];
+
+    if (today !== scheduledDay) {
+      const formatted = `${scheduled.getDate().toString().padStart(2, '0')}/${(scheduled.getMonth() + 1).toString().padStart(2, '0')}/${scheduled.getFullYear()}`;
+      throw new I18nHttpException(
+        'session.not_scheduled_today',
+        'SESSION_NOT_SCHEDULED_TODAY',
+        HttpStatus.BAD_REQUEST,
+        { date: formatted },
+      );
+    }
   }
 
   /**

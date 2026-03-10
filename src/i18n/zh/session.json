@@ -25,5 +25,7 @@
   "step_completed_success": "步骤完成成功。",
   "submission_invalid": "提交数据无效。",
   "tier_insufficient": "您当前的等级不符合此活动的要求。",
-  "criteria_not_met": "您不符合此活动的要求。"
+  "criteria_not_met": "您不符合此活动的要求。",
+  "not_scheduled_today": "您只能在预定日期 ({date}) 完成此测试。",
+  "purchase_date_invalid": "预定购买日期为 {date}。请等待该日期。"
 }

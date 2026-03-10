@@ -25,5 +25,7 @@
   "step_completed_success": "Step completed successfully.",
   "submission_invalid": "The submission data is invalid.",
   "tier_insufficient": "Your current tier does not allow you to apply to this campaign.",
-  "criteria_not_met": "You do not meet the required criteria for this campaign."
+  "criteria_not_met": "You do not meet the required criteria for this campaign.",
+  "not_scheduled_today": "You can only complete this test on the scheduled date ({date}).",
+  "purchase_date_invalid": "The scheduled purchase date is {date}. Please wait for that date."
 }

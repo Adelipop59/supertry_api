@@ -424,6 +424,9 @@ model Campaign {
   stripeInvoiceId  String? @unique @map("stripe_invoice_id")
   stripeInvoiceUrl String?          @map("stripe_invoice_url")
 
+  // Completion tracking
+  completedAt DateTime? @map("completed_at")
+
   // Cancellation tracking
   activationGracePeriodEndsAt DateTime? @map("activation_grace_period_ends_at")
   cancelledAt                 DateTime? @map("cancelled_at")
