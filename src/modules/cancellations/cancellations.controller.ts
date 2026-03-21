@@ -36,7 +36,7 @@ export class CancellationsController {
   ) {
     return this.cancellationsService.cancelCampaignByPro(
       campaignId,
-      req.user.userId,
+      req.user.id,
       dto,
     );
   }
@@ -55,7 +55,7 @@ export class CancellationsController {
   ) {
     return this.cancellationsService.cancelCampaignByAdmin(
       campaignId,
-      req.user.userId,
+      req.user.id,
       dto,
     );
   }
@@ -72,7 +72,7 @@ export class CancellationsController {
   ) {
     return this.cancellationsService.calculateCancellationImpact(
       campaignId,
-      req.user.userId,
+      req.user.id,
     );
   }
 }
