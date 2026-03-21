@@ -885,13 +885,13 @@ export class PaymentsService {
       throw new I18nHttpException('payment.no_payment_found', 'PAYMENT_NO_PAYMENT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    // Récupérer le PlatformWallet
+    // Récupérer le PlatformWallet (nécessaire pour les updates d'escrow balance)
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
       throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
-    const totalEscrowAmount = Number(platformWallet.escrowBalance);
+    const totalEscrowAmount = Number(campaign.escrowAmount || 0);
     const hasAcceptedTesters = cancellationContext.acceptedTestersCount > 0;
 
     // Calculer les montants via BusinessRules

@@ -326,9 +326,7 @@ export class CancellationsService {
 
     const acceptedTestersCount = campaign.testSessions.length;
 
-    // Récupérer le montant total escrow depuis le platformWallet
-    const platformWallet = await this.prisma.platformWallet.findFirst();
-    const totalEscrowAmount = Number(platformWallet?.escrowBalance || 0);
+    const totalEscrowAmount = Number(campaign.escrowAmount || 0);
 
     const { refundToPro, cancellationFee, compensationPerTester } =
       await this.businessRulesService.calculateProCancellationImpact(
