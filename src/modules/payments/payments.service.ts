@@ -929,6 +929,7 @@ export class PaymentsService {
             transactionType: 'PRO_CANCELLATION_REFUND',
             sellerId: campaign.sellerId,
           },
+          `cancel_${campaignId}`,
         );
       }
 

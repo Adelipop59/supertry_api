@@ -152,6 +152,7 @@ export class CancellationsService {
     cancellationFee: number;
     compensationPerTester: number;
     acceptedTestersCount: number;
+    stripeRefundId: string | null;
   }> {
     const activatedAt = campaign.paymentCapturedAt || campaign.paymentAuthorizedAt || campaign.createdAt;
     const hoursElapsed = (Date.now() - activatedAt.getTime()) / (1000 * 60 * 60);
@@ -169,16 +170,8 @@ export class CancellationsService {
       `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}`,
     );
 
-    const {
-      refundToPro,
-      cancellationFee,
-      compensationPerTester,
-    } = await this.paymentsService.processCampaignCancellationRefund(campaign.id, {
-      hoursElapsed,
-      acceptedTestersCount: acceptedTesters.length,
-      acceptedTesterIds,
-    });
-
+    // Marquer la campagne CANCELLED en DB AVANT d'appeler Stripe
+    // → protège contre double remboursement si Stripe réussit mais DB échoue ensuite
     const updatedCampaign = await this.prisma.campaign.update({
       where: { id: campaign.id },
       data: {
@@ -187,6 +180,17 @@ export class CancellationsService {
         cancelledBy: userId,
         cancellationReason: dto.cancellationReason,
       },
+    });
+
+    const {
+      refundToPro,
+      cancellationFee,
+      compensationPerTester,
+      refund,
+    } = await this.paymentsService.processCampaignCancellationRefund(campaign.id, {
+      hoursElapsed,
+      acceptedTestersCount: acceptedTesters.length,
+      acceptedTesterIds,
     });
 
     await this.prisma.testSession.updateMany({
@@ -229,6 +233,7 @@ export class CancellationsService {
       cancellationFee,
       compensationPerTester,
       acceptedTestersCount: acceptedTesters.length,
+      stripeRefundId: refund?.id ?? null,
     };
   }
 
