@@ -375,12 +375,68 @@ export class ProductsService {
       throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
     }
 
+    // Download external images and upload them to S3
+    const newImageEntries: ProductImage[] = [];
+
+    for (const imageUrl of addImagesDto.images) {
+      try {
+        const response = await fetch(imageUrl);
+        if (!response.ok) continue;
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Compress the clear image
+        const compressed = await this.mediaService.compressImage(buffer, {
+          maxWidth: 1920,
+          quality: 80,
+        });
+        const clearFilename = this.mediaService.generateFilename('image.webp');
+        const clearResult = await this.mediaService.uploadFromBuffer(
+          compressed.buffer,
+          clearFilename,
+          compressed.mimeType,
+          MediaFolder.PRODUCTS,
+          MediaType.IMAGE,
+          { subfolder: id, makePublic: true },
+        );
+
+        // Generate blurred version
+        const blurred = await this.mediaService.generateBlurredImage(buffer, {
+          sigma: 20,
+          maxWidth: 800,
+          quality: 50,
+        });
+        const blurredFilename = this.mediaService.generateFilename('image.webp');
+        const blurredResult = await this.mediaService.uploadFromBuffer(
+          blurred.buffer,
+          blurredFilename,
+          blurred.mimeType,
+          MediaFolder.PRODUCTS,
+          MediaType.IMAGE,
+          { subfolder: id, makePublic: true },
+        );
+
+        newImageEntries.push({
+          clearKey: clearResult.key,
+          blurredKey: blurredResult.key,
+        });
+      } catch {
+        // Skip images that fail to download
+      }
+    }
+
+    // Merge with existing images
+    const currentImages = (
+      await this.prisma.product.findUnique({ where: { id } })
+    )?.images as any[] || [];
+    const normalizedCurrent = currentImages.map(normalizeImageEntry);
+    const updatedImages = [...normalizedCurrent, ...newImageEntries];
+
     const updatedProduct = await this.prisma.product.update({
       where: { id },
       data: {
-        images: {
-          push: addImagesDto.images,
-        },
+        images: updatedImages as any,
       },
       include: PRODUCT_INCLUDE,
     });
