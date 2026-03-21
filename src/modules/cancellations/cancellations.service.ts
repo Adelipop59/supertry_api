@@ -249,6 +249,10 @@ export class CancellationsService {
     totalCompensation: number;
     hoursElapsed: number;
     inGracePeriod: boolean;
+    stripeFee: number;
+    supertryCommission: number;
+    totalPaid: number;
+    gracePeriodEndsAt: string | null;
   }> {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
@@ -291,6 +295,10 @@ export class CancellationsService {
         totalCompensation: 0,
         hoursElapsed: 0,
         inGracePeriod: false,
+        stripeFee: 0,
+        supertryCommission: 0,
+        totalPaid: 0,
+        gracePeriodEndsAt: campaign.activationGracePeriodEndsAt?.toISOString() ?? null,
       };
     }
 
@@ -305,6 +313,10 @@ export class CancellationsService {
         totalCompensation: 0,
         hoursElapsed: 0,
         inGracePeriod: false,
+        stripeFee: 0,
+        supertryCommission: 0,
+        totalPaid: 0,
+        gracePeriodEndsAt: campaign.activationGracePeriodEndsAt?.toISOString() ?? null,
       };
     }
 
@@ -318,6 +330,10 @@ export class CancellationsService {
         totalCompensation: 0,
         hoursElapsed: 0,
         inGracePeriod: true,
+        stripeFee: 0,
+        supertryCommission: 0,
+        totalPaid: 0,
+        gracePeriodEndsAt: campaign.activationGracePeriodEndsAt?.toISOString() ?? null,
       };
     }
 
@@ -340,6 +356,15 @@ export class CancellationsService {
       await this.businessRulesService.getCampaignActivationGracePeriodMinutes();
     const inGracePeriod = hoursElapsed < gracePeriodMinutes / 60;
 
+    // Enrichissement : frais Stripe, commission SuperTry, total payé
+    const { commissionFixedFee, stripeCoverage } =
+      await this.businessRulesService.calculateCommission(
+        totalEscrowAmount - (await this.businessRulesService.findLatest().then(r => Number(r.commissionFixedFee))),
+      );
+    const stripeFee = Math.round(stripeCoverage * 100) / 100;
+    const supertryCommission = Number(commissionFixedFee);
+    const totalPaid = Math.round((totalEscrowAmount + stripeFee) * 100) / 100;
+
     return {
       canCancel: true,
       refundToPro,
@@ -349,6 +374,10 @@ export class CancellationsService {
       totalCompensation,
       hoursElapsed: Math.round(hoursElapsed * 100) / 100,
       inGracePeriod,
+      stripeFee,
+      supertryCommission,
+      totalPaid,
+      gracePeriodEndsAt: campaign.activationGracePeriodEndsAt?.toISOString() ?? null,
     };
   }
 }
