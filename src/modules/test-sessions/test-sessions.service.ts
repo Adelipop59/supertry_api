@@ -236,6 +236,7 @@ export class TestSessionsService {
 
     // Calculate scheduled purchase date
     const scheduledPurchaseDate = await this.calculateScheduledPurchaseDate(
+      campaignId,
       campaign.distributions,
     );
 
@@ -293,6 +294,7 @@ export class TestSessionsService {
   }
 
   private async calculateScheduledPurchaseDate(
+    campaignId: string,
     distributions: any[],
   ): Promise<Date> {
     const now = new Date();
@@ -314,6 +316,7 @@ export class TestSessionsService {
       // Check if max units not reached for this date
       const sessionsOnDate = await this.prisma.testSession.count({
         where: {
+          campaignId,
           scheduledPurchaseDate: candidateDate,
           status: {
             notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED],
