@@ -947,7 +947,6 @@ export class PaymentsService {
           amount: new Decimal(refundToPro),
           reason: `Refund for cancelled campaign: ${campaign.title}`,
           status: TransactionStatus.COMPLETED,
-          stripePaymentIntentId: campaign.stripePaymentIntentId,
           stripeRefundId: refund?.id ?? null,
         },
       });
