@@ -911,16 +911,26 @@ export class PaymentsService {
 
     // 1. Rembourser le PRO (si montant > 0)
     if (refundToPro > 0) {
-      refund = await this.stripeService.createRefund(
-        campaign.stripePaymentIntentId,
-        refundToPro,
-        'requested_by_customer',
-        {
-          campaignId,
-          transactionType: 'PRO_CANCELLATION_REFUND',
-          sellerId: campaign.sellerId,
-        },
-      );
+      if (!campaign.paymentCapturedAt) {
+        // Paiement autorisé mais pas encore capturé (PENDING_ACTIVATION)
+        // → annuler l'autorisation plutôt que créer un remboursement
+        await this.stripeService.cancelPaymentIntent(
+          campaign.stripePaymentIntentId,
+          'requested_by_customer',
+        );
+      } else {
+        // Paiement capturé (ACTIVE) → remboursement Stripe classique
+        refund = await this.stripeService.createRefund(
+          campaign.stripePaymentIntentId,
+          refundToPro,
+          'requested_by_customer',
+          {
+            campaignId,
+            transactionType: 'PRO_CANCELLATION_REFUND',
+            sellerId: campaign.sellerId,
+          },
+        );
+      }
 
       // Trouver le wallet du seller
       const sellerWallet = await this.prisma.wallet.findUnique({
@@ -937,7 +947,7 @@ export class PaymentsService {
           reason: `Refund for cancelled campaign: ${campaign.title}`,
           status: TransactionStatus.COMPLETED,
           stripePaymentIntentId: campaign.stripePaymentIntentId,
-          stripeRefundId: refund.id,
+          stripeRefundId: refund?.id ?? null,
         },
       });
 
