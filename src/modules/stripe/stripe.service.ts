@@ -725,7 +725,10 @@ export class StripeService {
       this.logger.log(`Refund created: ${refund.id} for PaymentIntent ${paymentIntentId}`);
       return refund;
     } catch (error) {
-      this.logger.error(`Failed to create refund: ${error.message}`, error.stack);
+      this.logger.error(
+        `Failed to create refund for PaymentIntent ${paymentIntentId}: ${error.message} | code: ${error.code} | type: ${error.type} | charge: ${error.charge}`,
+        error.stack,
+      );
       throw new I18nHttpException('stripe.refund_failed', 'STRIPE_REFUND_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
