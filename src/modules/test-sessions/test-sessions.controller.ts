@@ -157,6 +157,17 @@ export class TestSessionsController {
   }
 
   // PRO endpoints
+  @Get('action-counts')
+  @Roles(UserRole.PRO)
+  @ApiOperation({ summary: 'Nombre de sessions nécessitant une action du PRO, par campagne et status' })
+  @ApiResponse({ status: 200, description: 'Compteurs par campagne et status' })
+  @ApiAuthResponses()
+  async getActionCounts(
+    @CurrentUser('id') userId: string,
+  ): Promise<Record<string, Record<string, number>>> {
+    return this.testSessionsService.getActionCounts(userId);
+  }
+
   @Get('by-campaign/:campaignId')
   @Roles(UserRole.PRO, UserRole.ADMIN)
   @ApiOperation({ summary: 'Récupérer les sessions d\'une campagne (vendeur)' })

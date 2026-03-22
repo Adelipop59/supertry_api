@@ -1218,4 +1218,36 @@ export class TestSessionsService {
       productImages: signedUrls,
     };
   }
+
+  async getActionCounts(currentUserId: string): Promise<Record<string, Record<string, number>>> {
+    const statuses: SessionStatus[] = [
+      SessionStatus.PENDING,
+      SessionStatus.PURCHASE_SUBMITTED,
+      SessionStatus.SUBMITTED,
+    ];
+
+    const groups = await this.prisma.testSession.groupBy({
+      by: ['campaignId', 'status'],
+      where: {
+        status: { in: statuses },
+        campaign: { sellerId: currentUserId },
+      },
+      _count: true,
+    });
+
+    const result: Record<string, Record<string, number>> = {};
+
+    for (const group of groups) {
+      if (!result[group.campaignId]) {
+        result[group.campaignId] = {
+          PENDING: 0,
+          PURCHASE_SUBMITTED: 0,
+          SUBMITTED: 0,
+        };
+      }
+      result[group.campaignId][group.status] = group._count;
+    }
+
+    return result;
+  }
 }
