@@ -950,8 +950,9 @@ export class UgcService {
 
     // 3. Refund du reste au PRO
     const refundAmount = pricing.price - partialAmount;
+    let proRefund: { id: string } | null = null;
     if (refundAmount > 0) {
-      await this.stripeService.createRefund(
+      proRefund = await this.stripeService.createRefund(
         ugc.stripePaymentIntentId,
         refundAmount,
         'requested_by_customer',
@@ -980,6 +981,22 @@ export class UgcService {
           status: TransactionStatus.COMPLETED,
         },
       });
+
+      // Transaction refund PRO
+      if (proRefund) {
+        await tx.transaction.create({
+          data: {
+            walletId: null,
+            type: TransactionType.REFUND,
+            amount: new Decimal(refundAmount),
+            reason: `UGC ${ugc.type} partial refund to PRO (dispute resolution)`,
+            ugcId: ugc.id,
+            sessionId: ugc.sessionId,
+            stripeRefundId: proRefund.id,
+            status: TransactionStatus.COMPLETED,
+          },
+        });
+      }
 
       // Commission proportionnelle
       const proportionalCommission = (pricing.commission * partialAmount) / pricing.price;

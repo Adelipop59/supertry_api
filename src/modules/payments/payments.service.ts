@@ -1044,6 +1044,17 @@ export class PaymentsService {
 
         compensationTransactions.push(compensationTx);
 
+        // Mettre à jour le wallet du testeur
+        if (testerWallet) {
+          await this.prisma.wallet.update({
+            where: { id: testerWallet.id },
+            data: {
+              balance: { increment: new Decimal(testerCompensation) },
+              totalEarned: { increment: new Decimal(testerCompensation) },
+            },
+          });
+        }
+
         // Mettre à jour escrow balance
         await this.prisma.platformWallet.update({
           where: { id: platformWallet.id },
@@ -1376,6 +1387,17 @@ export class PaymentsService {
         stripeTransferId: transfer.id,
       },
     });
+
+    // Mettre à jour le wallet du testeur
+    if (testerWallet) {
+      await this.prisma.wallet.update({
+        where: { id: testerWallet.id },
+        data: {
+          balance: { increment: new Decimal(compensationAmount) },
+          totalEarned: { increment: new Decimal(compensationAmount) },
+        },
+      });
+    }
 
     // Mettre à jour escrow balance
     await this.prisma.platformWallet.update({

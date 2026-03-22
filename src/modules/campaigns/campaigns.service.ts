@@ -1040,7 +1040,7 @@ export class CampaignsService {
           createdAt: new Date().toISOString(),
         };
 
-        await this.stripeService.createRefund(
+        const refund = await this.stripeService.createRefund(
           campaign.stripePaymentIntentId,
           refundAmount,
           'requested_by_customer',
@@ -1073,6 +1073,7 @@ export class CampaignsService {
             amount: new Decimal(refundAmount),
             reason: `PRO cancellation refund: ${campaign.title}${cancellationFee > 0 ? ` (fee: ${cancellationFee}€)` : ''}`,
             campaignId: id,
+            stripeRefundId: refund.id,
             status: 'COMPLETED' as any,
             metadata: {
               withinGracePeriod: !!withinGracePeriod,
