@@ -861,6 +861,7 @@ export class PaymentsService {
     cancellationContext: {
       hoursElapsed: number;
       totalCompensation: number;
+      totalCommission: number;
       compensationMap: Record<string, number>;
     },
   ): Promise<{
@@ -892,16 +893,17 @@ export class PaymentsService {
 
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
 
-    // Calculer les montants via BusinessRules (fee sur le restant après compensations)
-    const { refundToPro, cancellationFee } =
+    // Calculer les montants via BusinessRules (fee sur le restant après compensations + commission)
+    const { refundToPro, cancellationFee, supertryCommission } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         cancellationContext.hoursElapsed,
         cancellationContext.totalCompensation,
+        cancellationContext.totalCommission,
       );
 
     this.logger.log(
-      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, totalCompensation=${cancellationContext.totalCompensation}€`,
+      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, commission=${supertryCommission}€, totalCompensation=${cancellationContext.totalCompensation}€`,
     );
 
     let refund: Stripe.Refund | null = null;
@@ -960,7 +962,30 @@ export class PaymentsService {
       });
     }
 
-    // 2. Si frais d'annulation, les transférer à SuperTry
+    // 2. Commission SuperTry (retenue par la plateforme sur les bought testers)
+    if (supertryCommission > 0) {
+      await this.prisma.transaction.create({
+        data: {
+          walletId: null, // PLATEFORME
+          campaignId,
+          type: TransactionType.COMMISSION,
+          amount: new Decimal(supertryCommission),
+          reason: `Commission retained on PRO cancellation: ${campaign.title}`,
+          status: TransactionStatus.COMPLETED,
+        },
+      });
+
+      await this.prisma.platformWallet.update({
+        where: { id: platformWallet.id },
+        data: {
+          escrowBalance: { decrement: new Decimal(supertryCommission) },
+          commissionBalance: { increment: new Decimal(supertryCommission) },
+          totalCommissions: { increment: new Decimal(supertryCommission) },
+        },
+      });
+    }
+
+    // 3. Si frais d'annulation, les transférer à SuperTry
     if (cancellationFee > 0) {
       await this.prisma.transaction.create({
         data: {
@@ -973,7 +998,6 @@ export class PaymentsService {
         },
       });
 
-      // Mettre à jour escrow balance
       await this.prisma.platformWallet.update({
         where: { id: platformWallet.id },
         data: {
@@ -984,7 +1008,7 @@ export class PaymentsService {
       });
     }
 
-    // 3. Compenser les testeurs (montant individuel via compensationMap)
+    // 4. Compenser les testeurs (montant individuel via compensationMap)
     const testerIds = Object.keys(cancellationContext.compensationMap);
     for (const testerId of testerIds) {
       const testerCompensation = cancellationContext.compensationMap[testerId];
@@ -1074,7 +1098,7 @@ export class PaymentsService {
       });
     }
 
-    // 4. Notifier le PRO
+    // 5. Notifier le PRO
     this.notificationsService.tryQueueEmail({
       to: campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
@@ -1101,6 +1125,7 @@ export class PaymentsService {
         campaignId,
         refundToPro,
         cancellationFee,
+        supertryCommission,
         totalCompensation: cancellationContext.totalCompensation,
         compensationMap: cancellationContext.compensationMap,
       },

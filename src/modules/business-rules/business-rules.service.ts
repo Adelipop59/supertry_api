@@ -173,26 +173,28 @@ export class BusinessRulesService {
 
   /**
    * Calcule les impacts d'une annulation PRO selon le délai écoulé
-   * Les frais d'annulation (10%) sont calculés sur le RESTANT après compensations,
-   * pas sur le total escrow, pour éviter de dépasser le montant disponible.
+   * Ordre de déduction : compensation testeurs → commission SuperTry → fee 10% → refund PRO
    */
   async calculateProCancellationImpact(
     totalEscrowAmount: number,
     hoursElapsed: number,
     totalCompensation: number,
+    totalCommission: number,
   ): Promise<{
     refundToPro: number;
     cancellationFee: number;
+    supertryCommission: number;
   }> {
     const rules = await this.findLatest();
     const gracePeriodHours = rules.campaignActivationGracePeriodMinutes / 60;
-    const remaining = Math.max(0, totalEscrowAmount - totalCompensation);
+    const remaining = Math.max(0, totalEscrowAmount - totalCompensation - totalCommission);
 
-    // Annulation pendant la période de grâce → pas de frais
+    // Annulation pendant la période de grâce → pas de frais, mais commission retenue
     if (hoursElapsed < gracePeriodHours) {
       return {
         refundToPro: remaining,
         cancellationFee: 0,
+        supertryCommission: totalCommission,
       };
     }
 
@@ -203,6 +205,7 @@ export class BusinessRulesService {
     return {
       refundToPro: Math.max(0, remaining - cancellationFee),
       cancellationFee,
+      supertryCommission: totalCommission,
     };
   }
 

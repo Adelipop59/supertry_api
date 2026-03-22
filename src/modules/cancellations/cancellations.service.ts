@@ -185,6 +185,28 @@ export class CancellationsService {
     return flatComp;
   }
 
+  /**
+   * Détermine si un testeur est "bought" (a potentiellement acheté le produit)
+   * → éligible à la commission SuperTry
+   */
+  private isBoughtTester(
+    session: { status: SessionStatus },
+    marketplaceMode: CampaignMarketplaceMode,
+  ): boolean {
+    // PRODUCT_LINK : tout testeur ACCEPTED+ est considéré comme bought
+    if (marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK) {
+      return true;
+    }
+
+    // PROCEDURES : bought si PRICE_VALIDATED, PURCHASE_SUBMITTED ou PURCHASE_VALIDATED
+    const boughtStatuses: SessionStatus[] = [
+      SessionStatus.PRICE_VALIDATED,
+      SessionStatus.PURCHASE_SUBMITTED,
+      SessionStatus.PURCHASE_VALIDATED,
+    ];
+    return boughtStatuses.includes(session.status);
+  }
+
   private async executeCancellation(
     campaign: any,
     userId: string,
@@ -218,6 +240,7 @@ export class CancellationsService {
 
     const compensationMap: Record<string, number> = {};
     let totalCompensation = 0;
+    let boughtTestersCount = 0;
 
     for (const session of eligibleSessions) {
       const amount = this.calculatePerTesterCompensation(
@@ -229,10 +252,18 @@ export class CancellationsService {
       );
       compensationMap[session.testerId] = amount;
       totalCompensation += amount;
+
+      if (this.isBoughtTester(session, campaign.marketplaceMode)) {
+        boughtTestersCount++;
+      }
     }
 
+    // Commission SuperTry : 1 commission par testeur "bought"
+    const commissionPerTester = Number(rules.commissionFixedFee);
+    const totalCommission = boughtTestersCount * commissionPerTester;
+
     this.logger.log(
-      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Eligible testers: ${eligibleSessions.length}, Total compensation: ${totalCompensation}€`,
+      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Eligible testers: ${eligibleSessions.length}, Bought: ${boughtTestersCount}, Total compensation: ${totalCompensation}€, Commission: ${totalCommission}€`,
     );
 
     // Marquer la campagne CANCELLED en DB AVANT d'appeler Stripe
@@ -254,6 +285,7 @@ export class CancellationsService {
     } = await this.paymentsService.processCampaignCancellationRefund(campaign.id, {
       hoursElapsed,
       totalCompensation,
+      totalCommission,
       compensationMap,
     });
 
@@ -286,6 +318,8 @@ export class CancellationsService {
         refundToPro,
         cancellationFee,
         totalCompensation,
+        totalCommission,
+        boughtTestersCount,
         compensationMap,
         acceptedTestersCount: eligibleSessions.length,
       },
@@ -430,6 +464,7 @@ export class CancellationsService {
     const flatComp = Number(rules.testerCompensationOnProCancellation);
 
     let totalCompensation = 0;
+    let boughtTestersCount = 0;
     for (const session of campaign.testSessions) {
       totalCompensation += this.calculatePerTesterCompensation(
         session,
@@ -438,13 +473,21 @@ export class CancellationsService {
         maxPrice,
         maxShipping,
       );
+      if (this.isBoughtTester(session, campaign.marketplaceMode)) {
+        boughtTestersCount++;
+      }
     }
 
-    const { refundToPro, cancellationFee } =
+    // Commission SuperTry retenue par bought tester
+    const commissionPerTester = Number(rules.commissionFixedFee);
+    const totalCommission = boughtTestersCount * commissionPerTester;
+
+    const { refundToPro, cancellationFee, supertryCommission } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         hoursElapsed,
         totalCompensation,
+        totalCommission,
       );
     const compensationPerTester = flatComp;
 
@@ -452,17 +495,15 @@ export class CancellationsService {
       await this.businessRulesService.getCampaignActivationGracePeriodMinutes();
     const inGracePeriod = hoursElapsed < gracePeriodMinutes / 60;
 
-    // Enrichissement : frais Stripe, commission SuperTry, total payé
-    const { commissionFixedFee, stripeCoverage } =
+    // Enrichissement : frais Stripe, total payé
+    const { stripeCoverage } =
       await this.businessRulesService.calculateCommission(
         totalEscrowAmount - Number(rules.commissionFixedFee),
       );
     const stripeFee = Math.round(stripeCoverage * 100) / 100;
-    const supertryCommission = Number(commissionFixedFee);
     const totalPaid = Math.round((totalEscrowAmount + stripeFee) * 100) / 100;
 
-    // Bug 1 fix: pour PENDING_ACTIVATION (non capturé), Stripe annule le PI sans frais
-    // → le pro récupère totalPaid sur sa carte (escrowAmount + stripeFee), pas juste escrowAmount
+    // Pour PENDING_ACTIVATION (non capturé), Stripe annule le PI sans frais
     const paymentCaptured = !!campaign.paymentCapturedAt;
     const effectiveRefundToPro = paymentCaptured ? refundToPro : Math.min(refundToPro + stripeFee, totalPaid);
     const effectiveStripeFee = paymentCaptured ? stripeFee : 0;
