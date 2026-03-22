@@ -528,7 +528,7 @@ export class GamificationService {
       // Send notification on tier promotion
       if (isPromotion && profile.email) {
         try {
-          await this.notificationsService.queueEmail({
+          this.notificationsService.tryQueueEmail({
             to: profile.email,
             template: NotificationTemplate.GENERIC_NOTIFICATION,
             subject: `Félicitations ! Vous êtes maintenant ${TIER_NAMES[newTier]} !`,

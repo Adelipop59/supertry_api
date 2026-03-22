@@ -177,37 +177,41 @@ export class BusinessRulesService {
   async calculateProCancellationImpact(
     totalEscrowAmount: number,
     hoursElapsed: number,
-    hasAcceptedTesters: boolean,
+    acceptedTestersCount: number,
+    boughtTestersCount: number,
+    compensationPerBoughtTester: number,
   ): Promise<{
     refundToPro: number;
     cancellationFee: number;
     compensationPerTester: number;
+    compensationPerBoughtTester: number;
   }> {
     const rules = await this.findLatest();
     const gracePeriodHours = rules.campaignActivationGracePeriodMinutes / 60;
+    const flatComp = Number(rules.testerCompensationOnProCancellation);
+    const notBoughtCount = acceptedTestersCount - boughtTestersCount;
+    const totalCompensation =
+      notBoughtCount * flatComp + boughtTestersCount * compensationPerBoughtTester;
 
     // Annulation pendant la période de grâce
     if (hoursElapsed < gracePeriodHours) {
       return {
-        refundToPro: totalEscrowAmount,
+        refundToPro: Math.max(0, totalEscrowAmount - totalCompensation),
         cancellationFee: 0,
-        compensationPerTester: 0,
+        compensationPerTester: flatComp,
+        compensationPerBoughtTester,
       };
     }
 
     // Annulation après la période de grâce
     const cancellationFeePercent = Number(rules.campaignCancellationFeePercent);
-    const cancellationFee = (totalEscrowAmount * cancellationFeePercent) / 100;
-
-    // Si des testeurs ont accepté, ils reçoivent une compensation
-    const compensationPerTester = hasAcceptedTesters
-      ? Number(rules.testerCompensationOnProCancellation)
-      : 0;
+    const cancellationFee = Math.round((totalEscrowAmount * cancellationFeePercent) / 100 * 100) / 100;
 
     return {
-      refundToPro: totalEscrowAmount - cancellationFee,
+      refundToPro: Math.max(0, totalEscrowAmount - cancellationFee - totalCompensation),
       cancellationFee,
-      compensationPerTester,
+      compensationPerTester: flatComp,
+      compensationPerBoughtTester,
     };
   }
 

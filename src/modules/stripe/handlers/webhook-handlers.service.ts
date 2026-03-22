@@ -101,7 +101,7 @@ export class WebhookHandlersService {
         ? 'Your Stripe onboarding is complete. You can now activate campaigns.'
         : 'Your Stripe onboarding is complete. You can now apply to campaigns.';
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Stripe Onboarding Completed',
@@ -121,7 +121,7 @@ export class WebhookHandlersService {
       const errors = account.requirements?.errors ?? [];
       const errorDetails = errors.map((e: any) => e.reason).filter(Boolean).join(', ');
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Action requise sur votre compte Stripe',
@@ -138,7 +138,7 @@ export class WebhookHandlersService {
 
     // Past due (urgent)
     if (newStatus === 'PAST_DUE' && previousStatus !== 'PAST_DUE') {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Action urgente requise sur votre compte Stripe',
@@ -155,7 +155,7 @@ export class WebhookHandlersService {
 
     // Restricted or rejected
     if (['RESTRICTED', 'REJECTED'].includes(newStatus) && ![previousStatus].some(s => ['RESTRICTED', 'REJECTED'].includes(s ?? ''))) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Compte Stripe restreint',
@@ -172,7 +172,7 @@ export class WebhookHandlersService {
 
     // Pending verification (submitted, waiting for Stripe)
     if (newStatus === 'PENDING_VERIFICATION' && previousStatus === 'IN_PROGRESS') {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Vérification en cours',
@@ -311,7 +311,7 @@ export class WebhookHandlersService {
       });
 
       if (profile) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: profile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Stripe Capability Issue',
@@ -365,7 +365,7 @@ export class WebhookHandlersService {
       });
 
       if (user) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: user.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Identity Verification - In Progress',
@@ -497,7 +497,7 @@ export class WebhookHandlersService {
 
     // Notification différenciée
     if (verificationStatus === 'INCOHERENT') {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: testerProfile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Vérification d\'identité - Incohérence détectée',
@@ -512,7 +512,7 @@ export class WebhookHandlersService {
       });
       this.logger.warn(`ACCOUNT FLAGGED INCOHERENT: ${profileId} (${testerProfile.email})`);
     } else {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: testerProfile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Vérification d\'identité terminée',
@@ -560,7 +560,7 @@ export class WebhookHandlersService {
       });
 
       if (user) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: user.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Identity Verification - Additional Information Required',
@@ -656,7 +656,7 @@ export class WebhookHandlersService {
         });
 
         // Notification PRO
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Campaign Payment Failed',
@@ -714,7 +714,7 @@ export class WebhookHandlersService {
         });
 
         if (sellerProfile) {
-          await this.notificationsService.queueEmail({
+          this.notificationsService.tryQueueEmail({
             to: sellerProfile.email,
             template: NotificationTemplate.GENERIC_NOTIFICATION,
             subject: 'Campaign Cancelled - No Charges',
@@ -931,7 +931,7 @@ export class WebhookHandlersService {
         });
 
         // Notify tester
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: session.tester.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Échec du transfert de paiement',
@@ -946,7 +946,7 @@ export class WebhookHandlersService {
         });
 
         // Notify PRO
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: session.campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Échec du transfert au testeur',
@@ -1063,7 +1063,7 @@ export class WebhookHandlersService {
       });
 
       if (session) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: session.tester.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Transfert annulé',
@@ -1074,7 +1074,7 @@ export class WebhookHandlersService {
           metadata: { sessionId, type: NotificationType.SYSTEM_ALERT },
         });
 
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: session.campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Transfert annulé au testeur',
@@ -1227,7 +1227,7 @@ export class WebhookHandlersService {
       });
 
       if (campaign) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Échec du remboursement',
@@ -1284,7 +1284,7 @@ export class WebhookHandlersService {
       });
 
       // Notification
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: withdrawal.user.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Withdrawal Completed',
@@ -1338,7 +1338,7 @@ export class WebhookHandlersService {
       });
 
       // Notification
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: withdrawal.user.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Withdrawal Failed',

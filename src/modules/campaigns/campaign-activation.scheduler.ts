@@ -78,7 +78,7 @@ export class CampaignActivationScheduler {
         );
 
         // Notification au PRO
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: campaign.seller.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Votre campagne est maintenant active',

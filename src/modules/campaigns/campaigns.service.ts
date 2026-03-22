@@ -962,7 +962,7 @@ export class CampaignsService {
       });
 
       if (sellerProfile) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: sellerProfile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Campaign Cancelled - No Charges',
@@ -1101,7 +1101,7 @@ export class CampaignsService {
         const feeMessage = cancellationFee > 0
           ? ` A cancellation fee of ${cancellationFee}€ was applied.`
           : '';
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: sellerProfile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Campaign Cancelled',
@@ -1173,7 +1173,7 @@ export class CampaignsService {
       },
     );
 
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: sellerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Campaign Activated',

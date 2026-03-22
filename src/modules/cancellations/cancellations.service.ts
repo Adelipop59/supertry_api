@@ -112,6 +112,7 @@ export class CancellationsService {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
+        offers: true,
         testSessions: {
           where: {
             status: {
@@ -165,9 +166,23 @@ export class CancellationsService {
     );
 
     const acceptedTesterIds = acceptedTesters.map((s: any) => s.testerId);
+    const boughtTesterIds = acceptedTesters
+      .filter(
+        (s: any) =>
+          s.status === SessionStatus.PRICE_VALIDATED ||
+          s.status === SessionStatus.PURCHASE_VALIDATED,
+      )
+      .map((s: any) => s.testerId);
+
+    // Calculer la compensation pour les testeurs qui ont acheté le produit
+    const rules = await this.businessRulesService.findLatest();
+    const maxPrice = Number(campaign.offers?.[0]?.maxReimbursedPrice ?? campaign.offers?.[0]?.expectedPrice ?? 0);
+    const maxShipping = Number(campaign.offers?.[0]?.maxReimbursedShipping ?? campaign.offers?.[0]?.shippingCost ?? 0);
+    const flatComp = Number(rules.testerCompensationOnProCancellation);
+    const compensationPerBoughtTester = flatComp + maxPrice + maxShipping;
 
     this.logger.log(
-      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}`,
+      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Accepted testers: ${acceptedTesters.length}, Bought: ${boughtTesterIds.length}`,
     );
 
     // Marquer la campagne CANCELLED en DB AVANT d'appeler Stripe
@@ -191,6 +206,8 @@ export class CancellationsService {
       hoursElapsed,
       acceptedTestersCount: acceptedTesters.length,
       acceptedTesterIds,
+      boughtTesterIds,
+      compensationPerBoughtTester,
     });
 
     await this.prisma.testSession.updateMany({
@@ -262,6 +279,7 @@ export class CancellationsService {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
       include: {
+        offers: true,
         testSessions: {
           where: {
             status: {
@@ -345,18 +363,34 @@ export class CancellationsService {
     const activatedAt = campaign.paymentCapturedAt || campaign.paymentAuthorizedAt || campaign.createdAt;
     const hoursElapsed = (Date.now() - activatedAt.getTime()) / (1000 * 60 * 60);
 
+    const boughtSessions = campaign.testSessions.filter(
+      (s) => s.status === SessionStatus.PRICE_VALIDATED || s.status === SessionStatus.PURCHASE_VALIDATED,
+    );
     const acceptedTestersCount = campaign.testSessions.length;
+    const boughtTestersCount = boughtSessions.length;
 
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
+
+    // Calcul compensation différenciée : testeur qui a acheté = flat + maxPrice + maxShipping
+    const rules = await this.businessRulesService.findLatest();
+    const maxPrice = Number(campaign.offers?.[0]?.maxReimbursedPrice ?? campaign.offers?.[0]?.expectedPrice ?? 0);
+    const maxShipping = Number(campaign.offers?.[0]?.maxReimbursedShipping ?? campaign.offers?.[0]?.shippingCost ?? 0);
+    const flatComp = Number(rules.testerCompensationOnProCancellation);
+    const compensationPerBoughtTester = flatComp + maxPrice + maxShipping;
 
     const { refundToPro, cancellationFee, compensationPerTester } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         hoursElapsed,
-        acceptedTestersCount > 0,
+        acceptedTestersCount,
+        boughtTestersCount,
+        compensationPerBoughtTester,
       );
 
-    const totalCompensation = compensationPerTester * acceptedTestersCount;
+    const totalCompensation =
+      (acceptedTestersCount - boughtTestersCount) * compensationPerTester +
+      boughtTestersCount * compensationPerBoughtTester;
+
     const gracePeriodMinutes =
       await this.businessRulesService.getCampaignActivationGracePeriodMinutes();
     const inGracePeriod = hoursElapsed < gracePeriodMinutes / 60;
@@ -364,22 +398,28 @@ export class CancellationsService {
     // Enrichissement : frais Stripe, commission SuperTry, total payé
     const { commissionFixedFee, stripeCoverage } =
       await this.businessRulesService.calculateCommission(
-        totalEscrowAmount - (await this.businessRulesService.findLatest().then(r => Number(r.commissionFixedFee))),
+        totalEscrowAmount - Number(rules.commissionFixedFee),
       );
     const stripeFee = Math.round(stripeCoverage * 100) / 100;
     const supertryCommission = Number(commissionFixedFee);
     const totalPaid = Math.round((totalEscrowAmount + stripeFee) * 100) / 100;
 
+    // Bug 1 fix: pour PENDING_ACTIVATION (non capturé), Stripe annule le PI sans frais
+    // → le pro récupère totalPaid sur sa carte (escrowAmount + stripeFee), pas juste escrowAmount
+    const paymentCaptured = !!campaign.paymentCapturedAt;
+    const effectiveRefundToPro = paymentCaptured ? refundToPro : Math.min(refundToPro + stripeFee, totalPaid);
+    const effectiveStripeFee = paymentCaptured ? stripeFee : 0;
+
     return {
       canCancel: true,
-      refundToPro,
+      refundToPro: Math.round(effectiveRefundToPro * 100) / 100,
       cancellationFee,
       compensationPerTester,
       acceptedTestersCount,
-      totalCompensation,
+      totalCompensation: Math.round(totalCompensation * 100) / 100,
       hoursElapsed: Math.round(hoursElapsed * 100) / 100,
       inGracePeriod,
-      stripeFee,
+      stripeFee: effectiveStripeFee,
       supertryCommission,
       totalPaid,
       gracePeriodEndsAt: campaign.activationGracePeriodEndsAt?.toISOString() ?? null,

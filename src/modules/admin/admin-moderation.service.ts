@@ -186,7 +186,7 @@ export class AdminModerationService {
     );
 
     // Notify tester
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.tester.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Crédit supplémentaire reçu',
@@ -256,7 +256,7 @@ export class AdminModerationService {
     });
 
     // Notify target
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: targetProfile.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Documents demandés par l\'équipe SuperTry',
@@ -483,7 +483,7 @@ export class AdminModerationService {
         },
       });
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Compte débloqué',
@@ -506,7 +506,7 @@ export class AdminModerationService {
         },
       });
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Compte désactivé',

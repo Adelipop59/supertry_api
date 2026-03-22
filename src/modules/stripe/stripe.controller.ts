@@ -607,7 +607,7 @@ export class StripeController {
       });
 
       if (sellerProfile) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: sellerProfile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Payment Authorized - Campaign Pending',
@@ -685,7 +685,7 @@ export class StripeController {
       );
 
       if (sellerProfile) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: sellerProfile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Campaign Activated',

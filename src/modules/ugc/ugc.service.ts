@@ -163,7 +163,7 @@ export class UgcService {
 
     // 7. Notifier le testeur
     if (session.tester.email) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: session.tester.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Nouvelle demande UGC',
@@ -249,7 +249,7 @@ export class UgcService {
 
     // Notifier le PRO
     if (ugc.requester?.email) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: ugc.requester.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'UGC soumis par le testeur',
@@ -318,7 +318,7 @@ export class UgcService {
         ? `Votre ${ugc.type} UGC a été validé ! Vous recevez ${pricing.price}€.`
         : `Votre ${ugc.type} UGC a été validé ! Merci pour votre contribution.`;
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: ugc.submitter.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'UGC validé',
@@ -384,7 +384,7 @@ export class UgcService {
 
     // Notifier le testeur
     if (ugc.submitter?.email) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: ugc.submitter.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'UGC rejeté - Modification demandée',
@@ -450,7 +450,7 @@ export class UgcService {
 
     // Notifier le PRO
     if (ugc.requester?.email) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: ugc.requester.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'UGC décliné par le testeur',
@@ -511,7 +511,7 @@ export class UgcService {
 
     // Notifier le testeur
     if (ugc.submitter?.email) {
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: ugc.submitter.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Demande UGC annulée',
@@ -651,7 +651,7 @@ export class UgcService {
     // Notifier les deux parties
     for (const party of [ugc.requester, ugc.submitter]) {
       if (party?.email) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: party.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Litige UGC résolu',
@@ -1084,7 +1084,7 @@ export class UgcService {
     // Notifier les deux parties
     for (const party of [ugc.requester, ugc.submitter]) {
       if (party?.email) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: party.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Litige UGC créé',
@@ -1105,7 +1105,7 @@ export class UgcService {
     const admins = await this.prisma.profile.findMany({ where: { role: UserRole.ADMIN } });
     for (const admin of admins) {
       if (admin.email) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: admin.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Nouveau litige UGC à traiter',

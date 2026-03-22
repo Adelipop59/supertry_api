@@ -116,7 +116,7 @@ export class WithdrawalsService {
       );
 
       // Notification
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Withdrawal Initiated',

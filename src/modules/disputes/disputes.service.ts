@@ -118,7 +118,7 @@ export class DisputesService {
       ? session.tester.firstName
       : session.campaign.seller.firstName;
 
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: otherParty.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Un litige a été créé',
@@ -142,7 +142,7 @@ export class DisputesService {
 
     for (const admin of admins) {
       if (admin.email) {
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: admin.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Nouveau litige à examiner',
@@ -393,7 +393,7 @@ export class DisputesService {
       ? `Vous êtes remboursé de ${proRefundAmount}€.`
       : `Aucun remboursement ne vous a été accordé.`;
 
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.tester.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Litige résolu',
@@ -408,7 +408,7 @@ export class DisputesService {
       },
     });
 
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Litige résolu',

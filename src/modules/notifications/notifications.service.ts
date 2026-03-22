@@ -103,6 +103,16 @@ export class NotificationsService {
   }
 
   /**
+   * Fire-and-forget wrapper around queueEmail.
+   * Redis failures are logged as warnings and never propagate to the caller.
+   */
+  tryQueueEmail(dto: SendEmailDto): void {
+    this.queueEmail(dto).catch((err: Error) =>
+      this.logger.warn(`Failed to queue email to ${dto.to}: ${err.message}`),
+    );
+  }
+
+  /**
    * Send SMS directly (synchronous)
    */
   async sendSMS(dto: SendSmsDto): Promise<NotificationResult> {

@@ -281,7 +281,7 @@ export class PaymentsService {
     });
 
     // Send notification to PRO
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: sellerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Campaign Payment Confirmed',
@@ -601,7 +601,7 @@ export class PaymentsService {
 
     // Notifications
     // 1. Notify tester
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: testerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Payment Received - Test Completed',
@@ -620,7 +620,7 @@ export class PaymentsService {
     });
 
     // 2. Notify seller
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: sellerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Test Session Completed',
@@ -821,7 +821,7 @@ export class PaymentsService {
       refundDetails.push(`${totalPriceDifference}€ de différence de prix (prix max - prix réel)`);
     }
 
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: sellerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Remboursement de fin de campagne',
@@ -862,6 +862,8 @@ export class PaymentsService {
       hoursElapsed: number;
       acceptedTestersCount: number;
       acceptedTesterIds: string[];
+      boughtTesterIds: string[];
+      compensationPerBoughtTester: number;
     },
   ): Promise<{
     refundToPro: number;
@@ -892,14 +894,15 @@ export class PaymentsService {
     }
 
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
-    const hasAcceptedTesters = cancellationContext.acceptedTestersCount > 0;
 
     // Calculer les montants via BusinessRules
     const { refundToPro, cancellationFee, compensationPerTester } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         cancellationContext.hoursElapsed,
-        hasAcceptedTesters,
+        cancellationContext.acceptedTestersCount,
+        cancellationContext.boughtTesterIds.length,
+        cancellationContext.compensationPerBoughtTester,
       );
 
     this.logger.log(
@@ -987,7 +990,8 @@ export class PaymentsService {
     }
 
     // 3. Compenser les testeurs acceptés
-    if (compensationPerTester > 0 && cancellationContext.acceptedTesterIds.length > 0) {
+    if (cancellationContext.acceptedTesterIds.length > 0) {
+      const boughtSet = new Set(cancellationContext.boughtTesterIds);
       for (const testerId of cancellationContext.acceptedTesterIds) {
         const testerProfile = await this.prisma.profile.findUnique({
           where: { id: testerId },
@@ -998,9 +1002,16 @@ export class PaymentsService {
           continue;
         }
 
+        // Compensation selon si le testeur a acheté le produit ou non
+        const testerCompensation = boughtSet.has(testerId)
+          ? cancellationContext.compensationPerBoughtTester
+          : compensationPerTester;
+
+        if (testerCompensation <= 0) continue;
+
         // Transférer la compensation au testeur
         const transfer = await this.stripeService.createTransfer(
-          compensationPerTester,
+          testerCompensation,
           testerProfile.stripeConnectAccountId,
           'eur',
           {
@@ -1024,7 +1035,7 @@ export class PaymentsService {
             walletId: testerWallet?.id || null,
             campaignId,
             type: TransactionType.TESTER_COMPENSATION,
-            amount: new Decimal(compensationPerTester),
+            amount: new Decimal(testerCompensation),
             reason: `Compensation for PRO cancellation: ${campaign.title}`,
             status: TransactionStatus.COMPLETED,
             stripeTransferId: transfer.id,
@@ -1038,21 +1049,21 @@ export class PaymentsService {
           where: { id: platformWallet.id },
           data: {
             escrowBalance: {
-              decrement: new Decimal(compensationPerTester),
+              decrement: new Decimal(testerCompensation),
             },
           },
         });
 
         // Notifier le testeur
-        await this.notificationsService.queueEmail({
+        this.notificationsService.tryQueueEmail({
           to: testerProfile.email,
           template: NotificationTemplate.GENERIC_NOTIFICATION,
           subject: 'Compensation pour annulation de campagne',
           variables: {
             firstName: testerProfile.firstName || 'Testeur',
             campaignTitle: campaign.title,
-            compensationAmount: compensationPerTester,
-            message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${compensationPerTester}€ pour ce désagrément.`,
+            compensationAmount: testerCompensation,
+            message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${testerCompensation}€ pour ce désagrément.`,
           },
           metadata: {
             campaignId,
@@ -1064,7 +1075,7 @@ export class PaymentsService {
     }
 
     // 4. Notifier le PRO
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Campagne annulée - Remboursement traité',
@@ -1229,7 +1240,7 @@ export class PaymentsService {
     });
 
     // 3. Notifier le testeur
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.tester.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Session annulée - Remboursement traité',
@@ -1248,7 +1259,7 @@ export class PaymentsService {
     });
 
     // 4. Notifier le PRO
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Un testeur a annulé sa session',
@@ -1377,7 +1388,7 @@ export class PaymentsService {
     });
 
     // Notifier le testeur
-    await this.notificationsService.queueEmail({
+    this.notificationsService.tryQueueEmail({
       to: session.tester.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
       subject: 'Compensation pour annulation de session',

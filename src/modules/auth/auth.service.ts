@@ -169,7 +169,7 @@ export class AuthService {
         ? NotificationTemplate.WELCOME_PRO
         : NotificationTemplate.WELCOME_TESTER;
 
-      await this.notificationsService.queueEmail({
+      this.notificationsService.tryQueueEmail({
         to: email,
         template: welcomeTemplate,
         variables: {
