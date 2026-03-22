@@ -173,45 +173,36 @@ export class BusinessRulesService {
 
   /**
    * Calcule les impacts d'une annulation PRO selon le délai écoulé
+   * Les frais d'annulation (10%) sont calculés sur le RESTANT après compensations,
+   * pas sur le total escrow, pour éviter de dépasser le montant disponible.
    */
   async calculateProCancellationImpact(
     totalEscrowAmount: number,
     hoursElapsed: number,
-    acceptedTestersCount: number,
-    boughtTestersCount: number,
-    compensationPerBoughtTester: number,
+    totalCompensation: number,
   ): Promise<{
     refundToPro: number;
     cancellationFee: number;
-    compensationPerTester: number;
-    compensationPerBoughtTester: number;
   }> {
     const rules = await this.findLatest();
     const gracePeriodHours = rules.campaignActivationGracePeriodMinutes / 60;
-    const flatComp = Number(rules.testerCompensationOnProCancellation);
-    const notBoughtCount = acceptedTestersCount - boughtTestersCount;
-    const totalCompensation =
-      notBoughtCount * flatComp + boughtTestersCount * compensationPerBoughtTester;
+    const remaining = Math.max(0, totalEscrowAmount - totalCompensation);
 
-    // Annulation pendant la période de grâce
+    // Annulation pendant la période de grâce → pas de frais
     if (hoursElapsed < gracePeriodHours) {
       return {
-        refundToPro: Math.max(0, totalEscrowAmount - totalCompensation),
+        refundToPro: remaining,
         cancellationFee: 0,
-        compensationPerTester: flatComp,
-        compensationPerBoughtTester,
       };
     }
 
-    // Annulation après la période de grâce
+    // Annulation après la période de grâce → 10% du restant
     const cancellationFeePercent = Number(rules.campaignCancellationFeePercent);
-    const cancellationFee = Math.round((totalEscrowAmount * cancellationFeePercent) / 100 * 100) / 100;
+    const cancellationFee = Math.round((remaining * cancellationFeePercent) / 100 * 100) / 100;
 
     return {
-      refundToPro: Math.max(0, totalEscrowAmount - cancellationFee - totalCompensation),
+      refundToPro: Math.max(0, remaining - cancellationFee),
       cancellationFee,
-      compensationPerTester: flatComp,
-      compensationPerBoughtTester,
     };
   }
 

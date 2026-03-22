@@ -860,15 +860,12 @@ export class PaymentsService {
     campaignId: string,
     cancellationContext: {
       hoursElapsed: number;
-      acceptedTestersCount: number;
-      acceptedTesterIds: string[];
-      boughtTesterIds: string[];
-      compensationPerBoughtTester: number;
+      totalCompensation: number;
+      compensationMap: Record<string, number>;
     },
   ): Promise<{
     refundToPro: number;
     cancellationFee: number;
-    compensationPerTester: number;
     refund: Stripe.Refund | null;
     compensationTransactions: Transaction[];
   }> {
@@ -895,18 +892,16 @@ export class PaymentsService {
 
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
 
-    // Calculer les montants via BusinessRules
-    const { refundToPro, cancellationFee, compensationPerTester } =
+    // Calculer les montants via BusinessRules (fee sur le restant après compensations)
+    const { refundToPro, cancellationFee } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         cancellationContext.hoursElapsed,
-        cancellationContext.acceptedTestersCount,
-        cancellationContext.boughtTesterIds.length,
-        cancellationContext.compensationPerBoughtTester,
+        cancellationContext.totalCompensation,
       );
 
     this.logger.log(
-      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, compensation=${compensationPerTester}€`,
+      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, totalCompensation=${cancellationContext.totalCompensation}€`,
     );
 
     let refund: Stripe.Refund | null = null;
@@ -989,100 +984,94 @@ export class PaymentsService {
       });
     }
 
-    // 3. Compenser les testeurs acceptés
-    if (cancellationContext.acceptedTesterIds.length > 0) {
-      const boughtSet = new Set(cancellationContext.boughtTesterIds);
-      for (const testerId of cancellationContext.acceptedTesterIds) {
-        const testerProfile = await this.prisma.profile.findUnique({
-          where: { id: testerId },
-        });
+    // 3. Compenser les testeurs (montant individuel via compensationMap)
+    const testerIds = Object.keys(cancellationContext.compensationMap);
+    for (const testerId of testerIds) {
+      const testerCompensation = cancellationContext.compensationMap[testerId];
+      if (testerCompensation <= 0) continue;
 
-        if (!testerProfile || !testerProfile.stripeConnectAccountId) {
-          this.logger.warn(`Skipping compensation for tester ${testerId} - no Stripe account`);
-          continue;
-        }
+      const testerProfile = await this.prisma.profile.findUnique({
+        where: { id: testerId },
+      });
 
-        // Compensation selon si le testeur a acheté le produit ou non
-        const testerCompensation = boughtSet.has(testerId)
-          ? cancellationContext.compensationPerBoughtTester
-          : compensationPerTester;
+      if (!testerProfile || !testerProfile.stripeConnectAccountId) {
+        this.logger.warn(`Skipping compensation for tester ${testerId} - no Stripe account`);
+        continue;
+      }
 
-        if (testerCompensation <= 0) continue;
+      // Transférer la compensation au testeur
+      const transfer = await this.stripeService.createTransfer(
+        testerCompensation,
+        testerProfile.stripeConnectAccountId,
+        'eur',
+        {
+          campaignId,
+          testerId,
+          transactionType: 'PRO_CANCELLATION_COMPENSATION',
+        },
+        undefined, // sourceTransaction
+        `campaign_${campaignId}`, // transferGroup
+        `Compensation: ${campaign.title} - annulation PRO`, // description
+      );
 
-        // Transférer la compensation au testeur
-        const transfer = await this.stripeService.createTransfer(
-          testerCompensation,
-          testerProfile.stripeConnectAccountId,
-          'eur',
-          {
-            campaignId,
-            testerId,
-            transactionType: 'PRO_CANCELLATION_COMPENSATION',
-          },
-          undefined, // sourceTransaction
-          `campaign_${campaignId}`, // transferGroup
-          `Compensation: ${campaign.title} - annulation PRO`, // description
-        );
+      // Trouver le wallet du testeur
+      const testerWallet = await this.prisma.wallet.findUnique({
+        where: { userId: testerId },
+      });
 
-        // Trouver le wallet du testeur
-        const testerWallet = await this.prisma.wallet.findUnique({
-          where: { userId: testerId },
-        });
+      // Créer transaction
+      const compensationTx = await this.prisma.transaction.create({
+        data: {
+          walletId: testerWallet?.id || null,
+          campaignId,
+          type: TransactionType.TESTER_COMPENSATION,
+          amount: new Decimal(testerCompensation),
+          reason: `Compensation for PRO cancellation: ${campaign.title}`,
+          status: TransactionStatus.COMPLETED,
+          stripeTransferId: transfer.id,
+        },
+      });
 
-        // Créer transaction
-        const compensationTx = await this.prisma.transaction.create({
+      compensationTransactions.push(compensationTx);
+
+      // Mettre à jour le wallet du testeur
+      if (testerWallet) {
+        await this.prisma.wallet.update({
+          where: { id: testerWallet.id },
           data: {
-            walletId: testerWallet?.id || null,
-            campaignId,
-            type: TransactionType.TESTER_COMPENSATION,
-            amount: new Decimal(testerCompensation),
-            reason: `Compensation for PRO cancellation: ${campaign.title}`,
-            status: TransactionStatus.COMPLETED,
-            stripeTransferId: transfer.id,
-          },
-        });
-
-        compensationTransactions.push(compensationTx);
-
-        // Mettre à jour le wallet du testeur
-        if (testerWallet) {
-          await this.prisma.wallet.update({
-            where: { id: testerWallet.id },
-            data: {
-              balance: { increment: new Decimal(testerCompensation) },
-              totalEarned: { increment: new Decimal(testerCompensation) },
-            },
-          });
-        }
-
-        // Mettre à jour escrow balance
-        await this.prisma.platformWallet.update({
-          where: { id: platformWallet.id },
-          data: {
-            escrowBalance: {
-              decrement: new Decimal(testerCompensation),
-            },
-          },
-        });
-
-        // Notifier le testeur
-        this.notificationsService.tryQueueEmail({
-          to: testerProfile.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Compensation pour annulation de campagne',
-          variables: {
-            firstName: testerProfile.firstName || 'Testeur',
-            campaignTitle: campaign.title,
-            compensationAmount: testerCompensation,
-            message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${testerCompensation}€ pour ce désagrément.`,
-          },
-          metadata: {
-            campaignId,
-            transactionId: compensationTx.id,
-            type: NotificationType.PAYMENT_RECEIVED,
+            balance: { increment: new Decimal(testerCompensation) },
+            totalEarned: { increment: new Decimal(testerCompensation) },
           },
         });
       }
+
+      // Mettre à jour escrow balance
+      await this.prisma.platformWallet.update({
+        where: { id: platformWallet.id },
+        data: {
+          escrowBalance: {
+            decrement: new Decimal(testerCompensation),
+          },
+        },
+      });
+
+      // Notifier le testeur
+      this.notificationsService.tryQueueEmail({
+        to: testerProfile.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Compensation pour annulation de campagne',
+        variables: {
+          firstName: testerProfile.firstName || 'Testeur',
+          campaignTitle: campaign.title,
+          compensationAmount: testerCompensation,
+          message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${testerCompensation}€ pour ce désagrément.`,
+        },
+        metadata: {
+          campaignId,
+          transactionId: compensationTx.id,
+          type: NotificationType.PAYMENT_RECEIVED,
+        },
+      });
     }
 
     // 4. Notifier le PRO
@@ -1112,8 +1101,8 @@ export class PaymentsService {
         campaignId,
         refundToPro,
         cancellationFee,
-        compensationPerTester,
-        acceptedTestersCount: cancellationContext.acceptedTestersCount,
+        totalCompensation: cancellationContext.totalCompensation,
+        compensationMap: cancellationContext.compensationMap,
       },
     );
 
@@ -1122,7 +1111,6 @@ export class PaymentsService {
     return {
       refundToPro,
       cancellationFee,
-      compensationPerTester,
       refund,
       compensationTransactions,
     };
