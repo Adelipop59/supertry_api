@@ -62,6 +62,34 @@ export class TestSessionsController {
     return this.testSessionsService.findMySessions(userId, filterDto);
   }
 
+  // PRO endpoints (static GET routes must be declared before :id)
+  @Get('action-counts')
+  @Roles(UserRole.PRO)
+  @ApiOperation({ summary: 'Nombre de sessions nécessitant une action du PRO, par campagne et status' })
+  @ApiResponse({ status: 200, description: 'Compteurs par campagne et status' })
+  @ApiAuthResponses()
+  async getActionCounts(
+    @CurrentUser('id') userId: string,
+  ): Promise<Record<string, Record<string, number>>> {
+    return this.testSessionsService.getActionCounts(userId);
+  }
+
+  @Get('by-campaign/:campaignId')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Récupérer les sessions d\'une campagne (vendeur)' })
+  @ApiResponse({ status: 200, description: 'Liste paginée des sessions de la campagne' })
+  @ApiResponse({ status: 403, description: 'Accès refusé - campagne non possédée' })
+  @ApiResponse({ status: 404, description: 'Campagne non trouvée' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async findByCampaign(
+    @Param('campaignId') campaignId: string,
+    @CurrentUser('id') userId: string,
+    @Query() filterDto: TestSessionFilterDto,
+  ): Promise<PaginatedResponse<TestSessionResponseDto>> {
+    return this.testSessionsService.findByCampaign(campaignId, userId, filterDto);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer les détails d\'une session de test' })
   @ApiResponse({ status: 200, description: 'Détails de la session de test', type: TestSessionResponseDto })
@@ -154,34 +182,6 @@ export class TestSessionsController {
     @CurrentUser('id') userId: string,
   ): Promise<TestSessionResponseDto> {
     return this.testSessionsService.submitTest(id, userId);
-  }
-
-  // PRO endpoints
-  @Get('action-counts')
-  @Roles(UserRole.PRO)
-  @ApiOperation({ summary: 'Nombre de sessions nécessitant une action du PRO, par campagne et status' })
-  @ApiResponse({ status: 200, description: 'Compteurs par campagne et status' })
-  @ApiAuthResponses()
-  async getActionCounts(
-    @CurrentUser('id') userId: string,
-  ): Promise<Record<string, Record<string, number>>> {
-    return this.testSessionsService.getActionCounts(userId);
-  }
-
-  @Get('by-campaign/:campaignId')
-  @Roles(UserRole.PRO, UserRole.ADMIN)
-  @ApiOperation({ summary: 'Récupérer les sessions d\'une campagne (vendeur)' })
-  @ApiResponse({ status: 200, description: 'Liste paginée des sessions de la campagne' })
-  @ApiResponse({ status: 403, description: 'Accès refusé - campagne non possédée' })
-  @ApiResponse({ status: 404, description: 'Campagne non trouvée' })
-  @ApiAuthResponses()
-  @ApiNotFoundErrorResponse()
-  async findByCampaign(
-    @Param('campaignId') campaignId: string,
-    @CurrentUser('id') userId: string,
-    @Query() filterDto: TestSessionFilterDto,
-  ): Promise<PaginatedResponse<TestSessionResponseDto>> {
-    return this.testSessionsService.findByCampaign(campaignId, userId, filterDto);
   }
 
   @Post(':id/accept')
