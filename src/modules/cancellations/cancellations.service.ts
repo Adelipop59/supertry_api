@@ -503,10 +503,24 @@ export class CancellationsService {
     const stripeFee = Math.round(stripeCoverage * 100) / 100;
     const totalPaid = Math.round((totalEscrowAmount + stripeFee) * 100) / 100;
 
-    // Pour PENDING_ACTIVATION (non capturé), Stripe annule le PI sans frais
+    // Grace period sans testeurs = remboursement total (escrow + stripe fees)
+    // PENDING_ACTIVATION (non capturé) = Stripe annule le PI sans frais
     const paymentCaptured = !!campaign.paymentCapturedAt;
-    const effectiveRefundToPro = paymentCaptured ? refundToPro : Math.min(refundToPro + stripeFee, totalPaid);
-    const effectiveStripeFee = paymentCaptured ? stripeFee : 0;
+    let effectiveRefundToPro: number;
+    let effectiveStripeFee: number;
+
+    if (!paymentCaptured) {
+      // PI annulé → le PRO récupère tout automatiquement
+      effectiveRefundToPro = Math.min(refundToPro + stripeFee, totalPaid);
+      effectiveStripeFee = 0;
+    } else if (inGracePeriod && totalCompensation === 0) {
+      // Grace period, 0 testeurs → remboursement total incluant stripe fees
+      effectiveRefundToPro = totalPaid;
+      effectiveStripeFee = 0;
+    } else {
+      effectiveRefundToPro = refundToPro;
+      effectiveStripeFee = stripeFee;
+    }
 
     return {
       canCancel: true,
