@@ -1070,7 +1070,8 @@ export class TestSessionsService {
       this.prisma.testSession.count({ where }),
     ]);
 
-    return createPaginatedResponse(sessions as any, total, page, limit);
+    const stripped = (sessions as any[]).map((s) => this.stripStepsIfNotScheduledDay(s));
+    return createPaginatedResponse(stripped, total, page, limit);
   }
 
   async findByCampaign(
@@ -1129,7 +1130,8 @@ export class TestSessionsService {
       throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    return this.resolveSessionProductImages(session as any);
+    const resolved = await this.resolveSessionProductImages(session as any);
+    return this.stripStepsIfNotScheduledDay(resolved);
   }
 
   /**
@@ -1154,6 +1156,20 @@ export class TestSessionsService {
         { date: formatted },
       );
     }
+  }
+
+  /**
+   * Masque les étapes (stepProgress) si la date du jour ne correspond pas à la scheduledPurchaseDate.
+   * Pas de bypass BYPASS_BUSINESS_RULES — le testeur ne doit jamais voir les étapes avant le jour J.
+   */
+  private stripStepsIfNotScheduledDay(session: any): any {
+    if (!session.scheduledPurchaseDate) return session;
+    const today = new Date().toISOString().split('T')[0];
+    const scheduledDay = new Date(session.scheduledPurchaseDate).toISOString().split('T')[0];
+    if (today !== scheduledDay) {
+      return { ...session, stepProgress: [] };
+    }
+    return session;
   }
 
   /**
