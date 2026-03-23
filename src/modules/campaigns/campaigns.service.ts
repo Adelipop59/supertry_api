@@ -112,6 +112,17 @@ export class CampaignsService {
       delete clean.escrowAmount;
     }
 
+    // Calculer maxAmount avant de sanitiser les offres (qui masque les prix)
+    if (clean.offers?.length > 0) {
+      clean.maxAmount = clean.offers.reduce((max: number, offer: any) => {
+        const total =
+          Number(offer.expectedPrice || 0) + Number(offer.shippingCost || 0);
+        return total > max ? total : max;
+      }, 0);
+    } else {
+      clean.maxAmount = 0;
+    }
+
     // Sanitiser les offres
     if (clean.offers) {
       clean.offers = clean.offers.map((offer: any) =>
