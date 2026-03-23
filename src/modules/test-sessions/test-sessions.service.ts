@@ -778,7 +778,16 @@ export class TestSessionsService {
       await this.paymentsService.processPurchaseReimbursement(sessionId);
     } catch (error) {
       this.logger.error(`Failed to process purchase reimbursement for session ${sessionId}: ${error.message}`);
-      // Non-bloquant : la session est quand même PURCHASE_VALIDATED
+      // Rollback: revenir à PURCHASE_SUBMITTED pour permettre un retry
+      await this.prisma.testSession.update({
+        where: { id: sessionId },
+        data: { status: SessionStatus.PURCHASE_SUBMITTED },
+      });
+      throw new I18nHttpException(
+        'payment.reimbursement_failed',
+        'PAYMENT_REIMBURSEMENT_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     return updatedSession as any;
@@ -949,7 +958,19 @@ export class TestSessionsService {
       await this.paymentsService.processBonusPayment(sessionId);
     } catch (error) {
       this.logger.error(`Failed to process bonus payment for session ${sessionId}: ${error.message}`);
-      // Non-bloquant : la session est quand même SUBMITTED
+      // Rollback: revenir à PURCHASE_VALIDATED pour permettre un retry
+      await this.prisma.testSession.update({
+        where: { id: sessionId },
+        data: {
+          status: SessionStatus.PURCHASE_VALIDATED,
+          submittedAt: null,
+        },
+      });
+      throw new I18nHttpException(
+        'payment.bonus_payment_failed',
+        'PAYMENT_BONUS_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
 
     return updatedSession as any;
