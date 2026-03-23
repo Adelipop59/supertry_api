@@ -210,7 +210,16 @@ export class WebhookHandlersService {
    * Ne remplit que les champs vides (ne surcharge pas les données existantes).
    */
   private async enrichProfileFromConnect(account: Stripe.Account, profileId: string) {
-    const individual = account.individual;
+    // For Express accounts, individual data is not included in webhooks — fetch it explicitly
+    let individual = account.individual;
+    if (!individual) {
+      try {
+        const fullAccount = await this.stripeService.getConnectAccountWithIndividual(account.id);
+        individual = fullAccount.individual;
+      } catch (error) {
+        this.logger.error(`Failed to fetch individual data for Stripe account ${account.id}: ${error.message}`);
+      }
+    }
     if (!individual) {
       this.logger.warn(`No individual data on Stripe account ${account.id}`);
       return;

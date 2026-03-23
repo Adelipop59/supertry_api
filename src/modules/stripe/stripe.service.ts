@@ -124,6 +124,17 @@ export class StripeService {
     }
   }
 
+  async getConnectAccountWithIndividual(accountId: string): Promise<Stripe.Account> {
+    try {
+      return await this.stripe.accounts.retrieve(accountId, {
+        expand: ['individual'],
+      });
+    } catch (error) {
+      this.logger.error(`Failed to retrieve account with individual ${accountId}: ${error.message}`, error.stack);
+      throw new I18nHttpException('stripe.account_not_found', 'STRIPE_ACCOUNT_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+  }
+
   async getConnectAccountBalance(accountId: string): Promise<Stripe.Balance> {
     try {
       return await this.stripe.balance.retrieve({
