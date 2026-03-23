@@ -91,7 +91,7 @@ export class PaymentsController {
     };
   }
 
-  @ApiOperation({ summary: '[Admin] Retry le paiement d\'une session COMPLETED sans paiement' })
+  @ApiOperation({ summary: '[Admin] Retry les paiements d\'une session (reimbursement + bonus)' })
   @ApiResponse({ status: 200, description: 'Paiement retenté avec succès' })
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
@@ -99,14 +99,22 @@ export class PaymentsController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   async retrySessionPayment(@Param('sessionId') sessionId: string) {
-    const result = await this.paymentsService.processTestCompletion(sessionId);
+    // Retry purchase reimbursement (idempotent — skips if already done)
+    const reimbursement = await this.paymentsService.processPurchaseReimbursement(sessionId);
+    // Retry bonus payment + commission (idempotent — skips if already done)
+    const bonus = await this.paymentsService.processBonusPayment(sessionId);
     return {
       message: 'Payment retry successful',
       sessionId,
-      testerTransferId: result.testerTransfer?.id,
-      testerTransactionId: result.testerTransaction.id,
-      commissionTransactionId: result.commissionTransaction.id,
-      amount: result.testerTransaction.amount,
+      reimbursement: reimbursement ? {
+        transferId: reimbursement.testerTransfer?.id,
+        transactionId: reimbursement.testerTransaction?.id,
+      } : 'already processed',
+      bonus: bonus ? {
+        transferId: bonus.testerTransfer?.id,
+        transactionId: bonus.testerTransaction?.id,
+        commissionTransactionId: bonus.commissionTransaction?.id,
+      } : 'already processed',
     };
   }
 

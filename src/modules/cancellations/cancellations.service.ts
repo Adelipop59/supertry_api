@@ -132,6 +132,8 @@ export class CancellationsService {
             status: true,
             productPrice: true,
             shippingCost: true,
+            purchaseReimbursementAmount: true,
+            bonusAmount: true,
           },
         },
       },
@@ -149,13 +151,27 @@ export class CancellationsService {
   }
 
   /**
-   * Shared: execute cancellation with refund processing
+   * Calcule le total déjà versé aux testeurs (reimbursements + bonus déjà transférés)
    */
+  private calculateTotalDisbursed(sessions: { purchaseReimbursementAmount: any; bonusAmount: any }[]): number {
+    let total = 0;
+    for (const session of sessions) {
+      if (session.purchaseReimbursementAmount) {
+        total += Number(session.purchaseReimbursementAmount);
+      }
+      if (session.bonusAmount) {
+        total += Number(session.bonusAmount);
+      }
+    }
+    return total;
+  }
+
   /**
-   * Calcule la compensation individuelle par testeur selon le mode et le statut
+   * Calcule la compensation individuelle par testeur selon le mode et le statut.
+   * PURCHASE_VALIDATED : productPrice+shippingCost déjà versés → seulement flatComp.
    */
   private calculatePerTesterCompensation(
-    session: { testerId: string; status: SessionStatus; productPrice: any; shippingCost: any },
+    session: { testerId: string; status: SessionStatus; productPrice: any; shippingCost: any; purchaseReimbursementAmount: any },
     marketplaceMode: CampaignMarketplaceMode,
     flatComp: number,
     maxPrice: number,
@@ -163,9 +179,10 @@ export class CancellationsService {
   ): number {
     const isProductLink = marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK;
 
-    // PURCHASE_VALIDATED → prix réel validé par le PRO
-    if (session.status === SessionStatus.PURCHASE_VALIDATED && session.productPrice != null) {
-      return flatComp + Number(session.productPrice) + Number(session.shippingCost ?? 0);
+    // PURCHASE_VALIDATED → productPrice+shippingCost déjà versés au testeur
+    // Seule la compensation fixe (flatComp) reste à verser
+    if (session.status === SessionStatus.PURCHASE_VALIDATED) {
+      return flatComp;
     }
 
     // PRODUCT_LINK : tout testeur ACCEPTED+ est considéré comme ayant potentiellement acheté
@@ -262,8 +279,11 @@ export class CancellationsService {
     const commissionPerTester = Number(rules.commissionFixedFee);
     const totalCommission = boughtTestersCount * commissionPerTester;
 
+    // Calculer le total déjà versé aux testeurs (reimbursements + bonus)
+    const totalDisbursed = this.calculateTotalDisbursed(eligibleSessions);
+
     this.logger.log(
-      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Eligible testers: ${eligibleSessions.length}, Bought: ${boughtTestersCount}, Total compensation: ${totalCompensation}€, Commission: ${totalCommission}€`,
+      `${auditAction}: ${userId} cancelling campaign ${campaign.id}. Hours elapsed: ${hoursElapsed.toFixed(2)}, Eligible testers: ${eligibleSessions.length}, Bought: ${boughtTestersCount}, Total compensation: ${totalCompensation}€, Commission: ${totalCommission}€, Already disbursed: ${totalDisbursed}€`,
     );
 
     // Marquer la campagne CANCELLED en DB AVANT d'appeler Stripe
@@ -287,6 +307,7 @@ export class CancellationsService {
       totalCompensation,
       totalCommission,
       compensationMap,
+      totalDisbursed,
     });
 
     await this.prisma.testSession.updateMany({
@@ -380,6 +401,8 @@ export class CancellationsService {
             status: true,
             productPrice: true,
             shippingCost: true,
+            purchaseReimbursementAmount: true,
+            bonusAmount: true,
           },
         },
       },
@@ -457,6 +480,9 @@ export class CancellationsService {
     const acceptedTestersCount = campaign.testSessions.length;
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
 
+    // Calculer le total déjà versé aux testeurs (reimbursements + bonus)
+    const totalDisbursed = this.calculateTotalDisbursed(campaign.testSessions);
+
     // Calcul compensation individuelle par testeur
     const rules = await this.businessRulesService.findLatest();
     const maxPrice = Number(campaign.offers?.[0]?.maxReimbursedPrice ?? campaign.offers?.[0]?.expectedPrice ?? 0);
@@ -488,6 +514,7 @@ export class CancellationsService {
         hoursElapsed,
         totalCompensation,
         totalCommission,
+        totalDisbursed,
       );
     const compensationPerTester = flatComp;
 

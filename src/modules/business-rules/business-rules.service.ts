@@ -180,6 +180,7 @@ export class BusinessRulesService {
     hoursElapsed: number,
     totalCompensation: number,
     totalCommission: number,
+    totalDisbursed: number = 0,
   ): Promise<{
     refundToPro: number;
     cancellationFee: number;
@@ -187,7 +188,9 @@ export class BusinessRulesService {
   }> {
     const rules = await this.findLatest();
     const gracePeriodHours = rules.campaignActivationGracePeriodMinutes / 60;
-    const remaining = Math.max(0, totalEscrowAmount - totalCompensation - totalCommission);
+    // effectiveEscrow = escrow original - montants déjà versés aux testeurs (reimbursements + bonus)
+    const effectiveEscrow = totalEscrowAmount - totalDisbursed;
+    const remaining = Math.max(0, effectiveEscrow - totalCompensation - totalCommission);
 
     // Annulation pendant la période de grâce → pas de frais, mais commission retenue
     if (hoursElapsed < gracePeriodHours) {
@@ -239,19 +242,15 @@ export class BusinessRulesService {
   }
 
   /**
-   * Calcule les impacts d'une annulation testeur après PURCHASE_VALIDATED
+   * Calcule les impacts d'une annulation testeur après PURCHASE_VALIDATED.
+   * Le testeur garde le remboursement achat (déjà transféré), pas de refund supplémentaire.
+   * SuperTry prélève une commission réduite (50% de la commission normale).
    */
-  async calculateTesterCancellationImpact(
-    productCost: number,
-    shippingCost: number,
-    testerBonus: number,
-  ): Promise<{
-    refundToTester: number;
+  async calculateTesterCancellationImpact(): Promise<{
     supertryCommission: number;
     banDays: number;
   }> {
     const rules = await this.findLatest();
-    const fullRefund = productCost + shippingCost + testerBonus;
     const normalCommission = Number(rules.supertryCommission);
     const cancellationCommissionPercent = Number(
       rules.testerCancellationCommissionPercent,
@@ -261,7 +260,6 @@ export class BusinessRulesService {
     const supertryCommission = (normalCommission * cancellationCommissionPercent) / 100;
 
     return {
-      refundToTester: fullRefund,
       supertryCommission,
       banDays: rules.testerCancellationBanDays,
     };

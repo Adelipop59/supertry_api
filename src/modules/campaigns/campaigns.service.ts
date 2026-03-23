@@ -1000,10 +1000,34 @@ export class CampaignsService {
         where: { campaignId: id, status: 'COMPLETED' },
       });
 
-      // Calculer le montant déjà utilisé (sessions complétées)
+      // Calculer le montant déjà décaissé (sessions complétées + paiements partiels en cours)
+      // Inclut : reimbursements + bonus déjà versés aux testeurs + commissions SuperTry
       const escrow = await this.paymentsService.calculateCampaignEscrow(id);
-      const usedAmount = escrow.perTester * completedSessions;
-      const remainingAmount = Number(campaign.escrowAmount) - usedAmount;
+      const completedUsedAmount = escrow.perTester * completedSessions;
+
+      // Montants déjà versés aux sessions non-COMPLETED (reimbursements + bonus partiels)
+      const partiallyPaidSessions = await this.prisma.testSession.findMany({
+        where: {
+          campaignId: id,
+          status: { notIn: ['COMPLETED', 'CANCELLED', 'REJECTED'] },
+          OR: [
+            { purchaseReimbursementAmount: { not: null } },
+            { bonusAmount: { not: null } },
+          ],
+        },
+        select: {
+          purchaseReimbursementAmount: true,
+          bonusAmount: true,
+        },
+      });
+
+      let partialDisbursed = 0;
+      for (const s of partiallyPaidSessions) {
+        if (s.purchaseReimbursementAmount) partialDisbursed += Number(s.purchaseReimbursementAmount);
+        if (s.bonusAmount) partialDisbursed += Number(s.bonusAmount);
+      }
+
+      const remainingAmount = Number(campaign.escrowAmount) - completedUsedAmount - partialDisbursed;
 
       let refundAmount: number;
       let cancellationFee = 0;

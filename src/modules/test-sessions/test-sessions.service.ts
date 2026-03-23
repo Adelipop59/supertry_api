@@ -773,6 +773,14 @@ export class TestSessionsService {
       include: SESSION_INCLUDE,
     });
 
+    // Process purchase reimbursement (productPrice + shippingCost → testeur)
+    try {
+      await this.paymentsService.processPurchaseReimbursement(sessionId);
+    } catch (error) {
+      this.logger.error(`Failed to process purchase reimbursement for session ${sessionId}: ${error.message}`);
+      // Non-bloquant : la session est quand même PURCHASE_VALIDATED
+    }
+
     return updatedSession as any;
   }
 
@@ -936,6 +944,14 @@ export class TestSessionsService {
       include: SESSION_INCLUDE,
     });
 
+    // Process bonus payment (testerBonus + proBonus → testeur) + commission SuperTry
+    try {
+      await this.paymentsService.processBonusPayment(sessionId);
+    } catch (error) {
+      this.logger.error(`Failed to process bonus payment for session ${sessionId}: ${error.message}`);
+      // Non-bloquant : la session est quand même SUBMITTED
+    }
+
     return updatedSession as any;
   }
 
@@ -968,8 +984,7 @@ export class TestSessionsService {
       throw new I18nHttpException('session.offer_not_found', 'SESSION_OFFER_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    // Calculate reward amount: REAL productPrice + REAL shippingCost + testerBonus + proBonus
-    // Must match the calculation in paymentsService.processTestCompletion()
+    // Calculate total reward amount for historical record on the session
     const rules = await this.businessRulesService.findLatest();
     const testerBonus = rules?.testerBonus ?? 5;
     const rewardAmount =
@@ -994,31 +1009,22 @@ export class TestSessionsService {
       data: { completedSessionsCount: { increment: 1 } },
     });
 
-    // Process payment to tester
-    try {
-      const { testerTransfer, testerTransaction, commissionTransaction } =
-        await this.paymentsService.processTestCompletion(session.id);
+    // NOTE: Payments are now split into 2 earlier steps:
+    // 1. processPurchaseReimbursement (at validatePurchase → PURCHASE_VALIDATED)
+    // 2. processBonusPayment + commission (at submitTest → SUBMITTED)
+    // No payment processing needed at complete().
 
-      this.logger.log(`Tester paid: ${testerTransaction.amount.toNumber()}€`);
-      this.logger.log(`Commission: ${commissionTransaction.amount.toNumber()}€`);
-
-      // Audit log
-      await this.auditService.log(
-        session.testerId,
-        AuditCategory.SESSION,
-        'TEST_SESSION_COMPLETED',
-        {
-          sessionId: session.id,
-          campaignId: session.campaignId,
-          testerPayment: testerTransaction.amount.toNumber(),
-          commission: commissionTransaction.amount.toNumber(),
-        },
-      );
-    } catch (error) {
-      this.logger.error(`Failed to process test completion payment: ${error.message}`);
-      // Don't throw - session is still marked as COMPLETED
-      // Payment can be retried later
-    }
+    // Audit log
+    await this.auditService.log(
+      session.testerId,
+      AuditCategory.SESSION,
+      'TEST_SESSION_COMPLETED',
+      {
+        sessionId: session.id,
+        campaignId: session.campaignId,
+        rewardAmount,
+      },
+    );
 
     // Gamification: award XP for test completion (non-blocking)
     try {

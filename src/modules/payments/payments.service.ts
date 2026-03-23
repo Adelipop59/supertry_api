@@ -312,7 +312,238 @@ export class PaymentsService {
   // Test Session Completion Payment
   // ============================================================================
 
-  async processTestCompletion(sessionId: string): Promise<{
+  // ============================================================================
+  // Purchase Reimbursement (called at PURCHASE_VALIDATED)
+  // Transfers productPrice + shippingCost to tester
+  // ============================================================================
+
+  async processPurchaseReimbursement(sessionId: string): Promise<{
+    testerTransfer: Stripe.Transfer;
+    testerTransaction: Transaction;
+  }> {
+    const session = await this.prisma.testSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        campaign: {
+          select: {
+            id: true,
+            title: true,
+            sellerId: true,
+            stripePaymentIntentId: true,
+          },
+        },
+      },
+    });
+
+    if (!session) {
+      throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    // Idempotency guard: already reimbursed
+    if (session.purchaseReimbursedAt) {
+      this.logger.warn(`Purchase reimbursement already processed for session ${sessionId}`);
+      return null as any;
+    }
+
+    const testerProfile = await this.prisma.profile.findUnique({
+      where: { id: session.testerId },
+      select: { id: true, email: true, firstName: true, stripeConnectAccountId: true, stripeIdentityVerified: true, completedSessionsCount: true },
+    });
+
+    // Get business rules
+    const rules = await this.businessRulesService.findLatest();
+
+    const productCost = Number(session.productPrice);
+    const shippingCost = Number(session.shippingCost);
+    const reimbursementAmount = productCost + shippingCost;
+
+    // Vérifier Stripe Connect account
+    const testerStripeAccount = testerProfile?.stripeConnectAccountId;
+    if (!testerStripeAccount) {
+      throw new I18nHttpException('payment.tester_no_stripe', 'PAYMENT_TESTER_NO_STRIPE', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // KYC check
+    const kycThreshold = rules.kycRequiredAfterTests ?? 3;
+    const completedCount = testerProfile?.completedSessionsCount ?? 0;
+    if (completedCount >= kycThreshold && !testerProfile?.stripeIdentityVerified) {
+      throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
+    }
+
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    this.logger.log(`💰 PURCHASE REIMBURSEMENT FOR SESSION ${sessionId}`);
+    this.logger.log(`   Product Cost: ${productCost}€`);
+    this.logger.log(`   Shipping Cost: ${shippingCost}€`);
+    this.logger.log(`   TOTAL: ${reimbursementAmount}€`);
+    this.logger.log(`   Tester Stripe Account: ${testerStripeAccount}`);
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // Create wallet for tester if doesn't exist
+    await this.walletService.createWallet(session.testerId);
+
+    // Stripe Transfer: PLATEFORME → TESTEUR
+    let testerTransfer: any = null;
+    try {
+      testerTransfer = await this.stripeService.createPlatformToConnectTransfer(
+        reimbursementAmount,
+        testerStripeAccount,
+        'eur',
+        {
+          platform: 'supertry',
+          env: process.env.NODE_ENV || 'development',
+          transactionType: 'PURCHASE_REIMBURSEMENT',
+          sessionId,
+          campaignId: session.campaignId,
+          campaignTitle: session.campaign.title,
+          testerId: session.testerId,
+          testerEmail: testerProfile?.email || 'N/A',
+          testerName: testerProfile?.firstName || 'N/A',
+          productCost: productCost.toFixed(2),
+          shippingCost: shippingCost.toFixed(2),
+          totalReimbursement: reimbursementAmount.toFixed(2),
+          createdAt: new Date().toISOString(),
+        },
+        `Purchase reimbursement: ${session.campaign.title} - ${testerProfile?.firstName || 'Tester'}`,
+        `campaign_${session.campaignId}`,
+      );
+      this.logger.log(`✅ Purchase reimbursement transfer: ${testerTransfer.id} - ${reimbursementAmount}€ → ${testerStripeAccount}`);
+    } catch (error) {
+      this.logger.error(`❌ PURCHASE REIMBURSEMENT TRANSFER FAILED - Session ${sessionId}: ${error.message}`);
+
+      await this.auditService.log(
+        null,
+        AuditCategory.WALLET,
+        'TRANSFER_FAILED',
+        {
+          sessionId,
+          testerId: session.testerId,
+          amount: reimbursementAmount,
+          type: 'PURCHASE_REIMBURSEMENT',
+          error: error.message,
+          errorType: error.type,
+          errorCode: error.code,
+        },
+      );
+
+      throw new I18nHttpException('payment.transfer_failed', 'PAYMENT_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    // DB transaction: create transaction + update wallets + mark session
+    const result = await this.prisma.$transaction(async (tx) => {
+      let testerWallet = await tx.wallet.findUnique({
+        where: { userId: session.testerId },
+      });
+
+      if (!testerWallet) {
+        testerWallet = await tx.wallet.create({
+          data: {
+            userId: session.testerId,
+            balance: 0,
+            pendingBalance: 0,
+            totalEarned: 0,
+            totalWithdrawn: 0,
+          },
+        });
+      }
+
+      const testerTransaction = await tx.transaction.create({
+        data: {
+          walletId: testerWallet.id,
+          type: TransactionType.PURCHASE_REIMBURSEMENT,
+          amount: new Decimal(reimbursementAmount),
+          reason: `Purchase reimbursement: ${session.campaign.title}`,
+          sessionId,
+          campaignId: session.campaignId,
+          stripeTransferId: testerTransfer?.id || null,
+          status: TransactionStatus.COMPLETED,
+          metadata: {
+            productPrice: session.productPrice,
+            shippingCost: session.shippingCost,
+          },
+        },
+      });
+
+      await tx.wallet.update({
+        where: { id: testerWallet.id },
+        data: {
+          balance: { increment: new Decimal(reimbursementAmount) },
+          totalEarned: { increment: new Decimal(reimbursementAmount) },
+          lastCreditedAt: new Date(),
+        },
+      });
+
+      const platformWallet = await tx.platformWallet.findFirst();
+      if (!platformWallet) {
+        throw new I18nHttpException('payment.platform_wallet_not_found', 'PAYMENT_PLATFORM_WALLET_NOT_FOUND', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+
+      await tx.platformWallet.update({
+        where: { id: platformWallet.id },
+        data: {
+          escrowBalance: { decrement: new Decimal(reimbursementAmount) },
+          totalTransferred: { increment: new Decimal(reimbursementAmount) },
+        },
+      });
+
+      // Mark session as reimbursed
+      await tx.testSession.update({
+        where: { id: sessionId },
+        data: {
+          purchaseReimbursedAt: new Date(),
+          purchaseReimbursementAmount: new Decimal(reimbursementAmount),
+        },
+      });
+
+      return { testerTransaction };
+    });
+
+    // Audit
+    await this.auditService.log(
+      session.testerId,
+      AuditCategory.WALLET,
+      'PURCHASE_REIMBURSEMENT_CREDITED',
+      {
+        sessionId,
+        campaignId: session.campaignId,
+        reimbursementAmount,
+        transactionId: result.testerTransaction.id,
+        stripeTransferId: testerTransfer?.id || null,
+      },
+    );
+
+    // Notify tester
+    this.notificationsService.tryQueueEmail({
+      to: testerProfile!.email,
+      template: NotificationTemplate.GENERIC_NOTIFICATION,
+      subject: 'Purchase Reimbursement Received',
+      variables: {
+        firstName: testerProfile!.firstName || 'Tester',
+        campaignTitle: session.campaign.title,
+        amount: reimbursementAmount,
+        message: `You've received ${reimbursementAmount}€ as reimbursement for your purchase.`,
+      },
+      metadata: {
+        userId: session.testerId,
+        sessionId,
+        transactionId: result.testerTransaction.id,
+        type: NotificationType.PAYMENT_RECEIVED,
+      },
+    });
+
+    this.logger.log(`Purchase reimbursement processed: ${sessionId}`);
+
+    return {
+      testerTransfer,
+      testerTransaction: result.testerTransaction,
+    };
+  }
+
+  // ============================================================================
+  // Bonus Payment + Commission (called at SUBMITTED / submitTest)
+  // Transfers testerBonus + proBonus to tester, records SuperTry commission
+  // ============================================================================
+
+  async processBonusPayment(sessionId: string): Promise<{
     testerTransfer: Stripe.Transfer;
     testerTransaction: Transaction;
     commissionTransaction: Transaction;
@@ -332,137 +563,81 @@ export class PaymentsService {
       },
     });
 
-    // Get tester and seller profiles
-    const [testerProfile, sellerProfile] = await Promise.all([
-      this.prisma.profile.findUnique({
-        where: { id: session!.testerId },
-        select: { id: true, email: true, firstName: true, stripeConnectAccountId: true },
-      }),
-      this.prisma.profile.findUnique({
-        where: { id: session!.campaign.sellerId },
-        select: { id: true, email: true, firstName: true, stripeConnectAccountId: true },
-      }),
-    ]);
-
     if (!session) {
       throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    // Get business rules
+    // Idempotency guard: already paid
+    if (session.bonusPaidAt) {
+      this.logger.warn(`Bonus already paid for session ${sessionId}`);
+      return null as any;
+    }
+
+    const testerProfile = await this.prisma.profile.findUnique({
+      where: { id: session.testerId },
+      select: { id: true, email: true, firstName: true, stripeConnectAccountId: true, stripeIdentityVerified: true, completedSessionsCount: true },
+    });
+
     const rules = await this.businessRulesService.findLatest();
 
-    // Calculate reward for tester using REAL amounts paid by tester
-    // NOT the expected/max amounts from the offer
-    const productCost = Number(session.productPrice);  // Real price paid
-    const shippingCost = Number(session.shippingCost); // Real shipping paid
-    const testerBonus = rules.testerBonus;             // 5€ fixe (BusinessRules)
-    const proBonus = Number(session.campaign.offers[0].bonus ?? 0); // Bonus supplémentaire PRO
-    const rewardAmount = productCost + shippingCost + testerBonus + proBonus;
-    const commissionAmount = rules.supertryCommission; // 5€ fixe (BusinessRules)
+    const testerBonus = rules.testerBonus;
+    const proBonus = Number(session.campaign.offers[0].bonus ?? 0);
+    const bonusAmount = testerBonus + proBonus;
+    const commissionAmount = rules.supertryCommission;
 
-    // Vérifier TESTEUR Identity KYC (obligatoire)
     const testerStripeAccount = testerProfile?.stripeConnectAccountId;
     if (!testerStripeAccount) {
       throw new I18nHttpException('payment.tester_no_stripe', 'PAYMENT_TESTER_NO_STRIPE', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
+    // KYC check
+    const kycThreshold = rules.kycRequiredAfterTests ?? 3;
+    const completedCount = testerProfile?.completedSessionsCount ?? 0;
+    if (completedCount >= kycThreshold && !testerProfile?.stripeIdentityVerified) {
+      throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
+    }
+
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    this.logger.log(`💰 PROCESSING TEST COMPLETION FOR SESSION ${sessionId}`);
-    this.logger.log(`   Product Cost: ${productCost}€`);
-    this.logger.log(`   Shipping Cost: ${shippingCost}€`);
+    this.logger.log(`💰 BONUS PAYMENT FOR SESSION ${sessionId}`);
     this.logger.log(`   Tester Fee (fixed): ${testerBonus}€`);
     this.logger.log(`   Pro Bonus: ${proBonus}€`);
-    this.logger.log(`   TOTAL REWARD: ${rewardAmount}€`);
+    this.logger.log(`   TOTAL BONUS: ${bonusAmount}€`);
     this.logger.log(`   Commission (SuperTry): ${commissionAmount}€`);
     this.logger.log(`   Tester Stripe Account: ${testerStripeAccount}`);
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
-    // Create wallet for tester if doesn't exist
     await this.walletService.createWallet(session.testerId);
 
-    // Vérifier stripeIdentityVerified pour TESTEUR (uniquement après N tests complétés)
-    const testerIdentity = await this.prisma.profile.findUnique({
-      where: { id: session.testerId },
-      select: { stripeIdentityVerified: true, completedSessionsCount: true },
-    });
-
-    const kycThreshold = rules.kycRequiredAfterTests ?? 3;
-    const completedCount = testerIdentity?.completedSessionsCount ?? 0;
-
-    // IMPORTANT: Utiliser ">" (strictement supérieur) et non ">=" car completedSessionsCount
-    // est déjà incrémenté pour le test en cours AVANT l'appel à processTestCompletion.
-    // À la candidature (apply), le check utilise ">=" sur le compteur AVANT incrément.
-    // Donc ici ">" sur le compteur APRÈS incrément = même filtre effectif.
-    // Résultat: si le testeur a pu postuler, il sera forcément payé.
-    if (completedCount > kycThreshold && !testerIdentity?.stripeIdentityVerified) {
-      throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
-    }
-
-    // NOTE: Pour les TESTEURS, on vérifie uniquement stripeIdentityVerified (après le seuil KYC)
-    // Les TESTEURS REÇOIVENT de l'argent (transfers), ils n'en PRENNENT PAS (charges)
-    // Donc chargesEnabled n'est PAS requis pour les testeurs
-
-    // Create Platform Transfer: PLATEFORME → TESTEUR
-    // Separate Charges and Transfers: argent vient du compte plateforme
+    // Stripe Transfer: PLATEFORME → TESTEUR (bonus only)
     let testerTransfer: any = null;
     try {
-      this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      this.logger.log(`🔄 CRÉATION TRANSFER PLATEFORME → TESTEUR`);
-      this.logger.log(`   Session ID: ${sessionId}`);
-      this.logger.log(`   Testeur Stripe Account: ${testerStripeAccount}`);
-      this.logger.log(`   Montant: ${rewardAmount}€`);
-      this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-      // Récupérer le Charge ID pour source_transaction
-      let sourceChargeId: string | undefined;
-      if (session.campaign.stripePaymentIntentId) {
-        sourceChargeId = await this.stripeService.getChargeIdFromPaymentIntent(
-          session.campaign.stripePaymentIntentId,
-        ) || undefined;
-      }
-
       testerTransfer = await this.stripeService.createPlatformToConnectTransfer(
-        rewardAmount,
-        testerStripeAccount, // TO: TESTEUR's Connect account
+        bonusAmount,
+        testerStripeAccount,
         'eur',
         {
           platform: 'supertry',
           env: process.env.NODE_ENV || 'development',
-          transactionType: 'TEST_REWARD',
+          transactionType: 'TEST_BONUS',
           sessionId,
           campaignId: session.campaignId,
           campaignTitle: session.campaign.title,
           testerId: session.testerId,
           testerEmail: testerProfile?.email || 'N/A',
           testerName: testerProfile?.firstName || 'N/A',
-          sellerId: session.campaign.sellerId,
-          sellerEmail: sellerProfile?.email || 'N/A',
-          productCost: productCost.toFixed(2),
-          shippingCost: shippingCost.toFixed(2),
           testerFee: testerBonus.toFixed(2),
           proBonus: proBonus.toFixed(2),
-          totalReward: rewardAmount.toFixed(2),
+          totalBonus: bonusAmount.toFixed(2),
           commissionRetained: commissionAmount.toFixed(2),
-          sourceChargeId: sourceChargeId || 'N/A',
           createdAt: new Date().toISOString(),
         },
-        `Test reward: ${session.campaign.title} - ${testerProfile?.firstName || 'Tester'}`,
+        `Test bonus: ${session.campaign.title} - ${testerProfile?.firstName || 'Tester'}`,
         `campaign_${session.campaignId}`,
       );
-      this.logger.log(`✅ Transfer créé: ${testerTransfer.id} - ${rewardAmount}€ → ${testerStripeAccount}`);
+      this.logger.log(`✅ Bonus transfer: ${testerTransfer.id} - ${bonusAmount}€ → ${testerStripeAccount}`);
     } catch (error) {
-      this.logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      this.logger.error(`❌ ÉCHEC DU TRANSFER PLATEFORME → TESTEUR`);
-      this.logger.error(`   Session ID: ${sessionId}`);
-      this.logger.error(`   Testeur: ${testerStripeAccount}`);
-      this.logger.error(`   Montant: ${rewardAmount}€`);
-      this.logger.error(`   Erreur: ${error.message}`);
-      this.logger.error(`   Type: ${error.type || 'N/A'}`);
-      this.logger.error(`   Code: ${error.code || 'N/A'}`);
-      this.logger.error(`   Stack: ${error.stack}`);
-      this.logger.error(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      this.logger.error(`❌ BONUS TRANSFER FAILED - Session ${sessionId}: ${error.message}`);
 
-      // Audit échec
       await this.auditService.log(
         null,
         AuditCategory.WALLET,
@@ -470,7 +645,8 @@ export class PaymentsService {
         {
           sessionId,
           testerId: session.testerId,
-          amount: rewardAmount,
+          amount: bonusAmount,
+          type: 'TEST_BONUS',
           error: error.message,
           errorType: error.type,
           errorCode: error.code,
@@ -480,9 +656,8 @@ export class PaymentsService {
       throw new I18nHttpException('payment.transfer_failed', 'PAYMENT_TRANSFER_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    // Create transactions in database
+    // DB transaction: bonus + commission + wallet updates
     const result = await this.prisma.$transaction(async (tx) => {
-      // Get or create tester wallet
       let testerWallet = await tx.wallet.findUnique({
         where: { userId: session.testerId },
       });
@@ -499,20 +674,18 @@ export class PaymentsService {
         });
       }
 
-      // Transaction TEST_REWARD (testeur)
+      // Transaction TEST_REWARD (bonus testeur)
       const testerTransaction = await tx.transaction.create({
         data: {
           walletId: testerWallet.id,
           type: TransactionType.TEST_REWARD,
-          amount: new Decimal(rewardAmount),
-          reason: `Test reward: ${session.campaign.title}`,
+          amount: new Decimal(bonusAmount),
+          reason: `Test bonus: ${session.campaign.title}`,
           sessionId,
           campaignId: session.campaignId,
           stripeTransferId: testerTransfer?.id || null,
           status: TransactionStatus.COMPLETED,
           metadata: {
-            productPrice: session.productPrice,
-            shippingCost: session.shippingCost,
             testerFee: testerBonus,
             proBonus,
           },
@@ -536,12 +709,8 @@ export class PaymentsService {
       await tx.wallet.update({
         where: { id: testerWallet.id },
         data: {
-          balance: {
-            increment: new Decimal(rewardAmount),
-          },
-          totalEarned: {
-            increment: new Decimal(rewardAmount),
-          },
+          balance: { increment: new Decimal(bonusAmount) },
+          totalEarned: { increment: new Decimal(bonusAmount) },
           lastCreditedAt: new Date(),
         },
       });
@@ -555,18 +724,19 @@ export class PaymentsService {
       await tx.platformWallet.update({
         where: { id: platformWallet.id },
         data: {
-          escrowBalance: {
-            decrement: new Decimal(rewardAmount + commissionAmount),
-          },
-          commissionBalance: {
-            increment: new Decimal(commissionAmount),
-          },
-          totalTransferred: {
-            increment: new Decimal(rewardAmount),
-          },
-          totalCommissions: {
-            increment: new Decimal(commissionAmount),
-          },
+          escrowBalance: { decrement: new Decimal(bonusAmount + commissionAmount) },
+          commissionBalance: { increment: new Decimal(commissionAmount) },
+          totalTransferred: { increment: new Decimal(bonusAmount) },
+          totalCommissions: { increment: new Decimal(commissionAmount) },
+        },
+      });
+
+      // Mark session bonus as paid
+      await tx.testSession.update({
+        where: { id: sessionId },
+        data: {
+          bonusPaidAt: new Date(),
+          bonusAmount: new Decimal(bonusAmount),
         },
       });
 
@@ -577,18 +747,18 @@ export class PaymentsService {
     await this.auditService.log(
       session.testerId,
       AuditCategory.WALLET,
-      'TEST_COMPLETION_REWARD_CREDITED',
+      'TEST_BONUS_CREDITED',
       {
         sessionId,
         campaignId: session.campaignId,
-        rewardAmount,
+        bonusAmount,
         transactionId: result.testerTransaction.id,
         stripeTransferId: testerTransfer?.id || null,
       },
     );
 
     await this.auditService.log(
-      null, // System action
+      null,
       AuditCategory.WALLET,
       'COMMISSION_COLLECTED',
       {
@@ -599,17 +769,16 @@ export class PaymentsService {
       },
     );
 
-    // Notifications
-    // 1. Notify tester
+    // Notify tester
     this.notificationsService.tryQueueEmail({
       to: testerProfile!.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
-      subject: 'Payment Received - Test Completed',
+      subject: 'Test Bonus Received',
       variables: {
         firstName: testerProfile!.firstName || 'Tester',
         campaignTitle: session.campaign.title,
-        amount: rewardAmount,
-        message: `Congratulations! You've received ${rewardAmount}€ for completing the test.`,
+        amount: bonusAmount,
+        message: `You've received ${bonusAmount}€ bonus for submitting your test.`,
       },
       metadata: {
         userId: session.testerId,
@@ -619,26 +788,7 @@ export class PaymentsService {
       },
     });
 
-    // 2. Notify seller
-    this.notificationsService.tryQueueEmail({
-      to: sellerProfile!.email,
-      template: NotificationTemplate.GENERIC_NOTIFICATION,
-      subject: 'Test Session Completed',
-      variables: {
-        firstName: sellerProfile!.firstName || 'Seller',
-        testerName: testerProfile!.firstName || 'Tester',
-        campaignTitle: session.campaign.title,
-        message: `A tester has completed your campaign "${session.campaign.title}".`,
-      },
-      metadata: {
-        userId: session.campaign.sellerId,
-        sessionId,
-        campaignId: session.campaignId,
-        type: NotificationType.TEST_VALIDATED,
-      },
-    });
-
-    this.logger.log(`Test completion processed: ${sessionId}`);
+    this.logger.log(`Bonus payment processed: ${sessionId}`);
 
     return {
       testerTransfer,
@@ -863,6 +1013,7 @@ export class PaymentsService {
       totalCompensation: number;
       totalCommission: number;
       compensationMap: Record<string, number>;
+      totalDisbursed?: number;
     },
   ): Promise<{
     refundToPro: number;
@@ -892,18 +1043,20 @@ export class PaymentsService {
     }
 
     const totalEscrowAmount = Number(campaign.escrowAmount || 0);
+    const totalDisbursed = cancellationContext.totalDisbursed || 0;
 
-    // Calculer les montants via BusinessRules (fee sur le restant après compensations + commission)
+    // Calculer les montants via BusinessRules (fee sur le restant après compensations + commission + déjà versé)
     const { refundToPro, cancellationFee, supertryCommission } =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         cancellationContext.hoursElapsed,
         cancellationContext.totalCompensation,
         cancellationContext.totalCommission,
+        totalDisbursed,
       );
 
     this.logger.log(
-      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, commission=${supertryCommission}€, totalCompensation=${cancellationContext.totalCompensation}€`,
+      `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, commission=${supertryCommission}€, totalCompensation=${cancellationContext.totalCompensation}€, totalDisbursed=${totalDisbursed}€`,
     );
 
     let refund: Stripe.Refund | null = null;
@@ -1142,15 +1295,14 @@ export class PaymentsService {
   }
 
   /**
-   * Traite le remboursement d'une session annulée par un testeur après PURCHASE_VALIDATED
+   * Traite l'annulation d'une session par un testeur après PURCHASE_VALIDATED.
+   * Le testeur garde le remboursement achat (déjà transféré).
+   * SuperTry prélève une commission réduite (50%).
    */
   async processSessionCancellationRefund(
     sessionId: string,
   ): Promise<{
-    refundToTester: number;
     supertryCommission: number;
-    refund: Stripe.Refund;
-    transaction: Transaction;
   }> {
     const session = await this.prisma.testSession.findUnique({
       where: { id: sessionId },
@@ -1169,78 +1321,21 @@ export class PaymentsService {
       throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    if (!session.campaign.stripePaymentIntentId) {
-      throw new I18nHttpException('payment.no_payment_found', 'PAYMENT_NO_PAYMENT_FOUND', HttpStatus.NOT_FOUND);
-    }
-
     // Récupérer le PlatformWallet
     const platformWallet = await this.prisma.platformWallet.findFirst();
     if (!platformWallet) {
       throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
-    const rules = await this.businessRulesService.findLatest();
-    const productCost = Number(session.validatedProductPrice || session.campaign.offers[0].expectedPrice);
-    const shippingCost = Number(session.campaign.offers[0].shippingCost);
-    const testerFee = rules.testerBonus;
-    const proBonus = Number(session.campaign.offers[0].bonus ?? 0);
-    const totalTesterBonus = testerFee + proBonus;
-
-    // Calculer les montants via BusinessRules
-    const { refundToTester, supertryCommission } =
-      await this.businessRulesService.calculateTesterCancellationImpact(
-        productCost,
-        shippingCost,
-        totalTesterBonus,
-      );
+    // Commission réduite SuperTry (50% de la commission normale)
+    const { supertryCommission } =
+      await this.businessRulesService.calculateTesterCancellationImpact();
 
     this.logger.log(
-      `Processing tester cancellation refund for session ${sessionId}: refund=${refundToTester}€, commission=${supertryCommission}€`,
+      `Processing tester cancellation for session ${sessionId}: commission=${supertryCommission}€ (tester keeps purchase reimbursement)`,
     );
 
-    // 1. Rembourser le testeur
-    const refund = await this.stripeService.createRefund(
-      session.campaign.stripePaymentIntentId,
-      refundToTester,
-      'requested_by_customer',
-      {
-        sessionId,
-        campaignId: session.campaignId,
-        transactionType: 'TESTER_CANCELLATION_REFUND',
-      },
-    );
-
-    // Trouver le wallet du testeur
-    const testerWallet = await this.prisma.wallet.findUnique({
-      where: { userId: session.testerId },
-    });
-
-    // Créer transaction de remboursement
-    const transaction = await this.prisma.transaction.create({
-      data: {
-        walletId: testerWallet?.id || null,
-        campaignId: session.campaignId,
-        sessionId,
-        type: TransactionType.TESTER_CANCELLATION_REFUND,
-        amount: new Decimal(refundToTester),
-        reason: `Refund for cancelled session: ${session.campaign.title}`,
-        status: TransactionStatus.COMPLETED,
-        stripePaymentIntentId: session.campaign.stripePaymentIntentId,
-        stripeRefundId: refund.id,
-      },
-    });
-
-    // Mettre à jour escrow balance
-    await this.prisma.platformWallet.update({
-      where: { id: platformWallet.id },
-      data: {
-        escrowBalance: {
-          decrement: new Decimal(refundToTester),
-        },
-      },
-    });
-
-    // 2. Enregistrer la commission réduite SuperTry
+    // Enregistrer la commission réduite SuperTry
     await this.prisma.transaction.create({
       data: {
         walletId: null, // PLATEFORME
@@ -1260,29 +1355,33 @@ export class PaymentsService {
         escrowBalance: {
           decrement: new Decimal(supertryCommission),
         },
+        commissionBalance: {
+          increment: new Decimal(supertryCommission),
+        },
+        totalCommissions: {
+          increment: new Decimal(supertryCommission),
+        },
       },
     });
 
-    // 3. Notifier le testeur
+    // Notifier le testeur
     this.notificationsService.tryQueueEmail({
       to: session.tester.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
-      subject: 'Session annulée - Remboursement traité',
+      subject: 'Session annulée',
       variables: {
         firstName: session.tester.firstName || 'Testeur',
         campaignTitle: session.campaign.title,
-        refundAmount: refundToTester,
-        message: `Votre session a été annulée. Vous serez remboursé de ${refundToTester}€ (produit + frais de port + bonus). Vous gardez le produit. Votre compte est temporairement suspendu pendant 14 jours.`,
+        message: `Votre session pour la campagne "${session.campaign.title}" a été annulée. Le remboursement de votre achat vous a déjà été versé.`,
       },
       metadata: {
         sessionId,
         campaignId: session.campaignId,
-        transactionId: transaction.id,
-        type: NotificationType.PAYMENT_RECEIVED,
+        type: NotificationType.SESSION_CANCELLED,
       },
     });
 
-    // 4. Notifier le PRO
+    // Notifier le PRO
     this.notificationsService.tryQueueEmail({
       to: session.campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,
@@ -1304,22 +1403,19 @@ export class PaymentsService {
     await this.auditService.log(
       session.testerId,
       AuditCategory.WALLET,
-      'TESTER_CANCELLATION_REFUND',
+      'TESTER_CANCELLATION_COMMISSION',
       {
         sessionId,
-        refundToTester,
         supertryCommission,
         campaignId: session.campaignId,
+        purchaseReimbursementKept: Number(session.purchaseReimbursementAmount ?? 0),
       },
     );
 
-    this.logger.log(`Tester cancellation refund processed for session ${sessionId}`);
+    this.logger.log(`Tester cancellation processed for session ${sessionId}`);
 
     return {
-      refundToTester,
       supertryCommission,
-      refund,
-      transaction,
     };
   }
 

@@ -148,6 +148,7 @@ enum TransactionType {
   DISPUTE_RESOLUTION // Transaction suite résolution de litige
   WITHDRAWAL // Retrait testeur
   REFUND // Remboursement général
+  PURCHASE_REIMBURSEMENT // Remboursement achat testeur (productPrice + shippingCost) à la validation achat
 }
 
 // Enum pour statut transaction
@@ -749,6 +750,14 @@ model TestSession {
   // Test submission
   submittedAt    DateTime? @map("submitted_at")
   submissionData Json?     @map("submission_data")
+
+  // Purchase reimbursement (paid at PURCHASE_VALIDATED)
+  purchaseReimbursedAt       DateTime? @map("purchase_reimbursed_at")
+  purchaseReimbursementAmount Decimal?  @map("purchase_reimbursement_amount") @db.Decimal(10, 2)
+
+  // Bonus payment (paid at SUBMITTED)
+  bonusPaidAt DateTime? @map("bonus_paid_at")
+  bonusAmount Decimal?  @map("bonus_amount") @db.Decimal(10, 2)
 
   // Completion & Payment
   completedAt  DateTime? @map("completed_at")
