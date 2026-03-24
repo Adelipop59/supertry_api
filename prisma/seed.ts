@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { hash } from '@node-rs/argon2';
 
 const prisma = new PrismaClient();
 
@@ -100,6 +101,56 @@ async function main() {
     },
   });
   console.log('✅ Platform Wallet créé');
+
+  // 5. Admin Accounts
+  console.log('👤 Création des comptes admin...');
+  const adminPassword = process.env.ADMIN_SEED_PASSWORD || 'SuperTryAdmin123!';
+  const passwordHash = await hash(adminPassword, {
+    memoryCost: 19456,
+    timeCost: 2,
+    outputLen: 32,
+    parallelism: 1,
+  });
+
+  const admins = [
+    {
+      id: '00000000-0000-0000-0000-admin0000001',
+      email: 'admin@supertry.io',
+      firstName: 'Admin',
+      lastName: 'SuperTry',
+    },
+    {
+      id: '00000000-0000-0000-0000-admin0000002',
+      email: 'admin2@supertry.io',
+      firstName: 'Admin2',
+      lastName: 'SuperTry',
+    },
+    {
+      id: '00000000-0000-0000-0000-admin0000003',
+      email: 'admin3@supertry.io',
+      firstName: 'Admin3',
+      lastName: 'SuperTry',
+    },
+  ];
+
+  for (const admin of admins) {
+    await prisma.profile.upsert({
+      where: { email: admin.email },
+      update: { passwordHash, role: 'ADMIN' },
+      create: {
+        id: admin.id,
+        email: admin.email,
+        passwordHash,
+        role: 'ADMIN',
+        firstName: admin.firstName,
+        lastName: admin.lastName,
+        isActive: true,
+        isVerified: true,
+        isOnboarded: true,
+      },
+    });
+  }
+  console.log(`✅ ${admins.length} comptes admin créés`);
 
   console.log('🎉 Seed terminé avec succès !');
 }

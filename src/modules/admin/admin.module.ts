@@ -4,6 +4,10 @@ import { AdminFinanceService } from './admin-finance.service';
 import { AdminModerationController } from './admin-moderation.controller';
 import { AdminUsersController } from './admin-users.controller';
 import { AdminModerationService } from './admin-moderation.service';
+import { AdminOverviewController } from './admin-overview.controller';
+import { AdminOverviewService } from './admin-overview.service';
+import { AdminSystemController } from './admin-system.controller';
+import { AdminSystemService } from './admin-system.service';
 import { PrismaModule } from '../../database/prisma.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { WalletModule } from '../wallet/wallet.module';
@@ -22,7 +26,18 @@ import { MediaModule } from '../media/media.module';
     NotificationsModule,
     MediaModule,
   ],
-  controllers: [AdminFinanceController, AdminModerationController, AdminUsersController],
-  providers: [AdminFinanceService, AdminModerationService],
+  controllers: [
+    AdminFinanceController,
+    AdminModerationController,
+    AdminUsersController,
+    AdminOverviewController,
+    AdminSystemController,
+  ],
+  providers: [
+    AdminFinanceService,
+    AdminModerationService,
+    AdminOverviewService,
+    AdminSystemService,
+  ],
 })
 export class AdminModule {}

@@ -39,6 +39,8 @@ import { LuciaAuthGuard } from './common/guards/lucia-auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { MetricsInterceptor } from './common/interceptors/metrics.interceptor';
+import { MetricsModule } from './common/services/metrics.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 
 @Module({
@@ -65,6 +67,7 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
         AcceptLanguageResolver,
       ],
     }),
+    MetricsModule,
     PrismaModule,
     AuditModule,
     NotificationsModule,
@@ -116,6 +119,10 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
     {
       provide: APP_INTERCEPTOR,
       useClass: AuditInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: MetricsInterceptor,
     },
   ],
 })
