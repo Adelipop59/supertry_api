@@ -45,6 +45,8 @@ const PRODUCT_INCLUDE = {
         select: {
           id: true,
           status: true,
+          title: true,
+          escrowAmount: true,
         },
       },
     },

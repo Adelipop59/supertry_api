@@ -122,6 +122,7 @@ export class CancellationsService {
                 SessionStatus.ACCEPTED,
                 SessionStatus.PRICE_VALIDATED,
                 SessionStatus.PURCHASE_SUBMITTED,
+                SessionStatus.PURCHASE_REJECTED,
                 SessionStatus.PURCHASE_VALIDATED,
               ],
             },
@@ -246,6 +247,7 @@ export class CancellationsService {
         session.status === SessionStatus.ACCEPTED ||
         session.status === SessionStatus.PRICE_VALIDATED ||
         session.status === SessionStatus.PURCHASE_SUBMITTED ||
+        session.status === SessionStatus.PURCHASE_REJECTED ||
         session.status === SessionStatus.PURCHASE_VALIDATED,
     );
 
@@ -319,6 +321,7 @@ export class CancellationsService {
             SessionStatus.ACCEPTED,
             SessionStatus.PRICE_VALIDATED,
             SessionStatus.PURCHASE_SUBMITTED,
+            SessionStatus.PURCHASE_REJECTED,
             SessionStatus.PURCHASE_VALIDATED,
           ],
         },
@@ -391,6 +394,7 @@ export class CancellationsService {
                 SessionStatus.ACCEPTED,
                 SessionStatus.PRICE_VALIDATED,
                 SessionStatus.PURCHASE_SUBMITTED,
+                SessionStatus.PURCHASE_REJECTED,
                 SessionStatus.PURCHASE_VALIDATED,
               ],
             },

@@ -37,9 +37,13 @@ export class InvoiceService {
       throw new ForbiddenException('You are not the owner of this campaign');
     }
 
-    // 3. Vérifier que la campagne a été payée
+    // 3. Vérifier que la campagne a été payée et que la période de grâce est terminée
     if (!campaign.paymentAuthorizedAt) {
       throw new BadRequestException('Campaign has not been paid yet');
+    }
+
+    if (!campaign.paymentCapturedAt) {
+      throw new BadRequestException('Invoice is not yet available — payment is still in grace period');
     }
 
     // 4. Si la facture existe déjà, retourner l'URL cached

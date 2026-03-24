@@ -101,6 +101,7 @@ enum SessionStatus {
   COMPLETED // 9. Session terminée et payée
 
   // Statuts d'exception
+  PURCHASE_REJECTED // Commande rejetée par le PRO, testeur peut re-soumettre
   REJECTED // Refusée par le vendeur
   CANCELLED // Annulée par le testeur
   DISPUTED // En litige (besoin intervention admin)
@@ -783,13 +784,14 @@ model TestSession {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  stepProgress SessionStepProgress[]
-  messages     Message[]
-  review        Review?
-  testerRating  TesterRating?
-  ugcs          UGC[]
-  tips         Tip[]
-  transactions Transaction[]
+  stepProgress     SessionStepProgress[]
+  messages         Message[]
+  review           Review?
+  testerRating     TesterRating?
+  ugcs             UGC[]
+  tips             Tip[]
+  transactions     Transaction[]
+  purchaseAttempts PurchaseAttempt[]
 
   @@unique([testerId, campaignId])
   @@index([campaignId])
@@ -797,6 +799,31 @@ model TestSession {
   @@index([status])
   @@index([appliedAt])
   @@map("test_sessions")
+}
+
+// Table PurchaseAttempt - Historique des tentatives de commande
+model PurchaseAttempt {
+  id String @id @default(uuid())
+
+  sessionId String      @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  orderNumber       String?  @map("order_number")
+  productPrice      Decimal? @map("product_price") @db.Decimal(10, 2)
+  shippingCost      Decimal? @map("shipping_cost") @db.Decimal(10, 2)
+  purchaseProofKeys Json     @default("[]") @map("purchase_proof_keys")
+
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  // Rejection info (null if not yet rejected)
+  rejectedAt      DateTime? @map("rejected_at")
+  rejectionReason String?   @map("rejection_reason") @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@map("purchase_attempts")
 }
 
 // Table SessionStepProgress - Progression dans les steps
