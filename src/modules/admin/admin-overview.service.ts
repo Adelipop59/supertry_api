@@ -295,79 +295,131 @@ export class AdminOverviewService {
   // ============================================================================
 
   async getGlobalStats() {
-    const commissionTypes: TransactionType[] = [
-      TransactionType.COMMISSION,
-      TransactionType.UGC_COMMISSION,
-      TransactionType.TIP_COMMISSION,
-      TransactionType.CANCELLATION_COMMISSION,
-    ];
-
     const twelveMonthsAgo = new Date();
     twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
     twelveMonthsAgo.setDate(1);
     twelveMonthsAgo.setHours(0, 0, 0, 0);
 
     const [
-      totalCampaignSpending,
-      marginsCollected,
+      // --- Revenus PRO (ce que les PROs ont paye) ---
+      campaignPayments,
+      // --- Commissions SuperTry par type ---
+      commissionsByType,
+      // --- Gains testeurs par type ---
+      testerEarningsByType,
+      // --- Remboursements ---
+      refundsByType,
+      // --- Platform wallet (etat actuel) ---
       platformWallet,
+      // --- Users ---
       totalUsers,
       totalPros,
       totalTesters,
-      totalCampaigns,
-      activeCampaigns,
+      // --- Campaigns ---
+      campaignsByStatus,
+      // --- Sessions ---
       totalSessions,
       completedSessions,
       disputedSessions,
+      cancelledSessions,
+      // --- Withdrawals ---
       totalWithdrawn,
       pendingWithdrawals,
+      // --- User growth ---
       userGrowth,
+      // --- Conversion & duration ---
       conversionStats,
       avgSessionDuration,
+      // --- Stripe fees delta ---
+      businessRules,
     ] = await Promise.all([
-      // Total depense en campagnes
+      // Total paye par les PROs
       this.prisma.transaction.aggregate({
-        where: {
-          type: TransactionType.CAMPAIGN_PAYMENT,
-          status: TransactionStatus.COMPLETED,
-        },
+        where: { type: TransactionType.CAMPAIGN_PAYMENT, status: TransactionStatus.COMPLETED },
         _sum: { amount: true },
+        _count: true,
       }),
 
-      // Marges SuperTry recuperees
-      this.prisma.transaction.aggregate({
+      // Commissions SuperTry - detail par type
+      this.prisma.transaction.groupBy({
+        by: ['type'],
         where: {
-          type: { in: commissionTypes },
+          type: {
+            in: [
+              TransactionType.COMMISSION,
+              TransactionType.UGC_COMMISSION,
+              TransactionType.TIP_COMMISSION,
+              TransactionType.CANCELLATION_COMMISSION,
+            ],
+          },
           status: TransactionStatus.COMPLETED,
         },
         _sum: { amount: true },
         _count: true,
       }),
 
-      // Platform wallet (escrow = marges pas encore recuperees)
+      // Gains testeurs - detail par type
+      this.prisma.transaction.groupBy({
+        by: ['type'],
+        where: {
+          type: {
+            in: [
+              TransactionType.PURCHASE_REIMBURSEMENT,
+              TransactionType.TEST_REWARD,
+              TransactionType.UGC_PAYMENT,
+              TransactionType.TIP,
+              TransactionType.TESTER_COMPENSATION,
+              TransactionType.DISPUTE_RESOLUTION,
+            ],
+          },
+          status: TransactionStatus.COMPLETED,
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // Remboursements vers PROs
+      this.prisma.transaction.groupBy({
+        by: ['type'],
+        where: {
+          type: {
+            in: [
+              TransactionType.CAMPAIGN_REFUND,
+              TransactionType.TESTER_CANCELLATION_REFUND,
+              TransactionType.REFUND,
+            ],
+          },
+          status: TransactionStatus.COMPLETED,
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+
+      // Platform wallet
       this.prisma.platformWallet.findFirst(),
 
-      // User counts
+      // Users
       this.prisma.profile.count(),
       this.prisma.profile.count({ where: { role: UserRole.PRO } }),
       this.prisma.profile.count({ where: { role: UserRole.USER } }),
 
-      // Campaign counts
-      this.prisma.campaign.count(),
-      this.prisma.campaign.count({ where: { status: CampaignStatus.ACTIVE } }),
+      // Campaigns par statut
+      this.prisma.campaign.groupBy({
+        by: ['status'],
+        _count: true,
+      }),
 
-      // Session counts
+      // Sessions
       this.prisma.testSession.count(),
       this.prisma.testSession.count({ where: { status: SessionStatus.COMPLETED } }),
       this.prisma.testSession.count({ where: { status: SessionStatus.DISPUTED } }),
+      this.prisma.testSession.count({ where: { status: SessionStatus.CANCELLED } }),
 
       // Withdrawals
       this.prisma.transaction.aggregate({
-        where: {
-          type: TransactionType.WITHDRAWAL,
-          status: TransactionStatus.COMPLETED,
-        },
+        where: { type: TransactionType.WITHDRAWAL, status: TransactionStatus.COMPLETED },
         _sum: { amount: true },
+        _count: true,
       }),
       this.prisma.withdrawal.aggregate({
         where: { status: { in: [WithdrawalStatus.PENDING, WithdrawalStatus.PROCESSING] } },
@@ -375,7 +427,7 @@ export class AdminOverviewService {
         _count: true,
       }),
 
-      // User growth (12 derniers mois)
+      // User growth (12 mois)
       this.prisma.$queryRaw<Array<{ month: Date; count: bigint }>>`
         SELECT date_trunc('month', created_at) AS month, COUNT(*)::bigint AS count
         FROM profiles
@@ -384,7 +436,7 @@ export class AdminOverviewService {
         ORDER BY month ASC
       `,
 
-      // Conversion : applications -> completions
+      // Conversion
       this.prisma.$queryRaw<Array<{ total_applied: bigint; total_completed: bigint }>>`
         SELECT
           COUNT(*)::bigint AS total_applied,
@@ -392,44 +444,147 @@ export class AdminOverviewService {
         FROM test_sessions
       `,
 
-      // Duree moyenne de session (appliedAt -> completedAt)
+      // Duree moyenne
       this.prisma.$queryRaw<Array<{ avg_hours: number }>>`
         SELECT EXTRACT(EPOCH FROM AVG(completed_at - applied_at)) / 3600 AS avg_hours
         FROM test_sessions
         WHERE status = 'COMPLETED' AND completed_at IS NOT NULL AND applied_at IS NOT NULL
       `,
+
+      // Business rules pour le stripeFeePercent
+      this.prisma.businessRules.findFirst({ where: { isActive: true } }),
     ]);
+
+    // --- Helpers ---
+    const sumByType = (groups: Array<{ type: string; _sum: { amount: any }; _count: number }>, type: string) => {
+      const found = groups.find((g) => g.type === type);
+      return { amount: Number(found?._sum.amount ?? 0), count: found?._count ?? 0 };
+    };
+
+    // --- Commissions detail ---
+    const commTestCompleted = sumByType(commissionsByType, TransactionType.COMMISSION);
+    const commUgc = sumByType(commissionsByType, TransactionType.UGC_COMMISSION);
+    const commTip = sumByType(commissionsByType, TransactionType.TIP_COMMISSION);
+    const commCancellation = sumByType(commissionsByType, TransactionType.CANCELLATION_COMMISSION);
+    const totalCommissions = commTestCompleted.amount + commUgc.amount + commTip.amount + commCancellation.amount;
+
+    // --- Gains testeurs detail ---
+    const testerReimbursements = sumByType(testerEarningsByType, TransactionType.PURCHASE_REIMBURSEMENT);
+    const testerRewards = sumByType(testerEarningsByType, TransactionType.TEST_REWARD);
+    const testerUgc = sumByType(testerEarningsByType, TransactionType.UGC_PAYMENT);
+    const testerTips = sumByType(testerEarningsByType, TransactionType.TIP);
+    const testerCompensations = sumByType(testerEarningsByType, TransactionType.TESTER_COMPENSATION);
+    const testerDisputes = sumByType(testerEarningsByType, TransactionType.DISPUTE_RESOLUTION);
+    const totalTesterEarnings = testerReimbursements.amount + testerRewards.amount + testerUgc.amount
+      + testerTips.amount + testerCompensations.amount + testerDisputes.amount;
+
+    // --- Remboursements detail ---
+    const refundCampaign = sumByType(refundsByType, TransactionType.CAMPAIGN_REFUND);
+    const refundTesterCancel = sumByType(refundsByType, TransactionType.TESTER_CANCELLATION_REFUND);
+    const refundGeneral = sumByType(refundsByType, TransactionType.REFUND);
+    const totalRefunds = refundCampaign.amount + refundTesterCancel.amount + refundGeneral.amount;
+
+    // --- Delta Stripe ---
+    // SuperTry preleve stripeFeePercent (3.5%) au PRO mais Stripe prend ses propres frais
+    // Le delta = ce que SuperTry a preleve pour couvrir Stripe - ce que Stripe a reellement pris
+    // On ne connait pas les frais Stripe exacts ici (faudrait les lire depuis Stripe API),
+    // mais on peut calculer ce qui a ete preleve cote SuperTry
+    const stripeFeePercent = Number(businessRules?.stripeFeePercent ?? 0.035);
+    const totalCampaignAmount = Number(campaignPayments._sum.amount ?? 0);
+    // Montant preleve pour couvrir Stripe = totalPaye * stripeFeePercent / (1 + stripeFeePercent)
+    const stripeCoverageCollected = totalCampaignAmount > 0
+      ? Math.round((totalCampaignAmount * stripeFeePercent / (1 + stripeFeePercent)) * 100) / 100
+      : 0;
+
+    // --- Campaigns par statut ---
+    const campaignStatusMap: Record<string, number> = {};
+    for (const c of campaignsByStatus) {
+      campaignStatusMap[c.status] = c._count;
+    }
 
     const conv = conversionStats[0];
     const totalApplied = Number(conv?.total_applied ?? 0);
     const totalCompleted = Number(conv?.total_completed ?? 0);
 
     return {
-      financial: {
-        totalCampaignSpending: Number(totalCampaignSpending._sum.amount ?? 0),
-        marginsCollected: Number(marginsCollected._sum.amount ?? 0),
-        marginsCollectedCount: marginsCollected._count,
-        escrowBalance: Number(platformWallet?.escrowBalance ?? 0),
-        commissionBalance: Number(platformWallet?.commissionBalance ?? 0),
-        totalReceived: Number(platformWallet?.totalReceived ?? 0),
-        totalTransferred: Number(platformWallet?.totalTransferred ?? 0),
-        totalWithdrawn: Number(totalWithdrawn._sum.amount ?? 0),
-        pendingWithdrawalsAmount: Number(pendingWithdrawals._sum.amount ?? 0),
-        pendingWithdrawalsCount: pendingWithdrawals._count,
+      // --- Ce que les PROs ont paye ---
+      proSpending: {
+        totalCampaignPayments: totalCampaignAmount,
+        campaignCount: campaignPayments._count,
       },
+
+      // --- Commissions SuperTry (nos revenus) ---
+      commissions: {
+        total: totalCommissions,
+        testCompleted: commTestCompleted,      // 5€ fixe par test complété
+        ugc: commUgc,                          // Commission UGC (photo/video)
+        tips: commTip,                         // Commission sur les tips
+        cancellations: commCancellation,       // Commission sur annulations testeur (50% de 5€)
+      },
+
+      // --- Couverture frais Stripe ---
+      stripeFees: {
+        percentCharged: stripeFeePercent * 100, // ex: 3.5%
+        totalCollectedFromPros: stripeCoverageCollected, // Ce qu'on a preleve aux PROs pour couvrir Stripe
+        // Note: le delta reel (collecte - frais Stripe reels) necessite l'API Stripe
+        // Voir GET /admin/finance/stripe-balance pour le solde reel
+      },
+
+      // --- Gains testeurs ---
+      testerEarnings: {
+        total: totalTesterEarnings,
+        purchaseReimbursements: testerReimbursements,  // Remboursement produit + livraison
+        testRewards: testerRewards,                     // Bonus test (testerBonus + proBonus)
+        ugcPayments: testerUgc,                         // Paiements UGC
+        tips: testerTips,                               // Tips recus
+        compensations: testerCompensations,             // Compensation annulation PRO (5€)
+        disputeResolutions: testerDisputes,             // Résolution litiges
+      },
+
+      // --- Remboursements PROs ---
+      refunds: {
+        total: totalRefunds,
+        campaignRefunds: refundCampaign,                // Slots non utilises + delta prix
+        testerCancellationRefunds: refundTesterCancel,  // Remboursement apres annulation testeur
+        generalRefunds: refundGeneral,                  // Remboursements manuels
+      },
+
+      // --- Platform wallet (etat temps reel) ---
+      platformWallet: {
+        escrowBalance: Number(platformWallet?.escrowBalance ?? 0),       // Argent bloque pour campagnes actives
+        commissionBalance: Number(platformWallet?.commissionBalance ?? 0), // Commissions accumulees
+        totalReceived: Number(platformWallet?.totalReceived ?? 0),       // Total recu des PROs (all time)
+        totalTransferred: Number(platformWallet?.totalTransferred ?? 0), // Total envoye aux testeurs (all time)
+        totalCommissions: Number(platformWallet?.totalCommissions ?? 0), // Total commissions (all time)
+      },
+
+      // --- Withdrawals testeurs ---
+      withdrawals: {
+        totalWithdrawn: Number(totalWithdrawn._sum.amount ?? 0),
+        withdrawalCount: totalWithdrawn._count,
+        pendingAmount: Number(pendingWithdrawals._sum.amount ?? 0),
+        pendingCount: pendingWithdrawals._count,
+      },
+
+      // --- Users ---
       users: {
         total: totalUsers,
         pros: totalPros,
         testers: totalTesters,
       },
+
+      // --- Campaigns par statut ---
       campaigns: {
-        total: totalCampaigns,
-        active: activeCampaigns,
+        total: Object.values(campaignStatusMap).reduce((a, b) => a + b, 0),
+        byStatus: campaignStatusMap,
       },
+
+      // --- Sessions ---
       sessions: {
         total: totalSessions,
         completed: completedSessions,
         disputed: disputedSessions,
+        cancelled: cancelledSessions,
         conversionRate: totalApplied > 0
           ? Math.round((totalCompleted / totalApplied) * 10000) / 100
           : 0,
@@ -437,6 +592,8 @@ export class AdminOverviewService {
           ? Math.round(avgSessionDuration[0].avg_hours * 10) / 10
           : null,
       },
+
+      // --- Croissance users (12 mois) ---
       userGrowth: userGrowth.map((r) => ({
         month: r.month.toISOString().substring(0, 7),
         count: Number(r.count),
