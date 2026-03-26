@@ -69,19 +69,28 @@ export class AdminSystemService {
     const memUsage = process.memoryUsage();
     const cpuUsage = process.cpuUsage();
 
+    const uptimeSeconds = Math.floor(process.uptime());
+    const uptimeDays = Math.floor(uptimeSeconds / 86400);
+    const uptimeHours = Math.floor((uptimeSeconds % 86400) / 3600);
+    const uptimeMinutes = Math.floor((uptimeSeconds % 3600) / 60);
+
     return {
       node: {
         version: process.version,
-        uptime: Math.floor(process.uptime()),
+        uptimeSeconds,
+        uptimeDays,
+        uptimeHours,
+        uptimeMinutes,
+        uptimeFormatted: `${uptimeDays}j ${uptimeHours}h ${uptimeMinutes}m`,
         pid: process.pid,
         platform: process.platform,
         arch: process.arch,
       },
       memory: {
-        rss: this.formatBytes(memUsage.rss),
-        heapTotal: this.formatBytes(memUsage.heapTotal),
-        heapUsed: this.formatBytes(memUsage.heapUsed),
-        external: this.formatBytes(memUsage.external),
+        rssMb: this.toMb(memUsage.rss),
+        heapTotalMb: this.toMb(memUsage.heapTotal),
+        heapUsedMb: this.toMb(memUsage.heapUsed),
+        externalMb: this.toMb(memUsage.external),
         heapUsagePercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
       },
       cpu: {
@@ -93,8 +102,8 @@ export class AdminSystemService {
       os: {
         hostname: os.hostname(),
         type: os.type(),
-        totalMemory: this.formatBytes(os.totalmem()),
-        freeMemory: this.formatBytes(os.freemem()),
+        totalMemoryMb: this.toMb(os.totalmem()),
+        freeMemoryMb: this.toMb(os.freemem()),
         memoryUsagePercent: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100),
       },
       kubernetes: {
@@ -114,8 +123,7 @@ export class AdminSystemService {
     return this.metricsService.getMetrics();
   }
 
-  private formatBytes(bytes: number): string {
-    const mb = bytes / (1024 * 1024);
-    return `${Math.round(mb * 100) / 100} MB`;
+  private toMb(bytes: number): number {
+    return Math.round((bytes / (1024 * 1024)) * 100) / 100;
   }
 }
