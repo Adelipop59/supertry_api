@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { ApiAuthResponses } from '../../common/decorators/api-error-responses.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -19,10 +19,19 @@ export class AdminSystemController {
   }
 
   @Get('info')
-  @ApiOperation({ summary: 'Infos serveur temps reel (CPU, memoire, K8s)' })
+  @ApiOperation({ summary: 'Infos serveur temps reel (CPU, memoire, disque, reseau)' })
   @ApiAuthResponses()
   getSystemInfo() {
     return this.adminSystemService.getSystemInfo();
+  }
+
+  @Get('history')
+  @ApiOperation({ summary: 'Historique systeme pour graphiques (CPU, RAM, disque, reseau)' })
+  @ApiAuthResponses()
+  getSystemHistory(
+    @Query('period') period?: '1h' | '6h' | '24h',
+  ) {
+    return this.adminSystemService.getSystemHistory(period || '1h');
   }
 
   @Get('metrics')

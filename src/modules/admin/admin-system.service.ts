@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { MetricsService, MetricsSummary } from '../../common/services/metrics.service';
@@ -7,9 +8,28 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { createClient } from 'redis';
 
+export interface SystemSnapshot {
+  timestamp: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  memoryUsedMb: number;
+  diskPercent: number | null;
+  diskUsedGb: number | null;
+  networkRxMb: number | null;
+  networkTxMb: number | null;
+  processHeapPercent: number;
+  processRssMb: number;
+}
+
+// 1 point toutes les 30s pendant 24h = 2880 points max
+const MAX_HISTORY_POINTS = 2880;
+
 @Injectable()
-export class AdminSystemService {
+export class AdminSystemService implements OnModuleInit {
   private readonly logger = new Logger(AdminSystemService.name);
+  private readonly history: SystemSnapshot[] = [];
+  private previousNetworkRx = 0;
+  private previousNetworkTx = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -17,6 +37,108 @@ export class AdminSystemService {
     private readonly stripeService: StripeService,
     private readonly metricsService: MetricsService,
   ) {}
+
+  async onModuleInit() {
+    // Premier snapshot au demarrage
+    await this.collectSnapshot();
+  }
+
+  // ============================================================================
+  // Collecte automatique toutes les 30 secondes
+  // ============================================================================
+
+  @Cron(CronExpression.EVERY_30_SECONDS)
+  async collectSnapshot() {
+    try {
+      const cpuPercent = await this.getCpuUsagePercent();
+      const memUsage = process.memoryUsage();
+      const disk = this.getDiskUsage();
+      const network = this.getNetworkStats();
+
+      // Calcul du delta reseau depuis le dernier snapshot (trafic par intervalle, pas cumulatif)
+      let deltaRxMb: number | null = null;
+      let deltaTxMb: number | null = null;
+      if (network) {
+        const currentRx = network.receivedMb;
+        const currentTx = network.transmittedMb;
+        if (this.previousNetworkRx > 0) {
+          deltaRxMb = Math.round((currentRx - this.previousNetworkRx) * 100) / 100;
+          deltaTxMb = Math.round((currentTx - this.previousNetworkTx) * 100) / 100;
+          // Eviter les valeurs negatives (reboot ou overflow)
+          if (deltaRxMb < 0) deltaRxMb = 0;
+          if (deltaTxMb < 0) deltaTxMb = 0;
+        }
+        this.previousNetworkRx = currentRx;
+        this.previousNetworkTx = currentTx;
+      }
+
+      const snapshot: SystemSnapshot = {
+        timestamp: new Date().toISOString(),
+        cpuPercent,
+        memoryPercent: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100),
+        memoryUsedMb: this.toMb(os.totalmem() - os.freemem()),
+        diskPercent: disk?.usagePercent ?? null,
+        diskUsedGb: disk?.usedGb ?? null,
+        networkRxMb: deltaRxMb,
+        networkTxMb: deltaTxMb,
+        processHeapPercent: Math.round((memUsage.heapUsed / memUsage.heapTotal) * 100),
+        processRssMb: this.toMb(memUsage.rss),
+      };
+
+      this.history.push(snapshot);
+
+      // Garder max 24h de donnees
+      if (this.history.length > MAX_HISTORY_POINTS) {
+        this.history.splice(0, this.history.length - MAX_HISTORY_POINTS);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to collect system snapshot: ${error.message}`);
+    }
+  }
+
+  // ============================================================================
+  // Historique systeme (pour graphiques frontend)
+  // ============================================================================
+
+  getSystemHistory(period: '1h' | '6h' | '24h' = '1h') {
+    const now = Date.now();
+    const periodMs = {
+      '1h': 60 * 60 * 1000,
+      '6h': 6 * 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+    };
+    const cutoff = now - periodMs[period];
+
+    // Filtrer par periode
+    const filtered = this.history.filter(
+      (s) => new Date(s.timestamp).getTime() >= cutoff,
+    );
+
+    // Pour les grandes periodes, reduire le nombre de points (downsample)
+    // 1h = tous les points (~120), 6h = 1 point/2min (~180), 24h = 1 point/5min (~288)
+    const targetPoints = { '1h': 120, '6h': 180, '24h': 288 };
+    const target = targetPoints[period];
+
+    let data: SystemSnapshot[];
+    if (filtered.length <= target) {
+      data = filtered;
+    } else {
+      // Downsample : prendre 1 point tous les N
+      const step = Math.ceil(filtered.length / target);
+      data = filtered.filter((_, i) => i % step === 0);
+    }
+
+    return {
+      period,
+      pointCount: data.length,
+      collectionInterval: '30s',
+      data,
+    };
+  }
+
+  // ============================================================================
+  // Health checks
+  // ============================================================================
 
   async getHealthCheck() {
     const checks: Record<string, { status: string; latencyMs?: number; error?: string }> = {};
