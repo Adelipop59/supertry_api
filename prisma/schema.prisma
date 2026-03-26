@@ -1423,3 +1423,44 @@ model XpEvent {
   @@index([createdAt])
   @@map("xp_events")
 }
+
+// ==================== ADMIN MONITORING ====================
+
+// Snapshots systeme (CPU, RAM, disque, reseau) - collecte toutes les 30s
+model SystemSnapshot {
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now())
+
+  cpuPercent       Int   // % CPU serveur
+  memoryPercent    Int   // % RAM serveur
+  memoryUsedMb     Float // RAM utilisee en MB
+  diskPercent      Int?  // % disque (null si pas Linux)
+  diskUsedGb       Float? // Disque utilise en GB
+  networkRxMb      Float? // Trafic entrant depuis dernier snapshot (delta)
+  networkTxMb      Float? // Trafic sortant depuis dernier snapshot (delta)
+  processHeapPercent Int  // % heap Node.js
+  processRssMb     Float // RSS process Node.js en MB
+
+  @@index([timestamp])
+  @@map("system_snapshots")
+}
+
+// Metriques API par endpoint par heure
+model ApiMetric {
+  id        String   @id @default(uuid())
+  timestamp DateTime @default(now()) // Debut de l'heure
+
+  method    String // GET, POST, etc.
+  route     String // /api/v1/campaigns, etc.
+
+  requests       Int   @default(0)
+  errors         Int   @default(0)
+  totalDurationMs Int  @default(0) @map("total_duration_ms")
+  minDurationMs  Int   @default(0) @map("min_duration_ms")
+  maxDurationMs  Int   @default(0) @map("max_duration_ms")
+
+  @@unique([timestamp, method, route])
+  @@index([timestamp])
+  @@index([method, route])
+  @@map("api_metrics")
+}
