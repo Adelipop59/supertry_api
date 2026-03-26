@@ -1194,9 +1194,19 @@ export class StripeService {
     const finalizedInvoice = await this.stripe.invoices.finalizeInvoice(invoice.id);
 
     // Marquer comme payée (le paiement a déjà été effectué via PaymentIntent)
-    const paidInvoice = await this.stripe.invoices.pay(invoice.id, {
-      paid_out_of_band: true,
-    });
+    // Stripe peut déjà la considérer comme payée après finalisation — on ignore cette erreur
+    let paidInvoice = finalizedInvoice;
+    try {
+      paidInvoice = await this.stripe.invoices.pay(invoice.id, {
+        paid_out_of_band: true,
+      });
+    } catch (err: any) {
+      if (err?.message?.includes('already paid')) {
+        this.logger.log(`Invoice ${invoice.id} already paid after finalization — skipping pay()`);
+      } else {
+        throw err;
+      }
+    }
 
     this.logger.log(`Invoice created and paid: ${paidInvoice.id} for campaign ${campaignId}`);
 

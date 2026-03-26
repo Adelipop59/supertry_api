@@ -5,6 +5,7 @@ export const ACTIVE_SESSION_STATUSES: SessionStatus[] = [
   SessionStatus.ACCEPTED,
   SessionStatus.PRICE_VALIDATED,
   SessionStatus.PURCHASE_SUBMITTED,
+  SessionStatus.PURCHASE_REJECTED,
   SessionStatus.PURCHASE_VALIDATED,
   SessionStatus.IN_PROGRESS,
   SessionStatus.PROCEDURES_COMPLETED,

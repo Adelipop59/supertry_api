@@ -12,6 +12,7 @@ const CHAT_ALLOWED_STATUSES: SessionStatus[] = [
   SessionStatus.ACCEPTED,
   SessionStatus.PRICE_VALIDATED,
   SessionStatus.PURCHASE_SUBMITTED,
+  SessionStatus.PURCHASE_REJECTED,
   SessionStatus.PURCHASE_VALIDATED,
   SessionStatus.IN_PROGRESS,
   SessionStatus.PROCEDURES_COMPLETED,

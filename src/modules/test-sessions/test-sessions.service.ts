@@ -497,11 +497,12 @@ export class TestSessionsService {
       throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
     }
 
-    // Check status - can cancel PENDING, ACCEPTED, PRICE_VALIDATED, or PURCHASE_VALIDATED
+    // Check status - can cancel PENDING, ACCEPTED, PRICE_VALIDATED, PURCHASE_REJECTED, or PURCHASE_VALIDATED
     const cancellableStatuses: SessionStatus[] = [
       SessionStatus.PENDING,
       SessionStatus.ACCEPTED,
       SessionStatus.PRICE_VALIDATED,
+      SessionStatus.PURCHASE_REJECTED,
       SessionStatus.PURCHASE_VALIDATED,
     ];
 
@@ -687,14 +688,33 @@ export class TestSessionsService {
     const campaign = session.campaign;
 
     if (campaign.marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK) {
-      // PRODUCT_LINK: can submit purchase directly after acceptance (no price validation needed)
-      if (session.status !== SessionStatus.ACCEPTED) {
+      // PRODUCT_LINK: can submit purchase directly after acceptance or after rejection
+      const validStatuses: SessionStatus[] = [SessionStatus.ACCEPTED, SessionStatus.PURCHASE_REJECTED];
+      if (!validStatuses.includes(session.status)) {
         throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
       }
     } else {
-      // PROCEDURES: must complete procedures and validate price first
-      if (session.status !== SessionStatus.PRICE_VALIDATED) {
+      // PROCEDURES: must complete procedures and validate price first, or resubmit after rejection
+      const validStatuses: SessionStatus[] = [SessionStatus.PRICE_VALIDATED, SessionStatus.PURCHASE_REJECTED];
+      if (!validStatuses.includes(session.status)) {
         throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+      }
+    }
+
+    // Validate price against max reimbursement limits
+    const offer = await this.prisma.offer.findFirst({
+      where: { campaignId: campaign.id },
+      select: { expectedPrice: true, shippingCost: true, maxReimbursedPrice: true, maxReimbursedShipping: true },
+    });
+    if (offer) {
+      const maxPrice = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
+      const maxShipping = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
+
+      if (dto.productPrice > maxPrice) {
+        throw new I18nHttpException('session.price_exceeds_max', 'SESSION_PRICE_EXCEEDS_MAX', HttpStatus.BAD_REQUEST, { max: maxPrice });
+      }
+      if (dto.shippingCost > maxShipping) {
+        throw new I18nHttpException('session.shipping_exceeds_max', 'SESSION_SHIPPING_EXCEEDS_MAX', HttpStatus.BAD_REQUEST, { max: maxShipping });
       }
     }
 
@@ -810,12 +830,26 @@ export class TestSessionsService {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
+    // Save the rejected purchase attempt in history
+    await this.prisma.purchaseAttempt.create({
+      data: {
+        sessionId,
+        orderNumber: session.orderNumber,
+        productPrice: session.productPrice,
+        shippingCost: session.shippingCost,
+        purchaseProofKeys: session.purchaseProofKeys ?? [],
+        submittedAt: session.purchasedAt ?? new Date(),
+        rejectedAt: new Date(),
+        rejectionReason: dto.purchaseRejectionReason,
+      },
+    });
+
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
       data: {
         purchaseRejectedAt: new Date(),
         purchaseRejectionReason: dto.purchaseRejectionReason,
-        status: SessionStatus.ACCEPTED, // Go back to ACCEPTED so tester can resubmit
+        status: SessionStatus.PURCHASE_REJECTED, // Stay at same stage, tester can resubmit
       },
       include: SESSION_INCLUDE,
     });

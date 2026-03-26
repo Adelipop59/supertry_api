@@ -9,6 +9,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  HttpException,
 } from '@nestjs/common';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -144,6 +145,41 @@ export class CampaignsController {
     @CurrentUser('id') userId: string,
     @Body() dto: CreateCheckoutSessionDto,
   ) {
+    // Guard: vérifier que la campagne n'a pas déjà un paiement autorisé ou en cours de capture
+    const existingCampaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: {
+        status: true,
+        sellerId: true,
+        paymentAuthorizedAt: true,
+        stripePaymentIntentId: true,
+      },
+    });
+
+    if (!existingCampaign) {
+      throw new HttpException('Campaign not found', HttpStatus.NOT_FOUND);
+    }
+
+    if (existingCampaign.sellerId !== userId) {
+      throw new HttpException('Not authorized', HttpStatus.FORBIDDEN);
+    }
+
+    // Bloquer si un paiement est déjà autorisé (période de grâce ou activation en cours)
+    if (existingCampaign.paymentAuthorizedAt) {
+      throw new HttpException(
+        'Un paiement a déjà été autorisé pour cette campagne. Veuillez patienter pendant l\'activation automatique.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Bloquer si la campagne est déjà active ou en cours d'activation
+    if (['ACTIVE', 'PENDING_ACTIVATION', 'COMPLETED'].includes(existingCampaign.status)) {
+      throw new HttpException(
+        'Cette campagne est déjà activée ou en cours d\'activation.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const escrow = await this.paymentsService.calculateCampaignEscrow(campaignId);
 
     // Récupérer infos seller + campagne pour metadata riches

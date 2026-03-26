@@ -353,8 +353,16 @@ export class PaymentsService {
     // Get business rules
     const rules = await this.businessRulesService.findLatest();
 
-    const productCost = Number(session.productPrice);
-    const shippingCost = Number(session.shippingCost);
+    // Cap reimbursement to max allowed by offer (safety net)
+    const offer = await this.prisma.offer.findFirst({
+      where: { campaignId: session.campaignId },
+      select: { expectedPrice: true, shippingCost: true, maxReimbursedPrice: true, maxReimbursedShipping: true },
+    });
+    const maxPrice = offer ? Number(offer.maxReimbursedPrice ?? offer.expectedPrice) : Infinity;
+    const maxShipping = offer ? Number(offer.maxReimbursedShipping ?? offer.shippingCost) : Infinity;
+
+    const productCost = Math.min(Number(session.productPrice), maxPrice);
+    const shippingCost = Math.min(Number(session.shippingCost), maxShipping);
     const reimbursementAmount = productCost + shippingCost;
 
     // Vérifier Stripe Connect account
