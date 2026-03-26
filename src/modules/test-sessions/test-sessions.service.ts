@@ -1097,7 +1097,10 @@ export class TestSessionsService {
       this.prisma.testSession.count({ where }),
     ]);
 
-    const stripped = (sessions as any[]).map((s) => this.stripStepsIfNotScheduledDay(s));
+    const resolved = await Promise.all(
+      sessions.map((s: any) => this.resolveSessionProductImages(s)),
+    );
+    const stripped = resolved.map((s) => this.stripStepsIfNotScheduledDay(s));
     return createPaginatedResponse(stripped, total, page, limit);
   }
 
