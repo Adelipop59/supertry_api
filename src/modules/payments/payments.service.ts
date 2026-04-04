@@ -1022,6 +1022,7 @@ export class PaymentsService {
       totalCommission: number;
       compensationMap: Record<string, number>;
       totalDisbursed?: number;
+      refundAmountOverride?: number;
     },
   ): Promise<{
     refundToPro: number;
@@ -1054,7 +1055,7 @@ export class PaymentsService {
     const totalDisbursed = cancellationContext.totalDisbursed || 0;
 
     // Calculer les montants via BusinessRules (fee sur le restant après compensations + commission + déjà versé)
-    const { refundToPro, cancellationFee, supertryCommission } =
+    const calculated =
       await this.businessRulesService.calculateProCancellationImpact(
         totalEscrowAmount,
         cancellationContext.hoursElapsed,
@@ -1063,6 +1064,10 @@ export class PaymentsService {
         totalDisbursed,
       );
 
+    // Si override fourni (grace period + capturé + 0 testeurs → rembourser totalPaid)
+    const refundToPro = cancellationContext.refundAmountOverride ?? calculated.refundToPro;
+    const { cancellationFee, supertryCommission } = calculated;
+
     this.logger.log(
       `Processing PRO cancellation refund for campaign ${campaignId}: refund=${refundToPro}€, fee=${cancellationFee}€, commission=${supertryCommission}€, totalCompensation=${cancellationContext.totalCompensation}€, totalDisbursed=${totalDisbursed}€`,
     );
@@ -1070,17 +1075,18 @@ export class PaymentsService {
     let refund: Stripe.Refund | null = null;
     const compensationTransactions: Transaction[] = [];
 
+    // ══════════════════════════════════════════════════════════════════════
+    // PHASE 1 : Appels Stripe (non-transactionnels, collecte des résultats)
+    // ══════════════════════════════════════════════════════════════════════
+
     // 1. Rembourser le PRO (si montant > 0)
     if (refundToPro > 0) {
       if (!campaign.paymentCapturedAt) {
-        // Paiement autorisé mais pas encore capturé (PENDING_ACTIVATION)
-        // → annuler l'autorisation plutôt que créer un remboursement
         await this.stripeService.cancelPaymentIntent(
           campaign.stripePaymentIntentId,
           'requested_by_customer',
         );
       } else {
-        // Paiement capturé (ACTIVE) → remboursement Stripe classique
         refund = await this.stripeService.createRefund(
           campaign.stripePaymentIntentId,
           refundToPro,
@@ -1093,84 +1099,12 @@ export class PaymentsService {
           `cancel_${campaignId}`,
         );
       }
-
-      // Trouver le wallet du seller
-      const sellerWallet = await this.prisma.wallet.findUnique({
-        where: { userId: campaign.sellerId },
-      });
-
-      // Créer transaction de remboursement
-      await this.prisma.transaction.create({
-        data: {
-          walletId: sellerWallet?.id || null,
-          campaignId,
-          type: TransactionType.CAMPAIGN_REFUND,
-          amount: new Decimal(refundToPro),
-          reason: `Refund for cancelled campaign: ${campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-          stripeRefundId: refund?.id ?? null,
-        },
-      });
-
-      // Mettre à jour escrow balance
-      await this.prisma.platformWallet.update({
-        where: { id: platformWallet.id },
-        data: {
-          escrowBalance: {
-            decrement: new Decimal(refundToPro),
-          },
-        },
-      });
     }
 
-    // 2. Commission SuperTry (retenue par la plateforme sur les bought testers)
-    if (supertryCommission > 0) {
-      await this.prisma.transaction.create({
-        data: {
-          walletId: null, // PLATEFORME
-          campaignId,
-          type: TransactionType.COMMISSION,
-          amount: new Decimal(supertryCommission),
-          reason: `Commission retained on PRO cancellation: ${campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-        },
-      });
-
-      await this.prisma.platformWallet.update({
-        where: { id: platformWallet.id },
-        data: {
-          escrowBalance: { decrement: new Decimal(supertryCommission) },
-          commissionBalance: { increment: new Decimal(supertryCommission) },
-          totalCommissions: { increment: new Decimal(supertryCommission) },
-        },
-      });
-    }
-
-    // 3. Si frais d'annulation, les transférer à SuperTry
-    if (cancellationFee > 0) {
-      await this.prisma.transaction.create({
-        data: {
-          walletId: null, // PLATEFORME
-          campaignId,
-          type: TransactionType.CANCELLATION_COMMISSION,
-          amount: new Decimal(cancellationFee),
-          reason: `Cancellation fee (${cancellationFee}€) for campaign: ${campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-        },
-      });
-
-      await this.prisma.platformWallet.update({
-        where: { id: platformWallet.id },
-        data: {
-          escrowBalance: {
-            decrement: new Decimal(cancellationFee),
-          },
-        },
-      });
-    }
-
-    // 4. Compenser les testeurs (montant individuel via compensationMap)
+    // 2. Transférer compensations aux testeurs via Stripe
+    const testerTransfers: { testerId: string; amount: number; transferId: string; profile: any }[] = [];
     const testerIds = Object.keys(cancellationContext.compensationMap);
+
     for (const testerId of testerIds) {
       const testerCompensation = cancellationContext.compensationMap[testerId];
       if (testerCompensation <= 0) continue;
@@ -1184,7 +1118,6 @@ export class PaymentsService {
         continue;
       }
 
-      // Transférer la compensation au testeur
       const transfer = await this.stripeService.createTransfer(
         testerCompensation,
         testerProfile.stripeConnectAccountId,
@@ -1194,72 +1127,167 @@ export class PaymentsService {
           testerId,
           transactionType: 'PRO_CANCELLATION_COMPENSATION',
         },
-        undefined, // sourceTransaction
-        `campaign_${campaignId}`, // transferGroup
-        `Compensation: ${campaign.title} - annulation PRO`, // description
+        undefined,
+        `campaign_${campaignId}`,
+        `Compensation: ${campaign.title} - annulation PRO`,
       );
 
-      // Trouver le wallet du testeur
-      const testerWallet = await this.prisma.wallet.findUnique({
-        where: { userId: testerId },
+      testerTransfers.push({
+        testerId,
+        amount: testerCompensation,
+        transferId: transfer.id,
+        profile: testerProfile,
       });
+    }
 
-      // Créer transaction
-      const compensationTx = await this.prisma.transaction.create({
-        data: {
-          walletId: testerWallet?.id || null,
-          campaignId,
-          type: TransactionType.TESTER_COMPENSATION,
-          amount: new Decimal(testerCompensation),
-          reason: `Compensation for PRO cancellation: ${campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-          stripeTransferId: transfer.id,
-        },
-      });
+    // ══════════════════════════════════════════════════════════════════════
+    // PHASE 2 : Toutes les écritures DB dans une seule $transaction
+    // ══════════════════════════════════════════════════════════════════════
 
-      compensationTransactions.push(compensationTx);
+    const dbResult = await this.prisma.$transaction(async (tx) => {
+      const txCompensations: Transaction[] = [];
 
-      // Mettre à jour le wallet du testeur
-      if (testerWallet) {
-        await this.prisma.wallet.update({
-          where: { id: testerWallet.id },
+      // Calcul cumulatif du décrement d'escrow
+      let escrowDecrement = 0;
+      let commissionIncrement = 0;
+      let totalCommissionsIncrement = 0;
+
+      // 1. Transaction de remboursement PRO
+      if (refundToPro > 0) {
+        const sellerWallet = await tx.wallet.findUnique({
+          where: { userId: campaign.sellerId },
+        });
+
+        await tx.transaction.create({
           data: {
-            balance: { increment: new Decimal(testerCompensation) },
-            totalEarned: { increment: new Decimal(testerCompensation) },
+            walletId: sellerWallet?.id || null,
+            campaignId,
+            type: TransactionType.CAMPAIGN_REFUND,
+            amount: new Decimal(refundToPro),
+            reason: `Refund for cancelled campaign: ${campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+            stripeRefundId: refund?.id ?? null,
+          },
+        });
+
+        escrowDecrement += refundToPro;
+      }
+
+      // 2. Commission SuperTry
+      if (supertryCommission > 0) {
+        await tx.transaction.create({
+          data: {
+            walletId: null,
+            campaignId,
+            type: TransactionType.COMMISSION,
+            amount: new Decimal(supertryCommission),
+            reason: `Commission retained on PRO cancellation: ${campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+          },
+        });
+
+        escrowDecrement += supertryCommission;
+        commissionIncrement += supertryCommission;
+        totalCommissionsIncrement += supertryCommission;
+      }
+
+      // 3. Frais d'annulation
+      if (cancellationFee > 0) {
+        await tx.transaction.create({
+          data: {
+            walletId: null,
+            campaignId,
+            type: TransactionType.CANCELLATION_COMMISSION,
+            amount: new Decimal(cancellationFee),
+            reason: `Cancellation fee (${cancellationFee}€) for campaign: ${campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+          },
+        });
+
+        escrowDecrement += cancellationFee;
+      }
+
+      // 4. Compensations testeurs (DB uniquement, Stripe déjà fait)
+      for (const t of testerTransfers) {
+        const testerWallet = await tx.wallet.findUnique({
+          where: { userId: t.testerId },
+        });
+
+        const compensationTx = await tx.transaction.create({
+          data: {
+            walletId: testerWallet?.id || null,
+            campaignId,
+            type: TransactionType.TESTER_COMPENSATION,
+            amount: new Decimal(t.amount),
+            reason: `Compensation for PRO cancellation: ${campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+            stripeTransferId: t.transferId,
+          },
+        });
+
+        txCompensations.push(compensationTx);
+
+        if (testerWallet) {
+          await tx.wallet.update({
+            where: { id: testerWallet.id },
+            data: {
+              balance: { increment: new Decimal(t.amount) },
+              totalEarned: { increment: new Decimal(t.amount) },
+            },
+          });
+        }
+
+        escrowDecrement += t.amount;
+      }
+
+      // 5. Mise à jour unique du PlatformWallet
+      if (escrowDecrement > 0 || commissionIncrement > 0) {
+        await tx.platformWallet.update({
+          where: { id: platformWallet.id },
+          data: {
+            escrowBalance: { decrement: new Decimal(escrowDecrement) },
+            ...(commissionIncrement > 0 && {
+              commissionBalance: { increment: new Decimal(commissionIncrement) },
+            }),
+            ...(totalCommissionsIncrement > 0 && {
+              totalCommissions: { increment: new Decimal(totalCommissionsIncrement) },
+            }),
           },
         });
       }
 
-      // Mettre à jour escrow balance
-      await this.prisma.platformWallet.update({
-        where: { id: platformWallet.id },
-        data: {
-          escrowBalance: {
-            decrement: new Decimal(testerCompensation),
-          },
-        },
-      });
+      return { txCompensations };
+    });
 
-      // Notifier le testeur
+    compensationTransactions.push(...dbResult.txCompensations);
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PHASE 3 : Notifications (non-critiques, hors transaction)
+    // ══════════════════════════════════════════════════════════════════════
+
+    for (const t of testerTransfers) {
+      const compensationTx = compensationTransactions.find(
+        (tx) => tx.stripeTransferId === t.transferId,
+      );
+
       this.notificationsService.tryQueueEmail({
-        to: testerProfile.email,
+        to: t.profile.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
         subject: 'Compensation pour annulation de campagne',
         variables: {
-          firstName: testerProfile.firstName || 'Testeur',
+          firstName: t.profile.firstName || 'Testeur',
           campaignTitle: campaign.title,
-          compensationAmount: testerCompensation,
-          message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${testerCompensation}€ pour ce désagrément.`,
+          compensationAmount: t.amount,
+          message: `Le professionnel a annulé la campagne "${campaign.title}". Vous avez reçu une compensation de ${t.amount}€ pour ce désagrément.`,
         },
         metadata: {
           campaignId,
-          transactionId: compensationTx.id,
+          transactionId: compensationTx?.id,
           type: NotificationType.PAYMENT_RECEIVED,
         },
       });
     }
 
-    // 5. Notifier le PRO
     this.notificationsService.tryQueueEmail({
       to: campaign.seller.email,
       template: NotificationTemplate.GENERIC_NOTIFICATION,

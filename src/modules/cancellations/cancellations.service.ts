@@ -120,10 +120,13 @@ export class CancellationsService {
               in: [
                 SessionStatus.PENDING,
                 SessionStatus.ACCEPTED,
+                SessionStatus.IN_PROGRESS,
+                SessionStatus.PROCEDURES_COMPLETED,
                 SessionStatus.PRICE_VALIDATED,
                 SessionStatus.PURCHASE_SUBMITTED,
                 SessionStatus.PURCHASE_REJECTED,
                 SessionStatus.PURCHASE_VALIDATED,
+                SessionStatus.SUBMITTED,
               ],
             },
           },
@@ -169,7 +172,7 @@ export class CancellationsService {
 
   /**
    * Calcule la compensation individuelle par testeur selon le mode et le statut.
-   * PURCHASE_VALIDATED : productPrice+shippingCost déjà versés → seulement flatComp.
+   * PURCHASE_VALIDATED / SUBMITTED : productPrice+shippingCost déjà versés → seulement flatComp.
    */
   private calculatePerTesterCompensation(
     session: { testerId: string; status: SessionStatus; productPrice: any; shippingCost: any; purchaseReimbursementAmount: any },
@@ -180,9 +183,12 @@ export class CancellationsService {
   ): number {
     const isProductLink = marketplaceMode === CampaignMarketplaceMode.PRODUCT_LINK;
 
-    // PURCHASE_VALIDATED → productPrice+shippingCost déjà versés au testeur
+    // PURCHASE_VALIDATED / SUBMITTED → productPrice+shippingCost déjà versés au testeur
     // Seule la compensation fixe (flatComp) reste à verser
-    if (session.status === SessionStatus.PURCHASE_VALIDATED) {
+    if (
+      session.status === SessionStatus.PURCHASE_VALIDATED ||
+      session.status === SessionStatus.SUBMITTED
+    ) {
       return flatComp;
     }
 
@@ -191,15 +197,16 @@ export class CancellationsService {
       return flatComp + maxPrice + maxShipping;
     }
 
-    // PROCEDURES : PRICE_VALIDATED ou PURCHASE_SUBMITTED → a acheté au maxPrice
+    // PROCEDURES : PRICE_VALIDATED, PURCHASE_SUBMITTED ou PURCHASE_REJECTED → a acheté au maxPrice
     if (
       session.status === SessionStatus.PRICE_VALIDATED ||
-      session.status === SessionStatus.PURCHASE_SUBMITTED
+      session.status === SessionStatus.PURCHASE_SUBMITTED ||
+      session.status === SessionStatus.PURCHASE_REJECTED
     ) {
       return flatComp + maxPrice + maxShipping;
     }
 
-    // PROCEDURES : ACCEPTED → n'a pas encore acheté
+    // PROCEDURES : ACCEPTED, IN_PROGRESS, PROCEDURES_COMPLETED → n'a pas encore acheté
     return flatComp;
   }
 
@@ -216,11 +223,13 @@ export class CancellationsService {
       return true;
     }
 
-    // PROCEDURES : bought si PRICE_VALIDATED, PURCHASE_SUBMITTED ou PURCHASE_VALIDATED
+    // PROCEDURES : bought si a validé le prix ou soumis/validé un achat
     const boughtStatuses: SessionStatus[] = [
       SessionStatus.PRICE_VALIDATED,
       SessionStatus.PURCHASE_SUBMITTED,
+      SessionStatus.PURCHASE_REJECTED,
       SessionStatus.PURCHASE_VALIDATED,
+      SessionStatus.SUBMITTED,
     ];
     return boughtStatuses.includes(session.status);
   }
@@ -245,10 +254,13 @@ export class CancellationsService {
     const eligibleSessions = campaign.testSessions.filter(
       (session: any) =>
         session.status === SessionStatus.ACCEPTED ||
+        session.status === SessionStatus.IN_PROGRESS ||
+        session.status === SessionStatus.PROCEDURES_COMPLETED ||
         session.status === SessionStatus.PRICE_VALIDATED ||
         session.status === SessionStatus.PURCHASE_SUBMITTED ||
         session.status === SessionStatus.PURCHASE_REJECTED ||
-        session.status === SessionStatus.PURCHASE_VALIDATED,
+        session.status === SessionStatus.PURCHASE_VALIDATED ||
+        session.status === SessionStatus.SUBMITTED,
     );
 
     // Calculer la compensation individuelle par testeur
@@ -300,6 +312,20 @@ export class CancellationsService {
       },
     });
 
+    // Grace period + capturé + 0 testeurs → rembourser totalPaid (escrow + stripe fees)
+    // Car les frais Stripe ne sont pas encore "perdus" pendant la grace period sans testeurs
+    let refundAmountOverride: number | undefined;
+    const gracePeriodMinutes = await this.businessRulesService.getCampaignActivationGracePeriodMinutes();
+    const inGracePeriod = hoursElapsed < gracePeriodMinutes / 60;
+
+    if (campaign.paymentCapturedAt && inGracePeriod && totalCompensation === 0) {
+      const totalEscrowAmount = Number(campaign.escrowAmount || 0);
+      const { stripeCoverage } = await this.businessRulesService.calculateCommission(
+        totalEscrowAmount - Number(rules.commissionFixedFee),
+      );
+      refundAmountOverride = Math.round((totalEscrowAmount + stripeCoverage) * 100) / 100;
+    }
+
     const {
       refundToPro,
       cancellationFee,
@@ -310,6 +336,7 @@ export class CancellationsService {
       totalCommission,
       compensationMap,
       totalDisbursed,
+      refundAmountOverride,
     });
 
     await this.prisma.testSession.updateMany({
@@ -319,10 +346,13 @@ export class CancellationsService {
           in: [
             SessionStatus.PENDING,
             SessionStatus.ACCEPTED,
+            SessionStatus.IN_PROGRESS,
+            SessionStatus.PROCEDURES_COMPLETED,
             SessionStatus.PRICE_VALIDATED,
             SessionStatus.PURCHASE_SUBMITTED,
             SessionStatus.PURCHASE_REJECTED,
             SessionStatus.PURCHASE_VALIDATED,
+            SessionStatus.SUBMITTED,
           ],
         },
       },
@@ -392,10 +422,13 @@ export class CancellationsService {
             status: {
               in: [
                 SessionStatus.ACCEPTED,
+                SessionStatus.IN_PROGRESS,
+                SessionStatus.PROCEDURES_COMPLETED,
                 SessionStatus.PRICE_VALIDATED,
                 SessionStatus.PURCHASE_SUBMITTED,
                 SessionStatus.PURCHASE_REJECTED,
                 SessionStatus.PURCHASE_VALIDATED,
+                SessionStatus.SUBMITTED,
               ],
             },
           },
