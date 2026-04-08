@@ -4,7 +4,7 @@ import { ApiProperty } from '@nestjs/swagger';
 export class CreateWithdrawalDto {
   @ApiProperty({
     description: 'Montant du retrait en euros (minimum 10)',
-    example: 50.00,
+    example: 50.0,
     minimum: 10,
   })
   @IsNumber()

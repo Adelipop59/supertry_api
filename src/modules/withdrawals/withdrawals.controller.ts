@@ -14,7 +14,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { WithdrawalsService } from './withdrawals.service';
 import { CreateWithdrawalDto } from './dto/create-withdrawal.dto';
-import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
+import {
+  ApiAuthResponses,
+  ApiNotFoundErrorResponse,
+  ApiValidationErrorResponse,
+} from '../../common/decorators/api-error-responses.decorator';
 
 @ApiTags('Withdrawals')
 @Controller('withdrawals')
@@ -22,7 +26,10 @@ export class WithdrawalsController {
   constructor(private readonly withdrawalsService: WithdrawalsService) {}
 
   @ApiOperation({ summary: 'Créer une demande de retrait' })
-  @ApiResponse({ status: 201, description: 'Demande de retrait créée avec succès' })
+  @ApiResponse({
+    status: 201,
+    description: 'Demande de retrait créée avec succès',
+  })
   @ApiAuthResponses()
   @ApiValidationErrorResponse()
   @Post()
@@ -35,7 +42,10 @@ export class WithdrawalsController {
   }
 
   @ApiOperation({ summary: 'Récupérer mes retraits' })
-  @ApiResponse({ status: 200, description: 'Liste des retraits récupérée avec succès' })
+  @ApiResponse({
+    status: 200,
+    description: 'Liste des retraits récupérée avec succès',
+  })
   @ApiAuthResponses()
   @Get('me')
   @Roles(UserRole.PRO, UserRole.USER)
