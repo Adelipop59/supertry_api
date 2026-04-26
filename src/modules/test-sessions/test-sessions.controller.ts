@@ -91,13 +91,19 @@ export class TestSessionsController {
   }
 
   @Get(':id')
+  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
   @ApiOperation({ summary: 'Récupérer les détails d\'une session de test' })
   @ApiResponse({ status: 200, description: 'Détails de la session de test', type: TestSessionResponseDto })
+  @ApiResponse({ status: 403, description: 'Accès refusé - vous n\'êtes ni le testeur ni le vendeur de cette session' })
   @ApiResponse({ status: 404, description: 'Session non trouvée' })
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
-  async findOne(@Param('id') id: string): Promise<TestSessionResponseDto> {
-    return this.testSessionsService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: UserRole,
+  ): Promise<TestSessionResponseDto> {
+    return this.testSessionsService.findOne(id, userId, role);
   }
 
   @Post(':id/cancel')

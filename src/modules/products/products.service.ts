@@ -504,13 +504,45 @@ export class ProductsService {
     return this.toResponseDto(updatedProduct);
   }
 
-  async getImageSignedUrls(productId: string): Promise<string[]> {
+  async getImageSignedUrls(productId: string, currentUserId?: string, currentUserRole?: string): Promise<string[]> {
     const product = await this.prisma.product.findUnique({
       where: { id: productId },
     });
 
     if (!product) {
       throw new I18nHttpException('product.not_found', 'PRODUCT_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    // Authorization: ADMIN sees everything; PRO can only access their own product;
+    // a USER (tester) can only access products from a campaign they participated in.
+    // currentUserId is optional for backward compatibility but every controller-driven
+    // call passes it — see products.controller.getSignedUrls.
+    if (currentUserId) {
+      const isAdmin = currentUserRole === UserRole.ADMIN;
+      if (!isAdmin) {
+        if (currentUserRole === UserRole.PRO) {
+          if (product.sellerId !== currentUserId) {
+            throw new I18nHttpException('product.own_products_only', 'PRODUCT_OWN_ONLY', HttpStatus.FORBIDDEN);
+          }
+        } else if (currentUserRole === UserRole.USER) {
+          const hasAccess = await this.prisma.testSession.findFirst({
+            where: {
+              testerId: currentUserId,
+              campaign: {
+                offers: {
+                  some: { productId },
+                },
+              },
+            },
+            select: { id: true },
+          });
+          if (!hasAccess) {
+            throw new I18nHttpException('product.campaign_access_only', 'PRODUCT_CAMPAIGN_ACCESS_ONLY', HttpStatus.FORBIDDEN);
+          }
+        } else {
+          throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
+        }
+      }
     }
 
     const rawEntries: any[] = Array.isArray(product.images)

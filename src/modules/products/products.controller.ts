@@ -79,13 +79,16 @@ export class ProductsController {
   @Get(':id/signed-urls')
   @ApiOperation({ summary: 'Obtenir des URLs signées pour les images d\'un produit' })
   @ApiResponse({ status: 200, description: 'URLs signées générées' })
+  @ApiResponse({ status: 403, description: 'Accès interdit' })
   @ApiResponse({ status: 404, description: 'Produit non trouvé' })
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
   async getSignedUrls(
     @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: string,
   ): Promise<string[]> {
-    return this.productsService.getImageSignedUrls(id);
+    return this.productsService.getImageSignedUrls(id, userId, role);
   }
 
   @Get(':id')

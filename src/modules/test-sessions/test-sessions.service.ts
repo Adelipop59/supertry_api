@@ -1184,7 +1184,7 @@ export class TestSessionsService {
     return createPaginatedResponse(sessionsWithImages, total, page, limit);
   }
 
-  async findOne(id: string): Promise<TestSessionResponseDto> {
+  async findOne(id: string, currentUserId?: string, currentUserRole?: string): Promise<TestSessionResponseDto> {
     const session = await this.prisma.testSession.findUnique({
       where: { id },
       include: SESSION_INCLUDE,
@@ -1192,6 +1192,18 @@ export class TestSessionsService {
 
     if (!session) {
       throw new I18nHttpException('session.not_found', 'SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    // Authorization: only the tester, the campaign owner (PRO seller), or an ADMIN can fetch a session.
+    // currentUserId/currentUserRole are optional for backward compatibility with internal callers,
+    // but every external (controller-driven) call MUST pass them — see test-sessions.controller.findOne.
+    if (currentUserId) {
+      const isAdmin = currentUserRole === 'ADMIN';
+      const isTester = session.testerId === currentUserId;
+      const isSeller = session.campaign?.seller?.id === currentUserId;
+      if (!isAdmin && !isTester && !isSeller) {
+        throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
+      }
     }
 
     const resolved = await this.resolveSessionProductImages(session as any);
