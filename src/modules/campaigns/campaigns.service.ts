@@ -446,7 +446,7 @@ export class CampaignsService {
     sellerId: string,
     filterDto: CampaignFilterDto,
   ): Promise<PaginatedResponse<CampaignResponseDto>> {
-    const { page = 1, limit = 10, status, search } = filterDto;
+    const { page = 1, limit = 10, status, search, sortBy = 'createdAt', sortDir = 'desc' } = filterDto;
     const skip = (page - 1) * limit;
 
     const where: any = {
@@ -470,7 +470,7 @@ export class CampaignsService {
         skip,
         take: limit,
         include: CAMPAIGN_LIST_INCLUDE,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortBy]: sortDir },
       }),
       this.prisma.campaign.count({ where }),
     ]);
