@@ -4,13 +4,15 @@ import {
   IsInt,
   IsBoolean,
   IsArray,
+  IsOptional,
+  IsUUID,
   ArrayMinSize,
   ValidateNested,
   Min,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateStepDto } from './create-step.dto';
 
 export class CreateProcedureDto {
@@ -20,10 +22,10 @@ export class CreateProcedureDto {
   @MaxLength(255)
   title: string;
 
-  @ApiProperty({ description: 'Description de la procédure', example: 'Tester toutes les fonctionnalités du produit' })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'Description de la procédure', example: 'Tester toutes les fonctionnalités du produit' })
+  @IsOptional()
   @IsString()
-  description: string;
+  description?: string;
 
   @ApiProperty({ description: 'Ordre d\'affichage', example: 1 })
   @IsNotEmpty()
@@ -44,4 +46,9 @@ export class CreateProcedureDto {
   @ValidateNested({ each: true })
   @Type(() => CreateStepDto)
   steps: CreateStepDto[];
+
+  @ApiPropertyOptional({ description: 'ID du template de procédure source (lien vers ProcedureTemplate)', example: '550e8400-e29b-41d4-a716-446655440000' })
+  @IsOptional()
+  @IsUUID()
+  procedureTemplateId?: string;
 }

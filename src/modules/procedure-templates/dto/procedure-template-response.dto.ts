@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { StepTemplateResponseDto } from './step-template-response.dto';
 
 export class ProcedureTemplateResponseDto {
@@ -14,8 +14,8 @@ export class ProcedureTemplateResponseDto {
   @ApiProperty({ description: 'Titre affiché', example: 'Comment tester votre nouveau smartphone' })
   title: string;
 
-  @ApiProperty({ description: 'Description de la procédure', example: 'Suivez ces étapes pour tester correctement le smartphone' })
-  description: string;
+  @ApiPropertyOptional({ description: 'Description de la procédure', example: 'Suivez ces étapes pour tester correctement le smartphone', nullable: true })
+  description?: string | null;
 
   @ApiProperty({ description: 'Liste des étapes', type: [StepTemplateResponseDto] })
   steps: StepTemplateResponseDto[];

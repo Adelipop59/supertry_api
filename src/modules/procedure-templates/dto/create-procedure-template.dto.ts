@@ -1,12 +1,13 @@
 import {
   IsNotEmpty,
+  IsOptional,
   IsString,
   MaxLength,
   IsArray,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CreateStepTemplateDto } from './create-step-template.dto';
 
 export class CreateProcedureTemplateDto {
@@ -30,13 +31,13 @@ export class CreateProcedureTemplateDto {
   @MaxLength(255)
   title: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Description de la procédure de test',
     example: 'Suivez ces étapes pour tester correctement le smartphone et fournir un retour complet',
   })
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  description: string;
+  description?: string;
 
   @ApiProperty({
     description: 'Liste des étapes de la procédure',

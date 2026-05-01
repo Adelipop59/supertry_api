@@ -249,6 +249,7 @@ export class CampaignsService {
                   create: procedures.map((proc) => ({
                     title: proc.title,
                     description: proc.description,
+                    procedureTemplateId: proc.procedureTemplateId,
                     order: proc.order,
                     isRequired: proc.isRequired,
                     steps: {

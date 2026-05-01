@@ -2,7 +2,9 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
+import { CampaignStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateProcedureTemplateDto } from './dto/create-procedure-template.dto';
 import { UpdateProcedureTemplateDto } from './dto/update-procedure-template.dto';
@@ -124,6 +126,27 @@ export class ProcedureTemplatesService {
 
   async remove(id: string, sellerId: string): Promise<void> {
     await this.findOne(id, sellerId);
+
+    const blockingStatuses: CampaignStatus[] = [
+      CampaignStatus.DRAFT,
+      CampaignStatus.PENDING_PAYMENT,
+      CampaignStatus.PENDING_ACTIVATION,
+      CampaignStatus.ACTIVE,
+    ];
+
+    const usage = await this.prisma.procedure.findFirst({
+      where: {
+        procedureTemplateId: id,
+        campaign: { status: { in: blockingStatuses } },
+      },
+      select: { id: true },
+    });
+
+    if (usage) {
+      throw new BadRequestException(
+        "Cette procédure est utilisée dans une campagne en cours. Terminez ou annulez la campagne avant de la supprimer.",
+      );
+    }
 
     await this.prisma.procedureTemplate.delete({
       where: { id },

@@ -548,8 +548,11 @@ model Procedure {
   campaignId String   @map("campaign_id")
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
+  procedureTemplateId String?            @map("procedure_template_id")
+  procedureTemplate   ProcedureTemplate? @relation(fields: [procedureTemplateId], references: [id], onDelete: SetNull)
+
   title       String
-  description String  @db.Text
+  description String? @db.Text
   order       Int
   isRequired  Boolean @default(true) @map("is_required")
 
@@ -560,6 +563,7 @@ model Procedure {
   steps Step[]
 
   @@index([campaignId])
+  @@index([procedureTemplateId])
   @@index([order])
   @@map("procedures")
 }
@@ -599,13 +603,14 @@ model ProcedureTemplate {
 
   name        String
   title       String
-  description String @db.Text
+  description String? @db.Text
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  steps StepTemplate[]
+  steps      StepTemplate[]
+  procedures Procedure[]
 
   @@index([sellerId])
   @@map("procedure_templates")
