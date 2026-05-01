@@ -90,6 +90,12 @@ export class ProductResponseDto {
     campaign: {
       id: string;
       status: string;
+      title: string;
+      escrowAmount: string | number;
+      createdAt: Date;
+      startDate: Date;
+      endDate: Date | null;
+      totalSlots: number;
     };
   }[];
 }
