@@ -28,6 +28,7 @@ import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast } from '../gamification/gamification.constants';
 import { MessagesService } from '../messages/messages.service';
 import { MediaService } from '../media/media.service';
+import { PostHogService } from '../posthog/posthog.service';
 import { normalizeImageEntry } from '../products/interfaces/product-image.interface';
 
 const CAMPAIGN_OFFERS_WITH_IMAGES = {
@@ -128,6 +129,7 @@ export class TestSessionsService {
     private gamificationService: GamificationService,
     private messagesService: MessagesService,
     private mediaService: MediaService,
+    private posthog: PostHogService,
   ) {}
 
   async apply(
@@ -288,6 +290,13 @@ export class TestSessionsService {
       });
 
       return createdSession;
+    });
+
+    this.posthog.capture(testerId, 'campaign_applied', {
+      sessionId: session.id,
+      campaignId,
+      autoAccepted: campaign.autoAcceptApplications,
+      status: session.status,
     });
 
     return session as any;
@@ -746,6 +755,13 @@ export class TestSessionsService {
       include: SESSION_INCLUDE,
     });
 
+    this.posthog.capture(testerId, 'purchase_submitted', {
+      sessionId,
+      campaignId: campaign.id,
+      productPrice: dto.productPrice,
+      shippingCost: dto.shippingCost,
+    });
+
     return updatedSession as any;
   }
 
@@ -791,6 +807,12 @@ export class TestSessionsService {
       where: { id: sessionId },
       data: updateData,
       include: SESSION_INCLUDE,
+    });
+
+    this.posthog.capture(sellerId, 'purchase_validated', {
+      sessionId,
+      campaignId: session.campaign.id,
+      testerId: session.testerId,
     });
 
     // Process purchase reimbursement (productPrice + shippingCost → testeur)
@@ -1097,6 +1119,13 @@ export class TestSessionsService {
     } catch (error) {
       this.logger.error(`Gamification XP award failed: ${error.message}`);
     }
+
+    this.posthog.capture(session.testerId, 'test_completed', {
+      sessionId: session.id,
+      campaignId: session.campaignId,
+      sellerId: session.campaign.seller.id,
+      rewardAmount,
+    });
 
     return updatedSession as any;
   }

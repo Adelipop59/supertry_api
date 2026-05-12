@@ -11,6 +11,7 @@ import { StripeService } from '../stripe/stripe.service';
 import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
+import { PostHogService } from '../posthog/posthog.service';
 import {
   SignupDto,
   LoginDto,
@@ -37,6 +38,7 @@ export class AuthService {
     private stripeService: StripeService,
     private walletService: WalletService,
     private notificationsService: NotificationsService,
+    private posthog: PostHogService,
   ) {}
 
   /**
@@ -187,6 +189,16 @@ export class AuthService {
 
     this.logger.log(`User ${email} created successfully`);
 
+    this.posthog.identify(profile.id, {
+      email: profile.email,
+      role: profile.role,
+      createdAt: profile.createdAt,
+    });
+    this.posthog.capture(profile.id, 'signup_completed', {
+      method: 'email',
+      role: profile.role,
+    });
+
     return {
       access_token: session.id,
       refresh_token: session.id,
@@ -246,6 +258,11 @@ export class AuthService {
     }
 
     const session = await this.luciaService.createSession(profile.id);
+
+    this.posthog.capture(profile.id, 'user_logged_in', {
+      method: 'email',
+      role: profile.role,
+    });
 
     return {
       access_token: session.id,
@@ -497,6 +514,12 @@ export class AuthService {
 
     // Create session
     const session = await this.luciaService.createSession(profile.id);
+
+    this.posthog.capture(profile.id, 'user_logged_in', {
+      method: 'oauth',
+      provider,
+      role: profile.role,
+    });
 
     return {
       access_token: session.id,

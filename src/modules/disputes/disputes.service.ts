@@ -22,6 +22,7 @@ import { NotificationTemplate } from '../notifications/enums/notification-templa
 import { Decimal } from '@prisma/client/runtime/library';
 import { GamificationService } from '../gamification/gamification.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
+import { PostHogService } from '../posthog/posthog.service';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
@@ -36,6 +37,7 @@ export class DisputesService {
     private readonly walletService: WalletService,
     private readonly gamificationService: GamificationService,
     private readonly businessRulesService: BusinessRulesService,
+    private readonly posthog: PostHogService,
   ) {}
 
   /**
@@ -175,6 +177,13 @@ export class DisputesService {
     );
 
     this.logger.log(`Dispute created for session ${sessionId} by ${isTester ? 'tester' : 'PRO'}`);
+
+    this.posthog.capture(userId, 'dispute_filed', {
+      sessionId,
+      campaignId: session.campaignId,
+      createdBy: isTester ? 'tester' : 'pro',
+      reason: dto.disputeReason,
+    });
 
     return {
       session: updatedSession,

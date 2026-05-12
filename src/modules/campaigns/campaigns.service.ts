@@ -10,6 +10,7 @@ import { StripeService } from '../stripe/stripe.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PostHogService } from '../posthog/posthog.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { CampaignResponseDto } from './dto/campaign-response.dto';
@@ -88,6 +89,7 @@ export class CampaignsService {
     private notificationsService: NotificationsService,
     private gamificationService: GamificationService,
     private mediaService: MediaService,
+    private posthog: PostHogService,
   ) {}
 
   /**
@@ -276,6 +278,13 @@ export class CampaignsService {
       });
 
       return createdCampaign;
+    });
+
+    this.posthog.capture(sellerId, 'campaign_created', {
+      campaignId: campaign.id,
+      title: campaign.title,
+      totalSlots: campaign.totalSlots,
+      marketplaceMode: campaign.marketplaceMode,
     });
 
     return this.sanitizeCampaign(campaign, true);
@@ -1229,6 +1238,12 @@ export class CampaignsService {
     const updatedCampaign = await this.prisma.campaign.findUnique({
       where: { id },
       include: CAMPAIGN_FULL_INCLUDE,
+    });
+
+    this.posthog.capture(sellerId, 'campaign_published', {
+      campaignId: id,
+      title: campaign.title,
+      totalSlots: campaign.totalSlots,
     });
 
     return this.sanitizeCampaign(updatedCampaign, true);

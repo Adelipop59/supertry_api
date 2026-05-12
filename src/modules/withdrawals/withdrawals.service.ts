@@ -3,6 +3,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PostHogService } from '../posthog/posthog.service';
 import {
   WithdrawalStatus,
   AuditCategory,
@@ -21,6 +22,7 @@ export class WithdrawalsService {
     private readonly stripeService: StripeService,
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    private readonly posthog: PostHogService,
   ) {}
 
   /**
@@ -145,6 +147,12 @@ export class WithdrawalsService {
           withdrawalId: withdrawal.id,
           type: NotificationType.PAYMENT_RECEIVED,
         },
+      });
+
+      this.posthog.capture(userId, 'withdrawal_requested', {
+        withdrawalId: withdrawal.id,
+        amountEur: amount,
+        stripePayoutId: payout.id,
       });
 
       return updatedWithdrawal;

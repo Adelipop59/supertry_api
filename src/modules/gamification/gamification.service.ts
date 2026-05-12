@@ -10,6 +10,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PostHogService } from '../posthog/posthog.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import {
   getTierForXp,
@@ -37,6 +38,7 @@ export class GamificationService {
     private readonly auditService: AuditService,
     private readonly businessRulesService: BusinessRulesService,
     private readonly notificationsService: NotificationsService,
+    private readonly posthog: PostHogService,
   ) {}
 
   // ============================================================================
@@ -495,6 +497,13 @@ export class GamificationService {
 
     // Recompute tier after XP change
     await this.recomputeTier(profileId);
+
+    this.posthog.capture(profileId, 'xp_awarded', {
+      type,
+      amount,
+      sessionId: context.sessionId,
+      ratingId: context.ratingId,
+    });
   }
 
   private async recomputeTier(profileId: string): Promise<void> {

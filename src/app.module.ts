@@ -12,6 +12,7 @@ import { LuciaModule } from './modules/lucia/lucia.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuditModule } from './modules/audit/audit.module';
+import { PostHogModule } from './modules/posthog/posthog.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ProductsModule } from './modules/products/products.module';
@@ -69,6 +70,7 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
     }),
     MetricsModule,
     PrismaModule,
+    PostHogModule,
     AuditModule,
     NotificationsModule,
     LuciaModule,

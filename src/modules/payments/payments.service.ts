@@ -10,6 +10,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
+import { PostHogService } from '../posthog/posthog.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import {
   Campaign,
@@ -34,6 +35,7 @@ export class PaymentsService {
     private readonly businessRulesService: BusinessRulesService,
     private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
+    private readonly posthog: PostHogService,
   ) {}
 
   // ============================================================================
@@ -300,6 +302,13 @@ export class PaymentsService {
     });
 
     this.logger.log(`Campaign payment processed successfully: ${campaignId}`);
+
+    this.posthog.capture(userId, 'payment_completed', {
+      campaignId,
+      transactionId: result.transaction.id,
+      amountEur: Number(result.transaction.amount),
+      stripeIntentId: confirmedPayment.id,
+    });
 
     return {
       paymentIntent: confirmedPayment,
