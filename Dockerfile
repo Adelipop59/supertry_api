@@ -3,7 +3,7 @@
 # ============================================================
 FROM node:20-alpine AS deps
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ RUN pnpm install --frozen-lockfile
 # ============================================================
 FROM node:20-alpine AS builder
 
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
 
@@ -42,7 +42,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 COPY prisma/schema.prisma ./prisma/schema.prisma
 
-RUN corepack enable && corepack prepare pnpm@latest --activate && \
+RUN corepack enable && corepack prepare pnpm@10 --activate && \
     pnpm install --frozen-lockfile --prod && \
     pnpm add prisma@5.22.0
 
