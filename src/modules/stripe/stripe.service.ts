@@ -1067,6 +1067,13 @@ export class StripeService {
    * En production, les fonds deviennent disponibles automatiquement après 2-7 jours
    */
   async createTestTopUp(amount: number): Promise<Stripe.Topup> {
+    if (process.env.NODE_ENV === 'production') {
+      throw new I18nHttpException(
+        'common.forbidden',
+        'TEST_HELPER_FORBIDDEN_IN_PROD',
+        HttpStatus.FORBIDDEN,
+      );
+    }
     try {
       const topup = await this.stripe.topups.create({
         amount: Math.round(amount * 100),

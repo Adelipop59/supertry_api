@@ -187,7 +187,10 @@ export class TestSessionsService {
     }
 
     // Vérification onboarding + KYC conditionnel
-    const skipKYC = process.env.SKIP_KYC_VERIFICATION === 'true';
+    // SKIP_KYC_VERIFICATION ne peut PAS bypass le KYC en production
+    const skipKYC =
+      process.env.NODE_ENV !== 'production' &&
+      process.env.SKIP_KYC_VERIFICATION === 'true';
 
     if (!skipKYC) {
       // 1. Stripe Connect créé ?

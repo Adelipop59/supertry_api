@@ -29,28 +29,7 @@ export class WithdrawalsService {
    * Demander un retrait vers IBAN (Stripe Payout)
    */
   async createWithdrawal(userId: string, amount: number): Promise<any> {
-    // 1. Get wallet
-    const wallet = await this.prisma.wallet.findUnique({
-      where: { userId },
-    });
-
-    if (!wallet) {
-      throw new I18nHttpException(
-        'wallet.not_found',
-        'WALLET_NOT_FOUND',
-        HttpStatus.NOT_FOUND,
-      );
-    }
-
-    if (Number(wallet.balance) < amount) {
-      throw new I18nHttpException(
-        'wallet.insufficient_balance',
-        'WALLET_INSUFFICIENT_BALANCE',
-        HttpStatus.BAD_REQUEST,
-      );
-    }
-
-    // 2. Get profile
+    // 1. Vérifier le profil (KYC + Connect onboarding obligatoires)
     const profile = await this.prisma.profile.findUnique({
       where: { id: userId },
       select: {
@@ -58,6 +37,8 @@ export class WithdrawalsService {
         email: true,
         firstName: true,
         stripeConnectAccountId: true,
+        stripeOnboardingCompleted: true,
+        stripeIdentityVerified: true,
       },
     });
 
@@ -69,7 +50,7 @@ export class WithdrawalsService {
       );
     }
 
-    if (!profile?.stripeConnectAccountId) {
+    if (!profile.stripeConnectAccountId) {
       throw new I18nHttpException(
         'stripe.no_account',
         'STRIPE_NO_ACCOUNT',
@@ -77,9 +58,49 @@ export class WithdrawalsService {
       );
     }
 
-    // 3. Créer Withdrawal PENDING
+    if (!profile.stripeOnboardingCompleted) {
+      throw new I18nHttpException(
+        'wallet.onboarding_required',
+        'WALLET_ONBOARDING_REQUIRED',
+        HttpStatus.BAD_REQUEST,
+        undefined,
+        { onboardingRequired: true },
+      );
+    }
+
+    if (!profile.stripeIdentityVerified) {
+      throw new I18nHttpException(
+        'wallet.kyc_required',
+        'WALLET_KYC_REQUIRED',
+        HttpStatus.FORBIDDEN,
+        undefined,
+        { identityRequired: true },
+      );
+    }
+
+    // 2. Créer Withdrawal PENDING + lock pessimiste sur le wallet (évite double-spend)
     const withdrawal = await this.prisma.$transaction(async (tx) => {
-      // Créer withdrawal
+      // SELECT … FOR UPDATE : verrou ligne wallet jusqu'à fin de transaction
+      const locked = await tx.$queryRaw<
+        { id: string; balance: string }[]
+      >`SELECT id, balance FROM wallets WHERE user_id = ${userId}::uuid FOR UPDATE`;
+
+      if (locked.length === 0) {
+        throw new I18nHttpException(
+          'wallet.not_found',
+          'WALLET_NOT_FOUND',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      if (Number(locked[0].balance) < amount) {
+        throw new I18nHttpException(
+          'wallet.insufficient_balance',
+          'WALLET_INSUFFICIENT_BALANCE',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
       const withdrawal = await tx.withdrawal.create({
         data: {
           userId,

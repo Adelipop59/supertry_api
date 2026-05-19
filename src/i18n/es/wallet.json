@@ -1,6 +1,8 @@
 {
   "not_found": "No se ha encontrado ningún monedero para su cuenta.",
   "insufficient_balance": "Saldo insuficiente para realizar esta operación.",
+  "kyc_required": "Debe completar la verificación de identidad (KYC) antes de poder retirar sus ganancias.",
+  "onboarding_required": "Debe finalizar la incorporación de Stripe (IBAN, información personal) antes de poder retirar sus ganancias.",
   "withdrawal_not_found": "Solicitud de retiro no encontrada.",
   "cannot_cancel": "Esta solicitud de retiro ya no puede ser cancelada.",
   "withdrawal_created": "Solicitud de retiro creada correctamente.",

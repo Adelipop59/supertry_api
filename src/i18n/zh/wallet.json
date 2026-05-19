@@ -1,6 +1,8 @@
 {
   "not_found": "未找到您账户的钱包。",
   "insufficient_balance": "余额不足，无法完成此操作。",
+  "kyc_required": "您必须完成身份验证 (KYC) 才能提现您的收益。",
+  "onboarding_required": "您必须完成 Stripe 入驻 (IBAN、个人信息) 才能提现您的收益。",
   "withdrawal_not_found": "未找到提现请求。",
   "cannot_cancel": "此提现请求已无法取消。",
   "withdrawal_created": "提现请求创建成功。",

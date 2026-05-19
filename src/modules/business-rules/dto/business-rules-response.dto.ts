@@ -22,6 +22,9 @@ export class BusinessRulesResponseDto {
   @ApiProperty({ description: 'Commission sur photo UGC', example: 3.0 })
   ugcPhotoCommission: number;
 
+  @ApiProperty({ description: 'Activer la fonctionnalité de pourboires (tips PRO → testeur)', example: true })
+  enableTips: boolean;
+
   @ApiProperty({ description: 'Pourcentage de commission sur les pourboires', example: 10 })
   tipCommissionPercent: number;
 

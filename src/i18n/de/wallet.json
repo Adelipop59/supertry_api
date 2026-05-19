@@ -1,6 +1,8 @@
 {
   "not_found": "Kein Wallet f\u00fcr Ihr Konto gefunden.",
   "insufficient_balance": "Unzureichendes Guthaben f\u00fcr diesen Vorgang.",
+  "kyc_required": "Sie m\u00fcssen die Identit\u00e4tspr\u00fcfung (KYC) abschlie\u00dfen, bevor Sie Ihre Eink\u00fcnfte auszahlen k\u00f6nnen.",
+  "onboarding_required": "Sie m\u00fcssen Ihr Stripe-Onboarding (IBAN, pers\u00f6nliche Daten) abschlie\u00dfen, bevor Sie Ihre Eink\u00fcnfte auszahlen k\u00f6nnen.",
   "withdrawal_not_found": "Auszahlungsanfrage nicht gefunden.",
   "cannot_cancel": "Diese Auszahlungsanfrage kann nicht mehr storniert werden.",
   "withdrawal_created": "Auszahlungsanfrage erfolgreich erstellt.",

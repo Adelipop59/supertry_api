@@ -1,6 +1,8 @@
 {
   "not_found": "Nessun portafoglio trovato per il tuo account.",
   "insufficient_balance": "Saldo insufficiente per effettuare questa operazione.",
+  "kyc_required": "Devi completare la verifica dell'identità (KYC) prima di poter prelevare i tuoi guadagni.",
+  "onboarding_required": "Devi completare l'onboarding Stripe (IBAN, dati personali) prima di poter prelevare i tuoi guadagni.",
   "withdrawal_not_found": "Richiesta di prelievo non trovata.",
   "cannot_cancel": "Questa richiesta di prelievo non può più essere annullata.",
   "withdrawal_created": "Richiesta di prelievo creata con successo.",

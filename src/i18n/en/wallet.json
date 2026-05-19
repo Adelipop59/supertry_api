@@ -1,6 +1,8 @@
 {
   "not_found": "No wallet found for your account.",
   "insufficient_balance": "Insufficient balance to complete this operation.",
+  "kyc_required": "You must complete identity verification (KYC) before withdrawing your earnings.",
+  "onboarding_required": "You must complete your Stripe onboarding (IBAN, personal information) before withdrawing your earnings.",
   "withdrawal_not_found": "Withdrawal request not found.",
   "cannot_cancel": "This withdrawal request can no longer be cancelled.",
   "withdrawal_created": "Withdrawal request created successfully.",

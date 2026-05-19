@@ -29,6 +29,7 @@ import { WithdrawalsModule } from './modules/withdrawals/withdrawals.module';
 import { CancellationsModule } from './modules/cancellations/cancellations.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { UgcModule } from './modules/ugc/ugc.module';
+import { TipsModule } from './modules/tips/tips.module';
 import { RatingsModule } from './modules/ratings/ratings.module';
 import { HealthModule } from './modules/health/health.module';
 import { AdminModule } from './modules/admin/admin.module';
@@ -91,6 +92,7 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
     CancellationsModule,
     DisputesModule,
     UgcModule,
+    TipsModule,
     RatingsModule,
     HealthModule,
     AdminModule,

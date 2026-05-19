@@ -1,6 +1,8 @@
 {
   "not_found": "Aucun portefeuille trouvé pour votre compte.",
   "insufficient_balance": "Solde insuffisant pour effectuer cette opération.",
+  "kyc_required": "Vous devez compléter la vérification d'identité (KYC) avant de pouvoir retirer vos gains.",
+  "onboarding_required": "Vous devez finaliser votre onboarding Stripe (IBAN, informations personnelles) avant de pouvoir retirer vos gains.",
   "withdrawal_not_found": "Demande de retrait introuvable.",
   "cannot_cancel": "Cette demande de retrait ne peut plus être annulée.",
   "withdrawal_created": "Demande de retrait créée avec succès.",

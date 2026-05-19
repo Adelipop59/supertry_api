@@ -1,6 +1,8 @@
 {
   "not_found": "Nenhuma carteira encontrada para sua conta.",
   "insufficient_balance": "Saldo insuficiente para realizar esta opera\u00e7\u00e3o.",
+  "kyc_required": "Voc\u00ea deve concluir a verifica\u00e7\u00e3o de identidade (KYC) antes de poder sacar seus ganhos.",
+  "onboarding_required": "Voc\u00ea deve finalizar seu onboarding Stripe (IBAN, dados pessoais) antes de poder sacar seus ganhos.",
   "withdrawal_not_found": "Solicita\u00e7\u00e3o de saque n\u00e3o encontrada.",
   "cannot_cancel": "Esta solicita\u00e7\u00e3o de saque n\u00e3o pode mais ser cancelada.",
   "withdrawal_created": "Solicita\u00e7\u00e3o de saque criada com sucesso.",

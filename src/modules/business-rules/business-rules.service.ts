@@ -242,6 +242,22 @@ export class BusinessRulesService {
   }
 
   /**
+   * Indique si les tips PRO → testeur sont activés (feature flag)
+   */
+  async areTipsEnabled(): Promise<boolean> {
+    const rules = await this.findLatest();
+    return Boolean(rules.enableTips);
+  }
+
+  /**
+   * Pourcentage de commission SuperTry retenu sur chaque tip
+   */
+  async getTipCommissionPercent(): Promise<number> {
+    const rules = await this.findLatest();
+    return Number(rules.tipCommissionPercent);
+  }
+
+  /**
    * Calcule les impacts d'une annulation testeur après PURCHASE_VALIDATED.
    * Le testeur garde le remboursement achat (déjà transféré), pas de refund supplémentaire.
    * SuperTry prélève une commission réduite (50% de la commission normale).
