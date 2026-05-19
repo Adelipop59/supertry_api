@@ -731,7 +731,10 @@ export class TestSessionsService {
     }
 
     // Check scheduled purchase date (allow ±1 day tolerance)
-    const bypassBusinessRules = process.env.BYPASS_BUSINESS_RULES === 'true';
+    // BYPASS_BUSINESS_RULES is dev-only — production must always enforce the date guard.
+    const bypassBusinessRules =
+      process.env.NODE_ENV !== 'production' &&
+      process.env.BYPASS_BUSINESS_RULES === 'true';
 
     if (session.scheduledPurchaseDate && !bypassBusinessRules) {
       const today = new Date();
@@ -785,30 +788,48 @@ export class TestSessionsService {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
-    // Prepare update data
-    const updateData: any = {
-      status: SessionStatus.PURCHASE_VALIDATED,
-      purchaseValidatedAt: new Date(),
-    };
-
-    // Allow PRO to override productPrice if provided
+    // Apply PRO overrides (productPrice / shippingCost / comment) BEFORE the transfer,
+    // since processPurchaseReimbursement reads them from the DB. Status stays
+    // PURCHASE_SUBMITTED until the payment succeeds.
+    const priceUpdates: Record<string, unknown> = {};
     if (dto?.productPrice !== undefined) {
-      updateData.productPrice = dto.productPrice;
+      priceUpdates.productPrice = dto.productPrice;
     }
-
-    // Allow PRO to override shippingCost if provided
     if (dto?.shippingCost !== undefined) {
-      updateData.shippingCost = dto.shippingCost;
+      priceUpdates.shippingCost = dto.shippingCost;
     }
-
-    // Add validation comment if provided
     if (dto?.purchaseValidationComment) {
-      updateData.purchaseValidationComment = dto.purchaseValidationComment;
+      priceUpdates.purchaseValidationComment = dto.purchaseValidationComment;
+    }
+    if (Object.keys(priceUpdates).length > 0) {
+      await this.prisma.testSession.update({
+        where: { id: sessionId },
+        data: priceUpdates,
+      });
     }
 
+    // Process purchase reimbursement BEFORE flipping the status.
+    // If it throws, the session stays PURCHASE_SUBMITTED and the PRO can retry.
+    // If it succeeds but the next update crashes, retry is still safe because
+    // processPurchaseReimbursement is idempotent via session.purchaseReimbursedAt.
+    try {
+      await this.paymentsService.processPurchaseReimbursement(sessionId);
+    } catch (error) {
+      this.logger.error(`Failed to process purchase reimbursement for session ${sessionId}: ${error.message}`);
+      throw new I18nHttpException(
+        'payment.reimbursement_failed',
+        'PAYMENT_REIMBURSEMENT_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    // Payment succeeded → mark session as validated.
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
-      data: updateData,
+      data: {
+        status: SessionStatus.PURCHASE_VALIDATED,
+        purchaseValidatedAt: new Date(),
+      },
       include: SESSION_INCLUDE,
     });
 
@@ -817,23 +838,6 @@ export class TestSessionsService {
       campaignId: session.campaign.id,
       testerId: session.testerId,
     });
-
-    // Process purchase reimbursement (productPrice + shippingCost → testeur)
-    try {
-      await this.paymentsService.processPurchaseReimbursement(sessionId);
-    } catch (error) {
-      this.logger.error(`Failed to process purchase reimbursement for session ${sessionId}: ${error.message}`);
-      // Rollback: revenir à PURCHASE_SUBMITTED pour permettre un retry
-      await this.prisma.testSession.update({
-        where: { id: sessionId },
-        data: { status: SessionStatus.PURCHASE_SUBMITTED },
-      });
-      throw new I18nHttpException(
-        'payment.reimbursement_failed',
-        'PAYMENT_REIMBURSEMENT_FAILED',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
 
     return updatedSession as any;
   }
@@ -1003,6 +1007,21 @@ export class TestSessionsService {
       throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
     }
 
+    // Process bonus payment (testerBonus + proBonus → testeur) + commission SuperTry
+    // BEFORE flipping the status. Status stays PURCHASE_VALIDATED until the payment
+    // succeeds — idempotent via session.bonusPaidAt, so retry is safe.
+    try {
+      await this.paymentsService.processBonusPayment(sessionId);
+    } catch (error) {
+      this.logger.error(`Failed to process bonus payment for session ${sessionId}: ${error.message}`);
+      throw new I18nHttpException(
+        'payment.bonus_payment_failed',
+        'PAYMENT_BONUS_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    // Payment succeeded → mark session as submitted.
     const updatedSession = await this.prisma.testSession.update({
       where: { id: sessionId },
       data: {
@@ -1011,26 +1030,6 @@ export class TestSessionsService {
       },
       include: SESSION_INCLUDE,
     });
-
-    // Process bonus payment (testerBonus + proBonus → testeur) + commission SuperTry
-    try {
-      await this.paymentsService.processBonusPayment(sessionId);
-    } catch (error) {
-      this.logger.error(`Failed to process bonus payment for session ${sessionId}: ${error.message}`);
-      // Rollback: revenir à PURCHASE_VALIDATED pour permettre un retry
-      await this.prisma.testSession.update({
-        where: { id: sessionId },
-        data: {
-          status: SessionStatus.PURCHASE_VALIDATED,
-          submittedAt: null,
-        },
-      });
-      throw new I18nHttpException(
-        'payment.bonus_payment_failed',
-        'PAYMENT_BONUS_FAILED',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
 
     return updatedSession as any;
   }
@@ -1245,11 +1244,16 @@ export class TestSessionsService {
   /**
    * Vérifie que la date du jour correspond à la scheduledPurchaseDate de la session.
    * Si ce n'est pas le bon jour, lève une erreur 400.
-   * Bypass possible via BYPASS_BUSINESS_RULES=true.
+   * Bypass possible via BYPASS_BUSINESS_RULES=true uniquement hors production.
    */
   private assertScheduledDateIsToday(session: any): void {
     if (!session.scheduledPurchaseDate) return;
-    if (process.env.BYPASS_BUSINESS_RULES === 'true') return;
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      process.env.BYPASS_BUSINESS_RULES === 'true'
+    ) {
+      return;
+    }
 
     const today = new Date().toISOString().split('T')[0];
     const scheduled = new Date(session.scheduledPurchaseDate);

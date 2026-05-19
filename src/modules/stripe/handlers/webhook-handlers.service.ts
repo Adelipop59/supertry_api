@@ -915,6 +915,27 @@ export class WebhookHandlersService {
             },
           });
         }
+
+        // Reset session idempotency fields so a retry can re-trigger the payment.
+        // We deliberately do NOT revert session.status — the PRO may have advanced
+        // it further (eg. SUBMITTED → COMPLETED), and an admin must investigate.
+        if (transaction.sessionId) {
+          const sessionUpdates: Record<string, unknown> = {};
+          if (transaction.type === TransactionType.PURCHASE_REIMBURSEMENT) {
+            sessionUpdates.purchaseReimbursedAt = null;
+            sessionUpdates.purchaseReimbursementAmount = null;
+          } else if (transaction.type === TransactionType.TEST_REWARD) {
+            sessionUpdates.bonusPaidAt = null;
+          } else if (transaction.type === TransactionType.TIP) {
+            // Tips are one-shot: deletion happens via admin tools, not here.
+          }
+          if (Object.keys(sessionUpdates).length > 0) {
+            await tx.testSession.update({
+              where: { id: transaction.sessionId },
+              data: sessionUpdates,
+            });
+          }
+        }
       });
 
       this.logger.log(`Transaction ${transaction.id} marked FAILED + wallet rolled back + commission reversed (transfer ${transfer.id})`);
