@@ -293,6 +293,26 @@ export class ChangePasswordDto {
   newPassword!: string;
 }
 
+export class ForgotPasswordDto {
+  @ApiProperty({ description: 'Adresse email du compte', example: 'user@example.com' })
+  @IsEmail()
+  @IsNotEmpty()
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @ApiProperty({ description: 'Token de réinitialisation reçu par email' })
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+
+  @ApiProperty({ description: 'Nouveau mot de passe (min 6)', minLength: 6 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(6)
+  newPassword!: string;
+}
+
 export class VerifyEmailDto {
   @ApiProperty({ description: 'Code OTP de vérification (6 chiffres)', example: '123456' })
   @IsString()

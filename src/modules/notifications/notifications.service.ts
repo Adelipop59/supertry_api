@@ -7,8 +7,7 @@ import { NodemailerProvider } from './providers/email/nodemailer.provider';
 import { TwilioProvider } from './providers/sms/twilio.provider';
 import { SendEmailDto, SendSmsDto } from './dto';
 import { NotificationResult } from './interfaces/notification-result.interface';
-import { NotificationStatus } from './enums';
-import { NotificationType, NotificationChannel, SessionStatus, UGCStatus, UGCType, CampaignStatus } from '@prisma/client';
+import { NotificationStatus, NotificationType, NotificationChannel, SessionStatus, UGCStatus, UGCType, CampaignStatus } from '@prisma/client';
 import { NOTIFICATION_QUEUES } from './constants/notification.constants';
 
 @Injectable()
@@ -66,6 +65,7 @@ export class NotificationsService {
 
     await this.updateNotification(notification.id, {
       status: result.success ? NotificationStatus.SENT : NotificationStatus.FAILED,
+      isSent: result.success,
       messageId: result.messageId,
       error: result.error,
       sentAt: result.sentAt,
@@ -132,6 +132,7 @@ export class NotificationsService {
 
     await this.updateNotification(notification.id, {
       status: result.success ? NotificationStatus.SENT : NotificationStatus.FAILED,
+      isSent: result.success,
       messageId: result.messageId,
       error: result.error,
       sentAt: result.sentAt,
@@ -319,6 +320,7 @@ export class NotificationsService {
         title,
         message,
         data: data.variables || data.metadata || {},
+        status: data.status ?? NotificationStatus.PENDING,
         isSent: false,
         retries: 0,
       },

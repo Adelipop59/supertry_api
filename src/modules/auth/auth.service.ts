@@ -24,6 +24,7 @@ import {
 } from './dto/auth.dto';
 import { Session } from 'lucia';
 import { decodeIdToken } from 'arctic';
+import { createHash, randomBytes } from 'crypto';
 
 export type OAuthProvider = 'google' | 'github' | 'microsoft' | 'apple' | 'facebook' | 'discord';
 
@@ -349,6 +350,117 @@ export class AuthService {
     await this.luciaService.invalidateUserSessions(userId);
 
     return { message: 'Mot de passe modifié avec succès.' };
+  }
+
+  /**
+   * Request a password reset link.
+   * Always returns the same generic response to avoid email enumeration:
+   * we never reveal whether the email exists or is an OAuth-only account.
+   */
+  async requestPasswordReset(email: string): Promise<MessageResponseDto> {
+    const genericResponse: MessageResponseDto = {
+      message:
+        'Si un compte existe pour cette adresse, un lien de réinitialisation a été envoyé.',
+    };
+
+    const profile = await this.prismaService.profile.findUnique({
+      where: { email },
+    });
+
+    // Skip OAuth-only accounts (no password to reset) and unknown emails,
+    // but keep the response identical so the endpoint leaks nothing.
+    if (!profile || !profile.passwordHash) {
+      return genericResponse;
+    }
+
+    // Generate a random token; only its SHA-256 hash is stored.
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Invalidate any previous unused token for this user.
+    await this.prismaService.passwordResetToken.updateMany({
+      where: { userId: profile.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    await this.prismaService.passwordResetToken.create({
+      data: { userId: profile.id, tokenHash, expiresAt },
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+    const resetLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+
+    // Dev helper: log the reset link so the flow is testable without working SMTP.
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.debug(`[DEV] Password reset link for ${profile.email}: ${resetLink}`);
+    }
+
+    // Email failures must not break the flow nor leak account existence.
+    try {
+      await this.notificationsService.sendEmail({
+        to: profile.email,
+        template: NotificationTemplate.PASSWORD_RESET,
+        variables: {
+          username: profile.firstName || profile.email.split('@')[0],
+          resetLink,
+          expiresIn: '1 heure',
+        },
+      });
+      this.logger.log(`Password reset email sent to ${profile.email}`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to send password reset email to ${profile.email}: ${
+          (error as Error).message
+        }`,
+      );
+    }
+
+    return genericResponse;
+  }
+
+  /**
+   * Reset a password using a token received by email.
+   */
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<MessageResponseDto> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+
+    const resetToken = await this.prismaService.passwordResetToken.findFirst({
+      where: { tokenHash, usedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!resetToken || resetToken.expiresAt < new Date()) {
+      throw new I18nHttpException(
+        'auth.invalid_reset_token',
+        'AUTH_INVALID_RESET_TOKEN',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const newPasswordHash = await this.luciaService.hashPassword(newPassword);
+
+    // Update the password and consume the token atomically.
+    await this.prismaService.$transaction([
+      this.prismaService.profile.update({
+        where: { id: resetToken.userId },
+        data: { passwordHash: newPasswordHash },
+      }),
+      this.prismaService.passwordResetToken.update({
+        where: { id: resetToken.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    // Invalidate all active sessions for safety.
+    await this.luciaService.invalidateUserSessions(resetToken.userId);
+
+    this.logger.log(`Password reset completed for user ${resetToken.userId}`);
+
+    return { message: 'Votre mot de passe a été réinitialisé avec succès.' };
   }
 
   /**

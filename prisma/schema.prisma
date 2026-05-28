@@ -87,6 +87,14 @@ enum NotificationChannel {
   IN_APP // Notification in-app
 }
 
+// Enum pour statut d'envoi d'une notification
+enum NotificationStatus {
+  PENDING // En attente d'envoi
+  SENT // Envoyée avec succès
+  FAILED // Échec d'envoi
+  RETRY // En attente de nouvelle tentative
+}
+
 // Enum pour statut de session de test
 enum SessionStatus {
   // Flow principal
@@ -320,6 +328,7 @@ model Profile {
   testerRatingsReceived   TesterRating[]          @relation("TesterRatingReceiver") // Notes reçues (USER)
   xpEvents                XpEvent[] // Historique des événements XP (gamification)
   emailVerificationOtps   EmailVerificationOtp[] // Codes OTP de vérification email
+  passwordResetTokens     PasswordResetToken[] // Tokens de réinitialisation de mot de passe
 
   @@index([email])
   @@index([role])
@@ -992,6 +1001,9 @@ model Notification {
   message String              @db.Text
   data    Json?
 
+  status    NotificationStatus @default(PENDING) // État du cycle d'envoi
+  messageId String?            @map("message_id") // ID renvoyé par le provider (SMTP/Twilio)
+
   isSent Boolean   @default(false) @map("is_sent")
   sentAt DateTime? @map("sent_at")
   isRead Boolean   @default(false) @map("is_read")
@@ -1007,6 +1019,7 @@ model Notification {
   @@index([type])
   @@index([channel])
   @@index([isSent])
+  @@index([status])
   @@map("notifications")
 }
 
@@ -1370,6 +1383,22 @@ model EmailVerificationOtp {
 
   @@index([userId, used])
   @@map("email_verification_otps")
+}
+
+// Table PasswordResetToken - Tokens de réinitialisation de mot de passe
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  tokenHash String    @map("token_hash") // SHA-256 du token brut envoyé par email (jamais stocké en clair)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("password_reset_tokens")
 }
 
 // Enum pour catégories d'audit

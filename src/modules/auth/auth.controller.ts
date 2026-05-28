@@ -25,6 +25,8 @@ import {
   RefreshTokenResponseDto,
   OAuthTokenLoginDto,
   VerifyEmailDto,
+  ForgotPasswordDto,
+  ResetPasswordDto,
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { SkipOnboarding } from '../../common/decorators/skip-onboarding.decorator';
@@ -267,6 +269,31 @@ export class AuthController {
     res.cookie(cookie.name, cookie.value, cookie.attributes);
 
     return result;
+  }
+
+  @Post('forgot-password')
+  @Public()
+  @ApiOperation({ summary: 'Demander un lien de réinitialisation de mot de passe' })
+  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiValidationErrorResponse()
+  async forgotPassword(
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+  ): Promise<MessageResponseDto> {
+    return this.authService.requestPasswordReset(forgotPasswordDto.email);
+  }
+
+  @Post('reset-password')
+  @Public()
+  @ApiOperation({ summary: 'Réinitialiser le mot de passe avec un token reçu par email' })
+  @ApiResponse({ status: 200, type: MessageResponseDto })
+  @ApiValidationErrorResponse()
+  async resetPassword(
+    @Body() resetPasswordDto: ResetPasswordDto,
+  ): Promise<MessageResponseDto> {
+    return this.authService.resetPassword(
+      resetPasswordDto.token,
+      resetPasswordDto.newPassword,
+    );
   }
 
   @Post('verify-email')
