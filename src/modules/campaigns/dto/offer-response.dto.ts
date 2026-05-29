@@ -19,6 +19,13 @@ export class OfferResponseDto {
   @ApiProperty({ description: 'Frais de livraison', example: 4.99 })
   shippingCost: number;
 
+  @ApiProperty({
+    description:
+      'Plafond de dépense pour le testeur (« < X $ », total produit + livraison arrondi au multiple de 5 supérieur). Le prix exact n\'est jamais exposé.',
+    example: 30,
+  })
+  spendCeiling: number;
+
   @ApiProperty({ description: 'Prix minimum de la fourchette', example: 25.00 })
   priceRangeMin: number;
 

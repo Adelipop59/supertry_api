@@ -104,6 +104,13 @@ export class TestSessionResponseDto {
   scheduledPurchaseDate?: Date;
 
   @ApiPropertyOptional({
+    description:
+      'true si c\'est le jour du test (scheduledPurchaseDate) : la procédure, les étapes et la photo claire sont révélées. false sinon.',
+    example: false,
+  })
+  isRevealed?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Prix du produit validé',
     example: 29.99,
   })

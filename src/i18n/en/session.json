@@ -1,5 +1,6 @@
 {
   "not_found": "This test session could not be found.",
+  "distribution_invalid": "The selected date is not available for this campaign.",
   "banned_until": "Your account is temporarily suspended until {date}. You can apply again after that date.",
   "identity_blocked": "Your account is being verified. Please contact support.",
   "stripe_required": "Please set up your payment account before applying.",

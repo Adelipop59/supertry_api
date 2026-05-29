@@ -1,5 +1,6 @@
 {
   "not_found": "Diese Testsitzung wurde nicht gefunden.",
+  "distribution_invalid": "Das ausgewählte Datum ist für diese Kampagne nicht verfügbar.",
   "banned_until": "Ihr Konto ist vorübergehend gesperrt bis zum {date}. Sie können sich nach diesem Datum erneut bewerben.",
   "identity_blocked": "Ihr Konto wird derzeit überprüft. Bitte wenden Sie sich an den Support.",
   "stripe_required": "Bitte richten Sie Ihr Zahlungskonto ein, bevor Sie sich bewerben.",

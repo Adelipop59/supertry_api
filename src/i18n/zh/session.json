@@ -1,5 +1,6 @@
 {
   "not_found": "未找到该测试会话。",
+  "distribution_invalid": "所选日期不适用于此活动。",
   "banned_until": "您的账户已被暂时封禁至 {date}。届时您可以重新申请。",
   "identity_blocked": "您的账户正在验证中。请联系客服。",
   "stripe_required": "请先设置支付账户再进行申请。",

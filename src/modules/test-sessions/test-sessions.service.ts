@@ -30,12 +30,13 @@ import { MessagesService } from '../messages/messages.service';
 import { MediaService } from '../media/media.service';
 import { PostHogService } from '../posthog/posthog.service';
 import { normalizeImageEntry } from '../products/interfaces/product-image.interface';
+import { computeSpendCeiling } from '../../common/utils/pricing.util';
 
 const CAMPAIGN_OFFERS_WITH_IMAGES = {
   offers: {
     include: {
       product: {
-        select: { images: true },
+        select: { images: true, price: true },
       },
     },
   },
@@ -53,6 +54,14 @@ const SESSION_INCLUDE = {
           firstName: true,
           lastName: true,
         },
+      },
+      procedures: {
+        include: {
+          steps: {
+            orderBy: { order: 'asc' as const },
+          },
+        },
+        orderBy: { order: 'asc' as const },
       },
       ...CAMPAIGN_OFFERS_WITH_IMAGES,
     },
@@ -239,11 +248,13 @@ export class TestSessionsService {
       }
     }
 
-    // Calculate scheduled purchase date
-    const scheduledPurchaseDate = await this.calculateScheduledPurchaseDate(
+    // Calculate scheduled purchase date (honore la date choisie par le testeur si fournie)
+    const scheduledPurchaseDate = await this.resolveScheduledPurchaseDate(
       campaignId,
       campaign.distributions,
+      dto.distributionId,
     );
+    void scheduledPurchaseDate; // validation anticipée ; la date définitive est recalculée dans la transaction
 
     // Create test session with pessimistic locking to prevent race conditions
     const session = await this.prisma.$transaction(async (tx) => {
@@ -263,10 +274,11 @@ export class TestSessionsService {
         where: { campaignId, isActive: true },
       });
 
-      const txScheduledDate = await this.calculateScheduledPurchaseDateTx(
+      const txScheduledDate = await this.resolveScheduledPurchaseDateTx(
         tx,
         campaignId,
         distributions,
+        dto.distributionId,
       );
 
       // Decrement available slots
@@ -303,6 +315,92 @@ export class TestSessionsService {
     });
 
     return session as any;
+  }
+
+  /** Résout la date concrète d'une distribution (prochaine occurrence pour RECURRING). */
+  private resolveDistributionDate(dist: any): Date {
+    if (dist.type === 'RECURRING') {
+      return this.getNextDayOfWeek(new Date(), dist.dayOfWeek);
+    }
+    return new Date(dist.specificDate);
+  }
+
+  /**
+   * Résout la scheduledPurchaseDate : si le testeur a choisi une distribution, on l'utilise
+   * (après vérif capacité) ; sinon on auto-assigne la prochaine date disponible.
+   */
+  private async resolveScheduledPurchaseDate(
+    campaignId: string,
+    distributions: any[],
+    distributionId?: string,
+  ): Promise<Date> {
+    if (!distributionId) {
+      return this.calculateScheduledPurchaseDate(campaignId, distributions);
+    }
+    const dist = distributions.find(
+      (d) => d.id === distributionId && d.isActive,
+    );
+    if (!dist) {
+      throw new I18nHttpException(
+        'session.distribution_invalid',
+        'SESSION_DISTRIBUTION_INVALID',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const date = this.resolveDistributionDate(dist);
+    const count = await this.prisma.testSession.count({
+      where: {
+        campaignId,
+        scheduledPurchaseDate: date,
+        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED] },
+      },
+    });
+    if (count >= dist.maxUnits) {
+      throw new I18nHttpException(
+        'campaign.no_slots',
+        'CAMPAIGN_NO_SLOTS',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return date;
+  }
+
+  /** Version transactionnelle de resolveScheduledPurchaseDate. */
+  private async resolveScheduledPurchaseDateTx(
+    tx: any,
+    campaignId: string,
+    distributions: any[],
+    distributionId?: string,
+  ): Promise<Date> {
+    if (!distributionId) {
+      return this.calculateScheduledPurchaseDateTx(tx, campaignId, distributions);
+    }
+    const dist = distributions.find(
+      (d) => d.id === distributionId && d.isActive,
+    );
+    if (!dist) {
+      throw new I18nHttpException(
+        'session.distribution_invalid',
+        'SESSION_DISTRIBUTION_INVALID',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const date = this.resolveDistributionDate(dist);
+    const count = await tx.testSession.count({
+      where: {
+        campaignId,
+        scheduledPurchaseDate: date,
+        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED] },
+      },
+    });
+    if (count >= dist.maxUnits) {
+      throw new I18nHttpException(
+        'campaign.no_slots',
+        'CAMPAIGN_NO_SLOTS',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    return date;
   }
 
   private async calculateScheduledPurchaseDate(
@@ -1275,23 +1373,41 @@ export class TestSessionsService {
    * Pas de bypass BYPASS_BUSINESS_RULES — le testeur ne doit jamais voir les étapes avant le jour J.
    */
   private stripStepsIfNotScheduledDay(session: any): any {
-    if (!session.scheduledPurchaseDate) return session;
-    const today = new Date().toISOString().split('T')[0];
-    const scheduledDay = new Date(session.scheduledPurchaseDate).toISOString().split('T')[0];
-    if (today !== scheduledDay) {
-      return { ...session, stepProgress: [] };
+    const isReveal = this.isRevealDay(session.scheduledPurchaseDate);
+    if (isReveal) {
+      return { ...session, isRevealed: true };
     }
-    return session;
+    // Avant le jour J : masquer étapes ET procédure (le testeur ne voit les détails que le jour J)
+    return {
+      ...session,
+      isRevealed: false,
+      stepProgress: [],
+      campaign: {
+        ...session.campaign,
+        procedures: [],
+      },
+    };
   }
 
   /**
    * Résout les images produit claires pour une session.
    * Le testeur est participant par définition → toujours images claires.
    */
-  private async resolveSessionProductImages(
-    session: any,
-  ): Promise<any> {
+  /**
+   * Jour J : la date du jour correspond à scheduledPurchaseDate (ou pas de date programmée).
+   * Avant le jour J, le testeur ne voit ni la photo claire, ni la procédure, ni les étapes.
+   */
+  private isRevealDay(scheduledPurchaseDate?: Date | null): boolean {
+    if (!scheduledPurchaseDate) return true;
+    const today = new Date().toISOString().split('T')[0];
+    return (
+      new Date(scheduledPurchaseDate).toISOString().split('T')[0] === today
+    );
+  }
+
+  private async resolveSessionProductImages(session: any): Promise<any> {
     const offers = session.campaign?.offers || [];
+    const isReveal = this.isRevealDay(session.scheduledPurchaseDate);
     const allImages: any[] = [];
 
     for (const offer of offers) {
@@ -1300,7 +1416,8 @@ export class TestSessionsService {
         : [];
       for (const img of rawImages) {
         const normalized = normalizeImageEntry(img);
-        const key = normalized.clearKey;
+        // Avant le jour J : image floutée. Le jour J : image claire.
+        const key = isReveal ? normalized.clearKey : normalized.blurredKey;
         if (key.startsWith('http://') || key.startsWith('https://')) {
           const extracted = this.mediaService.extractKeyFromUrl(key);
           if (extracted) allImages.push(extracted);
@@ -1315,10 +1432,19 @@ export class TestSessionsService {
         ? await this.mediaService.getSignedUrls(allImages)
         : [];
 
-    // Retourner la session avec productImages et sans les données brutes du produit
+    // Nettoyer chaque offer : plafond de dépense, masquage du prix exact, suppression du produit brut
     const cleanOffers = offers.map((o: any) => {
+      const spendCeiling = computeSpendCeiling(o.product?.price, o.shippingCost);
       const { product, ...rest } = o;
-      return rest;
+      // Le prix exact n'est jamais exposé au testeur (sauf si le PRO l'a explicitement révélé)
+      if (!o.isPriceRevealed) {
+        delete rest.expectedPrice;
+        delete rest.priceRangeMin;
+        delete rest.priceRangeMax;
+        delete rest.maxReimbursedPrice;
+        delete rest.maxReimbursedShipping;
+      }
+      return { ...rest, spendCeiling };
     });
 
     return {

@@ -27,6 +27,7 @@ import { NotificationTemplate } from '../notifications/enums/notification-templa
 import { Decimal } from '@prisma/client/runtime/library';
 import { MediaService } from '../media/media.service';
 import { normalizeImageEntry } from '../products/interfaces/product-image.interface';
+import { computeSpendCeiling } from '../../common/utils/pricing.util';
 
 const CAMPAIGN_FULL_INCLUDE = {
   seller: {
@@ -51,6 +52,7 @@ const CAMPAIGN_FULL_INCLUDE = {
       product: {
         select: {
           images: true,
+          price: true,
         },
       },
     },
@@ -112,13 +114,18 @@ export class CampaignsService {
     // Pour les testeurs, masquer aussi escrowAmount
     if (!isOwner) {
       delete clean.escrowAmount;
+      // La procédure n'est révélée qu'au testeur inscrit, le jour du test (via /test-sessions/:id).
+      // On ne l'expose jamais lors du browsing des campagnes (liste + détail).
+      clean.procedures = [];
     }
 
-    // Calculer maxAmount avant de sanitiser les offres (qui masque les prix)
+    // Calculer maxAmount avant de sanitiser les offres (qui masque les prix).
+    // Pour le testeur (non-owner) on n'expose JAMAIS le total exact → on utilise le plafond arrondi.
     if (clean.offers?.length > 0) {
       clean.maxAmount = clean.offers.reduce((max: number, offer: any) => {
-        const total =
-          Number(offer.expectedPrice || 0) + Number(offer.shippingCost || 0);
+        const total = isOwner
+          ? Number(offer.expectedPrice || 0) + Number(offer.shippingCost || 0)
+          : Number(offer.spendCeiling || 0);
         return total > max ? total : max;
       }, 0);
     } else {
@@ -737,10 +744,17 @@ export class CampaignsService {
         const signedUrls =
           keys.length > 0 ? await this.mediaService.getSignedUrls(keys) : [];
 
-        // Retourner l'offer sans le champ product brut
+        // Plafond de dépense calculé depuis le prix réel produit (jamais exposé tel quel)
+        const spendCeiling = computeSpendCeiling(
+          offer.product?.price,
+          offer.shippingCost,
+        );
+
+        // Retourner l'offer sans le champ product brut (ne jamais laisser fuiter product.price)
         const { product, ...offerData } = offer;
         return {
           ...offerData,
+          spendCeiling,
           productImages: signedUrls,
         };
       }),

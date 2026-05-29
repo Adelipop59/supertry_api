@@ -1,5 +1,6 @@
 {
   "not_found": "Esta sessão de teste não foi encontrada.",
+  "distribution_invalid": "A data selecionada não está disponível para esta campanha.",
   "banned_until": "Sua conta está temporariamente suspensa até {date}. Você poderá se candidatar novamente após essa data.",
   "identity_blocked": "Sua conta está em processo de verificação. Por favor, entre em contato com o suporte.",
   "stripe_required": "Por favor, configure sua conta de pagamento antes de se candidatar.",

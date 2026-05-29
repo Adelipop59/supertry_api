@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ApplyToCampaignDto {
@@ -11,4 +11,13 @@ export class ApplyToCampaignDto {
   @IsString()
   @MaxLength(1000)
   applicationMessage?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'ID de la distribution (date) choisie par le testeur. Si omis, la prochaine date disponible est auto-assignée.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
+  @IsOptional()
+  @IsUUID()
+  distributionId?: string;
 }
