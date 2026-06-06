@@ -20,6 +20,9 @@ export class DistributionResponseDto {
   @ApiProperty({ description: 'Nombre maximum d\'unités', example: 3 })
   maxUnits: number;
 
+  @ApiProperty({ description: 'Places restantes pour ce créneau', example: 3 })
+  remainingUnits: number;
+
   @ApiProperty({ description: 'Distribution active', example: true })
   isActive: boolean;
 

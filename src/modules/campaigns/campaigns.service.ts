@@ -440,14 +440,20 @@ export class CampaignsService {
           showClear,
         );
 
-        // Calculer la prochaine date disponible pour les testeurs
+        // Annoter les distributions (places restantes) + prochaine date disponible
+        let distributions = c.distributions;
         let nextAvailableDate: Date | null = null;
-        if (c.status === CampaignStatus.ACTIVE && c.distributions?.length > 0) {
-          nextAvailableDate = await this.calculateNextAvailableDate(c.id, c.distributions);
+        if (c.distributions?.length > 0) {
+          const res = await this.annotateDistributions(c.id, c.distributions);
+          distributions = res.annotated;
+          if (c.status === CampaignStatus.ACTIVE) {
+            nextAvailableDate = res.nextAvailableDate;
+          }
         }
 
         return this.sanitizeCampaign({
           ...c,
+          distributions,
           offers: offersWithImages,
           sessionsCount: c._count.testSessions,
           nextAvailableDate,
@@ -498,8 +504,14 @@ export class CampaignsService {
           c.offers || [],
           true,
         );
+        let distributions = c.distributions;
+        if (c.distributions?.length > 0) {
+          const res = await this.annotateDistributions(c.id, c.distributions);
+          distributions = res.annotated;
+        }
         return this.sanitizeCampaign({
           ...c,
+          distributions,
           offers: offersWithImages,
           sessionsCount: c._count.testSessions,
         }, true);
@@ -543,14 +555,20 @@ export class CampaignsService {
 
     const isOwner = !user || user.role === UserRole.ADMIN || (campaign as any).sellerId === user.id;
 
-    // Calculer la prochaine date disponible
+    // Annoter les distributions (places restantes) + prochaine date disponible
+    let distributions = (campaign as any).distributions;
     let nextAvailableDate: Date | null = null;
-    if ((campaign as any).status === CampaignStatus.ACTIVE && (campaign as any).distributions?.length > 0) {
-      nextAvailableDate = await this.calculateNextAvailableDate(id, (campaign as any).distributions);
+    if ((campaign as any).distributions?.length > 0) {
+      const res = await this.annotateDistributions(id, (campaign as any).distributions);
+      distributions = res.annotated;
+      if ((campaign as any).status === CampaignStatus.ACTIVE) {
+        nextAvailableDate = res.nextAvailableDate;
+      }
     }
 
     const result = this.sanitizeCampaign({
       ...campaign,
+      distributions,
       offers: offersWithImages,
       sessionsCount: (campaign as any)._count.testSessions,
       nextAvailableDate,
@@ -762,55 +780,80 @@ export class CampaignsService {
   }
 
   /**
-   * Calcule la prochaine date de distribution disponible pour une campagne.
-   * Retourne null si aucune date n'est disponible.
+   * Résout la date candidate d'une distribution (même logique qu'au moment du apply).
+   * - RECURRING : prochain `dayOfWeek` à venir (heures remises à zéro)
+   * - SPECIFIC_DATE : la date fixée, ignorée si déjà passée
+   * Retourne null pour une distribution inactive / passée / invalide.
    */
-  private async calculateNextAvailableDate(
-    campaignId: string,
-    distributions: any[],
-  ): Promise<Date | null> {
-    const now = new Date();
-    let nearestDate: Date | null = null;
+  private resolveDistributionDate(dist: any, now: Date): Date | null {
+    if (!dist.isActive) return null;
 
-    for (const dist of distributions) {
-      if (!dist.isActive) continue;
-
-      let candidateDate: Date;
-
-      if (dist.type === 'RECURRING') {
-        const result = new Date(now);
-        const currentDay = result.getDay();
-        const distance = (dist.dayOfWeek - currentDay + 7) % 7;
-        result.setDate(result.getDate() + (distance === 0 ? 7 : distance));
-        result.setHours(0, 0, 0, 0);
-        candidateDate = result;
-      } else if (dist.type === 'SPECIFIC_DATE') {
-        candidateDate = new Date(dist.specificDate);
-        // Ignorer les dates passées
-        if (candidateDate < now) continue;
-      } else {
-        continue;
-      }
-
-      // Vérifier que le max n'est pas atteint pour cette date
-      const sessionsOnDate = await this.prisma.testSession.count({
-        where: {
-          campaignId,
-          scheduledPurchaseDate: candidateDate,
-          status: {
-            notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED],
-          },
-        },
-      });
-
-      if (sessionsOnDate >= dist.maxUnits) continue;
-
-      if (!nearestDate || candidateDate < nearestDate) {
-        nearestDate = candidateDate;
-      }
+    if (dist.type === 'RECURRING') {
+      const result = new Date(now);
+      const currentDay = result.getDay();
+      const distance = (dist.dayOfWeek - currentDay + 7) % 7;
+      result.setDate(result.getDate() + (distance === 0 ? 7 : distance));
+      result.setHours(0, 0, 0, 0);
+      return result;
     }
 
-    return nearestDate;
+    if (dist.type === 'SPECIFIC_DATE') {
+      const date = new Date(dist.specificDate);
+      if (date < now) return null;
+      return date;
+    }
+
+    return null;
+  }
+
+  /**
+   * Annote chaque distribution avec ses places restantes (`remainingUnits`) et déduit la
+   * prochaine date disponible. Le comptage des sessions par créneau se fait via UN SEUL
+   * `groupBy` par campagne (au lieu d'un `count` par distribution). Le rapprochement
+   * session ↔ distribution se fait par date-jour (`YYYY-MM-DD`) pour éviter tout décalage
+   * horaire entre la date stockée au apply et la date recalculée ici.
+   */
+  private async annotateDistributions(
+    campaignId: string,
+    distributions: any[],
+  ): Promise<{ annotated: any[]; nextAvailableDate: Date | null }> {
+    const grouped = await this.prisma.testSession.groupBy({
+      by: ['scheduledPurchaseDate'],
+      where: {
+        campaignId,
+        status: { notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED] },
+      },
+      _count: { _all: true },
+    });
+
+    const counts = new Map<string, number>();
+    for (const g of grouped) {
+      if (!g.scheduledPurchaseDate) continue;
+      const key = g.scheduledPurchaseDate.toISOString().slice(0, 10);
+      counts.set(key, (counts.get(key) ?? 0) + g._count._all);
+    }
+
+    const now = new Date();
+    let nextAvailableDate: Date | null = null;
+
+    const annotated = distributions.map((dist) => {
+      const candidate = this.resolveDistributionDate(dist, now);
+      if (!candidate) return { ...dist, remainingUnits: 0 };
+
+      const used = counts.get(candidate.toISOString().slice(0, 10)) ?? 0;
+      const remainingUnits = Math.max(0, dist.maxUnits - used);
+
+      if (
+        remainingUnits > 0 &&
+        (!nextAvailableDate || candidate < nextAvailableDate)
+      ) {
+        nextAvailableDate = candidate;
+      }
+
+      return { ...dist, remainingUnits };
+    });
+
+    return { annotated, nextAvailableDate };
   }
 
   /**
