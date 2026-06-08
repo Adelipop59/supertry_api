@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -16,6 +17,7 @@ import { SubmitPurchaseDto } from './dto/submit-purchase.dto';
 import { ValidatePurchaseDto } from './dto/validate-purchase.dto';
 import { CompleteStepDto } from './dto/complete-step.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { RejectSessionDto } from './dto/reject-session.dto';
 import { RejectPurchaseDto } from './dto/reject-purchase.dto';
 import { TestSessionResponseDto } from './dto/test-session-response.dto';
@@ -121,6 +123,23 @@ export class TestSessionsController {
     @Body() dto: CancelSessionDto,
   ): Promise<TestSessionResponseDto> {
     return this.testSessionsService.cancel(id, userId, dto);
+  }
+
+  @Patch(':id/reschedule')
+  @Roles(UserRole.USER)
+  @ApiOperation({ summary: 'Changer la date (créneau) de sa session avant achat' })
+  @ApiResponse({ status: 200, description: 'Date modifiée avec succès', type: TestSessionResponseDto })
+  @ApiResponse({ status: 400, description: 'Changement impossible (statut ou créneau invalide)' })
+  @ApiResponse({ status: 404, description: 'Session non trouvée' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
+  async reschedule(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: RescheduleSessionDto,
+  ): Promise<TestSessionResponseDto> {
+    return this.testSessionsService.reschedule(id, userId, dto);
   }
 
   @Post(':id/validate-price')

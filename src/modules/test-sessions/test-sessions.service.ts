@@ -15,6 +15,7 @@ import { SubmitPurchaseDto } from './dto/submit-purchase.dto';
 import { ValidatePurchaseDto } from './dto/validate-purchase.dto';
 import { CompleteStepDto } from './dto/complete-step.dto';
 import { CancelSessionDto } from './dto/cancel-session.dto';
+import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { RejectSessionDto } from './dto/reject-session.dto';
 import { RejectPurchaseDto } from './dto/reject-purchase.dto';
 import { TestSessionResponseDto } from './dto/test-session-response.dto';
@@ -371,6 +372,7 @@ export class TestSessionsService {
     campaignId: string,
     distributions: any[],
     distributionId?: string,
+    excludeSessionId?: string,
   ): Promise<Date> {
     if (!distributionId) {
       return this.calculateScheduledPurchaseDateTx(tx, campaignId, distributions);
@@ -391,6 +393,7 @@ export class TestSessionsService {
         campaignId,
         scheduledPurchaseDate: date,
         status: { notIn: [SessionStatus.CANCELLED, SessionStatus.REJECTED] },
+        ...(excludeSessionId ? { id: { not: excludeSessionId } } : {}),
       },
     });
     if (count >= dist.maxUnits) {
@@ -627,6 +630,14 @@ export class TestSessionsService {
       businessRules?.campaignActivationGracePeriodMinutes || 60;
     const banDays = businessRules?.testerCancellationBanDays || 14;
 
+    // Lecture du compteur d'annulations existant : le ban ne s'applique qu'à
+    // partir de la 2ème annulation hors grâce (la 1ère est seulement comptée).
+    const testerProfile = await this.prisma.profile.findUnique({
+      where: { id: testerId },
+      select: { cancellationCount: true },
+    });
+    const priorCancellationCount = testerProfile?.cancellationCount ?? 0;
+
     // Check if within grace period (depuis acceptation)
     const acceptedAt = session.acceptedAt || session.appliedAt;
     const now = new Date();
@@ -657,23 +668,34 @@ export class TestSessionsService {
         },
       });
 
-      // Appliquer ban si hors grace period (ban uniforme de 14 jours)
+      // Hors grace period : on compte toujours l'annulation, mais le ban
+      // (14 jours) ne s'active qu'à partir de la 2ème annulation.
       if (!withinGracePeriod) {
-        const bannedUntil = new Date();
-        bannedUntil.setDate(bannedUntil.getDate() + banDays);
+        // priorCancellationCount >= 1 signifie que c'est au moins la 2ème.
+        const shouldBan = priorCancellationCount >= 1;
+        const bannedUntil = shouldBan ? new Date() : null;
+        if (bannedUntil) {
+          bannedUntil.setDate(bannedUntil.getDate() + banDays);
+        }
 
         await tx.profile.update({
           where: { id: testerId },
           data: {
             cancellationCount: { increment: 1 },
             lastCancellationAt: now,
-            bannedUntil,
+            ...(bannedUntil ? { bannedUntil } : {}),
           },
         });
 
-        this.logger.log(
-          `Tester ${testerId} banned until ${bannedUntil.toISOString()} (${banDays} days)`,
-        );
+        if (bannedUntil) {
+          this.logger.log(
+            `Tester ${testerId} banned until ${bannedUntil.toISOString()} (${banDays} days, cancellation #${priorCancellationCount + 1})`,
+          );
+        } else {
+          this.logger.log(
+            `Tester ${testerId} first post-grace cancellation — counted, no ban applied`,
+          );
+        }
       }
 
       // Update session
@@ -700,6 +722,70 @@ export class TestSessionsService {
         withinGracePeriod,
         needsRefund,
         reason: dto.cancellationReason,
+      },
+    );
+
+    return updatedSession as any;
+  }
+
+  /**
+   * Permet au testeur de changer la date (créneau) de sa session, avant l'achat.
+   * Gratuit et sans pénalité — alternative à l'annulation.
+   */
+  async reschedule(
+    sessionId: string,
+    testerId: string,
+    dto: RescheduleSessionDto,
+  ): Promise<TestSessionResponseDto> {
+    const session = await this.findOne(sessionId);
+
+    // Check ownership
+    if (session.testerId !== testerId) {
+      throw new I18nHttpException('session.not_owner', 'SESSION_NOT_OWNER', HttpStatus.FORBIDDEN);
+    }
+
+    // Reschedule autorisé uniquement avant l'achat
+    const reschedulableStatuses: SessionStatus[] = [
+      SessionStatus.PENDING,
+      SessionStatus.ACCEPTED,
+      SessionStatus.PRICE_VALIDATED,
+    ];
+    if (!reschedulableStatuses.includes(session.status)) {
+      throw new I18nHttpException('session.invalid_status', 'SESSION_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    const updatedSession = await this.prisma.$transaction(async (tx) => {
+      const distributions = await tx.distribution.findMany({
+        where: { campaignId: session.campaignId, isActive: true },
+      });
+
+      // Valide le créneau + capacité (en excluant la session courante) et
+      // calcule la nouvelle date.
+      const newDate = await this.resolveScheduledPurchaseDateTx(
+        tx,
+        session.campaignId,
+        distributions,
+        dto.distributionId,
+        sessionId,
+      );
+
+      return tx.testSession.update({
+        where: { id: sessionId },
+        data: { scheduledPurchaseDate: newDate },
+        include: SESSION_BASIC_INCLUDE,
+      });
+    });
+
+    // Audit
+    await this.auditService.log(
+      testerId,
+      AuditCategory.SESSION,
+      'SESSION_RESCHEDULED_BY_TESTER',
+      {
+        sessionId,
+        campaignId: session.campaignId,
+        distributionId: dto.distributionId,
+        newScheduledPurchaseDate: updatedSession.scheduledPurchaseDate,
       },
     );
 
