@@ -3,6 +3,7 @@ import { PrismaService } from '../../../database/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { StripeService } from '../stripe.service';
+import { PostHogService } from '../../posthog/posthog.service';
 import {
   AuditCategory,
   NotificationType,
@@ -29,6 +30,7 @@ export class WebhookHandlersService {
     private readonly notificationsService: NotificationsService,
     @Inject(forwardRef(() => StripeService))
     private readonly stripeService: StripeService,
+    private readonly posthog: PostHogService,
   ) {}
 
   // ==========================================================================
@@ -113,6 +115,13 @@ export class WebhookHandlersService {
           userId: profile.id,
           type: NotificationType.SYSTEM_ALERT,
         },
+      });
+
+      this.posthog.capture(profile.id, 'stripe_connect_onboarded', {
+        role: profile.role,
+        chargesEnabled: account.charges_enabled ?? false,
+        payoutsEnabled: account.payouts_enabled ?? false,
+        previousStatus,
       });
     }
 
@@ -679,6 +688,14 @@ export class WebhookHandlersService {
             type: NotificationType.SYSTEM_ALERT,
           },
         });
+
+        this.posthog.capture(campaign.sellerId, 'payment_failed', {
+          campaignId,
+          paymentIntentId: paymentIntent.id,
+          amountEur: paymentIntent.amount / 100,
+          failureCode: paymentIntent.last_payment_error?.code,
+          failureMessage: paymentIntent.last_payment_error?.message,
+        });
       }
     }
   }
@@ -1169,6 +1186,23 @@ export class WebhookHandlersService {
         });
 
         this.logger.log(`Charge ${charge.id} refunded ${amountRefunded}€ — Transaction ${transaction.id} updated`);
+
+        // Attribute refund to the seller (PRO) who paid for the campaign
+        if (transaction.campaignId) {
+          const campaign = await this.prisma.campaign.findUnique({
+            where: { id: transaction.campaignId },
+            select: { sellerId: true },
+          });
+          if (campaign?.sellerId) {
+            this.posthog.capture(campaign.sellerId, 'refund_processed', {
+              campaignId: transaction.campaignId,
+              transactionId: transaction.id,
+              amountRefundedEur: amountRefunded,
+              isFullRefund,
+              chargeId: charge.id,
+            });
+          }
+        }
       }
     }
 
@@ -1328,6 +1362,12 @@ export class WebhookHandlersService {
           type: NotificationType.PAYMENT_RECEIVED,
         },
       });
+
+      this.posthog.capture(withdrawal.userId, 'withdrawal_completed', {
+        withdrawalId,
+        stripePayoutId: payout.id,
+        amountEur: payout.amount / 100,
+      });
     }
   }
 
@@ -1381,6 +1421,14 @@ export class WebhookHandlersService {
           withdrawalId,
           type: NotificationType.SYSTEM_ALERT,
         },
+      });
+
+      this.posthog.capture(withdrawal.userId, 'withdrawal_failed', {
+        withdrawalId,
+        stripePayoutId: payout.id,
+        amountEur: payout.amount / 100,
+        failureCode: payout.failure_code,
+        failureMessage: payout.failure_message,
       });
     }
   }

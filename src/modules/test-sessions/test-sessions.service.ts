@@ -24,7 +24,7 @@ import {
   PaginatedResponse,
   createPaginatedResponse,
 } from '../../common/dto/pagination.dto';
-import { SessionStatus, CampaignMarketplaceMode, AuditCategory, TesterTier } from '@prisma/client';
+import { SessionStatus, CampaignMarketplaceMode, AuditCategory, TesterTier, CampaignStatus } from '@prisma/client';
 import { GamificationService } from '../gamification/gamification.service';
 import { isTierAtLeast } from '../gamification/gamification.constants';
 import { MessagesService } from '../messages/messages.service';
@@ -1312,6 +1312,45 @@ export class TestSessionsService {
       sellerId: session.campaign.seller.id,
       rewardAmount,
     });
+
+    // Mark the campaign COMPLETED once its last slot has been completed.
+    // The session above is already persisted as COMPLETED, so the count includes it.
+    try {
+      if (campaign.status === CampaignStatus.ACTIVE) {
+        const completedCount = await this.prisma.testSession.count({
+          where: {
+            campaignId: session.campaignId,
+            status: SessionStatus.COMPLETED,
+          },
+        });
+
+        if (completedCount >= campaign.totalSlots) {
+          await this.prisma.campaign.update({
+            where: { id: session.campaignId },
+            data: { status: CampaignStatus.COMPLETED },
+          });
+
+          await this.auditService.log(
+            session.campaign.seller.id,
+            AuditCategory.CAMPAIGN,
+            'CAMPAIGN_COMPLETED',
+            {
+              campaignId: session.campaignId,
+              totalSlots: campaign.totalSlots,
+              completedSessions: completedCount,
+            },
+          );
+
+          this.posthog.capture(session.campaign.seller.id, 'campaign_completed', {
+            campaignId: session.campaignId,
+            totalSlots: campaign.totalSlots,
+            completedSessions: completedCount,
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Campaign completion check failed: ${error.message}`);
+    }
 
     return updatedSession as any;
   }

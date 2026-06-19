@@ -449,6 +449,16 @@ export class DisputesService {
 
     this.logger.log(`Dispute resolved for session ${sessionId} by admin ${adminId}`);
 
+    this.posthog.capture(session.testerId, 'dispute_resolved', {
+      sessionId,
+      campaignId: session.campaignId,
+      sellerId: session.campaign.seller.id,
+      resolution: dto.disputeResolution,
+      testerAmount,
+      proRefundAmount,
+      resolvedBy: adminId,
+    });
+
     // 7. Gamification: reverse XP if tester gets nothing (non-blocking)
     if (testerAmount === 0) {
       try {
