@@ -39,6 +39,7 @@ export class WithdrawalsService {
         stripeConnectAccountId: true,
         stripeOnboardingCompleted: true,
         stripeIdentityVerified: true,
+        completedSessionsCount: true,
       },
     });
 
@@ -68,7 +69,18 @@ export class WithdrawalsService {
       );
     }
 
-    if (!profile.stripeIdentityVerified) {
+    // Identity (Stripe Identity) exigée seulement AU-DELÀ du seuil métier
+    // `kycRequiredAfterTests` (par défaut 3), pour rester cohérent avec le statut
+    // d'onboarding (qui affiche l'Identity comme NOT_REQUIRED avant ce seuil).
+    // En-dessous du seuil, l'onboarding Connect (déjà vérifié plus haut) suffit.
+    const kycRules = await this.prisma.businessRules.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { kycRequiredAfterTests: true },
+    });
+    const kycThreshold = kycRules?.kycRequiredAfterTests ?? 3;
+    const identityRequired = (profile.completedSessionsCount ?? 0) >= kycThreshold;
+
+    if (identityRequired && !profile.stripeIdentityVerified) {
       throw new I18nHttpException(
         'wallet.kyc_required',
         'WALLET_KYC_REQUIRED',
