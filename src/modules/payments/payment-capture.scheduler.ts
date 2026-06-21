@@ -54,10 +54,19 @@ export class PaymentCaptureScheduler {
 
     for (const campaign of campaigns) {
       try {
-        // Capturer le PaymentIntent
-        const pi = await this.stripeService.capturePaymentIntent(campaign.stripePaymentIntentId!);
-
-        this.logger.log(`[AUTO-CAPTURE] Captured PI ${pi.id} for campaign ${campaign.id}`);
+        // Vérifier l'état RÉEL du PaymentIntent AVANT de capturer (robustesse + idempotence) :
+        // - requires_capture → on capture
+        // - succeeded → déjà capturé (ex. webhook concurrent) → on réconcilie l'état sans recapturer
+        // - autre (canceled / requires_payment_method / processing…) → non capturable → erreur gérée
+        let pi = await this.stripeService.getPaymentIntent(campaign.stripePaymentIntentId!);
+        if (pi.status === 'requires_capture') {
+          pi = await this.stripeService.capturePaymentIntent(campaign.stripePaymentIntentId!);
+          this.logger.log(`[AUTO-CAPTURE] Captured PI ${pi.id} for campaign ${campaign.id}`);
+        } else if (pi.status === 'succeeded') {
+          this.logger.warn(`[AUTO-CAPTURE] PI ${pi.id} déjà capturé (succeeded) — réconciliation de l'état pour la campagne ${campaign.id}`);
+        } else {
+          throw new Error(`PaymentIntent ${pi.id} non capturable (status=${pi.status})`);
+        }
 
         // Trouver la transaction AVANT la $transaction atomique
         const transaction = await this.prisma.transaction.findFirst({
@@ -146,12 +155,25 @@ export class PaymentCaptureScheduler {
         if (retryCount >= MAX_CAPTURE_RETRIES) {
           this.logger.error(`[AUTO-CAPTURE] Max retries (${MAX_CAPTURE_RETRIES}) reached for campaign ${campaign.id}, reverting to DRAFT`);
 
+          // SÉCURITÉ : on annule d'abord le PaymentIntent pour LIBÉRER l'autorisation
+          // (les fonds bloqués sur la carte du PRO sont relâchés). On ne retire la
+          // référence stripePaymentIntentId qu'APRÈS une annulation réussie, pour ne
+          // jamais perdre la trace d'un paiement potentiellement encaissé.
+          // (Le cas "déjà capturé" est traité plus haut et ne descend pas jusqu'ici.)
+          let canceled = false;
+          try {
+            await this.stripeService.cancelPaymentIntent(campaign.stripePaymentIntentId!, 'abandoned');
+            canceled = true;
+          } catch (cancelErr) {
+            this.logger.error(`[AUTO-CAPTURE] Échec annulation PI ${campaign.stripePaymentIntentId} (campagne ${campaign.id}): ${cancelErr.message}`);
+          }
+
           await this.prisma.campaign.update({
             where: { id: campaign.id },
             data: {
               status: CampaignStatus.DRAFT,
-              stripePaymentIntentId: null,
               paymentAuthorizedAt: null,
+              ...(canceled ? { stripePaymentIntentId: null } : {}),
             },
           });
 

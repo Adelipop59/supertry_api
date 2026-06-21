@@ -31,5 +31,6 @@
   "topup_failed": "测试资金充值失败。",
   "destination_charges_disabled": "目标账户无法接收转账。",
   "destination_pending_requirements": "目标账户有待补充的信息。",
-  "insufficient_balance": "可用余额不足以完成此提现。可用：{available}€。处理中：{pending}€。{dateInfo}"
+  "insufficient_balance": "可用余额不足以完成此提现。可用：{available}€。处理中：{pending}€。{dateInfo}",
+  "identity_session_not_found": "未找到身份验证会话。"
 }

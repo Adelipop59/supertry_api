@@ -31,5 +31,6 @@
   "topup_failed": "Test-Aufladung fehlgeschlagen.",
   "destination_charges_disabled": "Das Zielkonto kann keine Überweisungen empfangen.",
   "destination_pending_requirements": "Das Zielkonto hat ausstehende Anforderungen.",
-  "insufficient_balance": "Unzureichendes verfügbares Guthaben für diese Auszahlung. Verfügbar: {available}€. In Bearbeitung: {pending}€. {dateInfo}"
+  "insufficient_balance": "Unzureichendes verfügbares Guthaben für diese Auszahlung. Verfügbar: {available}€. In Bearbeitung: {pending}€. {dateInfo}",
+  "identity_session_not_found": "Identitätsprüfungssitzung nicht gefunden."
 }

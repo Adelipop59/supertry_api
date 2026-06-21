@@ -1,12 +1,11 @@
-import { Controller, Get, Post, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Param, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { StripeService } from '../stripe/stripe.service';
 import { InvoiceService } from './invoice.service';
-import { ProcessCampaignPaymentDto } from './dto/process-campaign-payment.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
+import { ApiAuthResponses, ApiNotFoundErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('Payments')
@@ -63,33 +62,12 @@ export class PaymentsController {
     };
   }
 
-  @ApiOperation({ summary: 'Payer une campagne' })
-  @ApiResponse({ status: 200, description: 'Paiement de la campagne effectué avec succès' })
-  @ApiAuthResponses()
-  @ApiNotFoundErrorResponse()
-  @ApiValidationErrorResponse()
-  @Post('campaigns/:id/pay')
-  @Roles(UserRole.PRO)
-  @HttpCode(HttpStatus.OK)
-  async payCampaign(
-    @Param('id') campaignId: string,
-    @CurrentUser('id') userId: string,
-    @Body() paymentDto: ProcessCampaignPaymentDto,
-  ) {
-    const result = await this.paymentsService.processCampaignPayment(
-      campaignId,
-      userId,
-      paymentDto.paymentMethodId,
-    );
-
-    return {
-      message: 'Campaign payment processed successfully',
-      paymentIntentId: result.paymentIntent.id,
-      transactionId: result.transaction.id,
-      campaignId: result.campaign.id,
-      status: result.campaign.status,
-    };
-  }
+  // ⚠️ SUPPRIMÉ : l'endpoint POST /payments/campaigns/:id/pay (processCampaignPayment)
+  // a été retiré. Il créait un PaymentIntent en capture AUTOMATIQUE (encaissement
+  // immédiat), ce qui cassait le modèle escrow (capture différée + 1h d'annulation
+  // gratuite), faisait échouer l'annulation et désynchronisait le scheduler.
+  // Le seul flux de paiement campagne est désormais POST /campaigns/:id/checkout-session
+  // (capture MANUELLE), activé après la période de grâce par le scheduler de capture.
 
   @ApiOperation({ summary: '[Admin] Retry les paiements d\'une session (reimbursement + bonus)' })
   @ApiResponse({ status: 200, description: 'Paiement retenté avec succès' })

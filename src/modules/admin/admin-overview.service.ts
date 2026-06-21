@@ -485,11 +485,12 @@ export class AdminOverviewService {
     const totalRefunds = refundCampaign.amount + refundTesterCancel.amount + refundGeneral.amount;
 
     // --- Delta Stripe ---
-    // SuperTry preleve stripeFeePercent (3.5%) au PRO mais Stripe prend ses propres frais
+    // SuperTry preleve stripeFeePercent (3.9% - pricing officiel) au PRO mais Stripe prend ses propres frais
     // Le delta = ce que SuperTry a preleve pour couvrir Stripe - ce que Stripe a reellement pris
     // On ne connait pas les frais Stripe exacts ici (faudrait les lire depuis Stripe API),
     // mais on peut calculer ce qui a ete preleve cote SuperTry
-    const stripeFeePercent = Number(businessRules?.stripeFeePercent ?? 0.035);
+    // Fallback aligné sur le pricing officiel (3,9%) si la règle est absente.
+    const stripeFeePercent = Number(businessRules?.stripeFeePercent ?? 0.039);
     const totalCampaignAmount = Number(campaignPayments._sum.amount ?? 0);
     // Montant preleve pour couvrir Stripe = totalPaye * stripeFeePercent / (1 + stripeFeePercent)
     const stripeCoverageCollected = totalCampaignAmount > 0

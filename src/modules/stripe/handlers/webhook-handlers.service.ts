@@ -1163,25 +1163,39 @@ export class WebhookHandlersService {
         const isFullRefund = charge.amount_refunded >= charge.amount;
 
         await this.prisma.$transaction(async (tx) => {
+          // `charge.amount_refunded` est CUMULATIF. Pour des remboursements partiels
+          // successifs (events distincts), on ne doit décrémenter l'escrow que du
+          // DELTA depuis le dernier traitement, sinon on sur-décrémente. On mémorise
+          // le cumulé déjà comptabilisé dans la metadata de la transaction.
+          const fresh = await tx.transaction.findUnique({ where: { id: transaction.id } });
+          const prevRefunded = Number((fresh?.metadata as any)?.refundedAmountCumulative ?? 0);
+          const delta = Math.round((amountRefunded - prevRefunded) * 100) / 100;
+
           // Update the original transaction
           await tx.transaction.update({
             where: { id: transaction.id },
             data: {
               status: isFullRefund ? TransactionStatus.REFUNDED : transaction.status,
               stripeRefundId: charge.refunds?.data?.[0]?.id ?? null,
+              metadata: {
+                ...((fresh?.metadata as any) ?? {}),
+                refundedAmountCumulative: amountRefunded,
+              },
             },
           });
 
-          // Update PlatformWallet — return escrow
-          const platformWallet = await tx.platformWallet.findFirst();
-          if (platformWallet) {
-            await tx.platformWallet.update({
-              where: { id: platformWallet.id },
-              data: {
-                escrowBalance: { decrement: new Decimal(amountRefunded) },
-                totalReceived: { decrement: new Decimal(amountRefunded) },
-              },
-            });
+          // Update PlatformWallet — return escrow (uniquement le delta positif)
+          if (delta > 0) {
+            const platformWallet = await tx.platformWallet.findFirst();
+            if (platformWallet) {
+              await tx.platformWallet.update({
+                where: { id: platformWallet.id },
+                data: {
+                  escrowBalance: { decrement: new Decimal(delta) },
+                  totalReceived: { decrement: new Decimal(delta) },
+                },
+              });
+            }
           }
         });
 
@@ -1330,13 +1344,25 @@ export class WebhookHandlersService {
   async handlePayoutPaid(payout: Stripe.Payout) {
     const withdrawalId = payout.metadata?.withdrawalId;
     if (withdrawalId) {
-      // Mettre à jour Withdrawal
-      const withdrawal = await this.prisma.withdrawal.update({
-        where: { id: withdrawalId },
+      // Transition CONDITIONNELLE PROCESSING → COMPLETED : on n'avance le statut
+      // (et n'envoie la notification / l'event) que si le retrait était bien en cours.
+      // Empêche de faire "remonter" un retrait FAILED/CANCELLED à COMPLETED (events
+      // hors séquence) et de notifier deux fois.
+      const transitioned = await this.prisma.withdrawal.updateMany({
+        where: { id: withdrawalId, status: WithdrawalStatus.PROCESSING },
         data: {
           status: WithdrawalStatus.COMPLETED,
           completedAt: new Date(),
         },
+      });
+
+      if (transitioned.count === 0) {
+        this.logger.warn(`payout.paid pour withdrawal ${withdrawalId} ignoré (statut non PROCESSING).`);
+        return;
+      }
+
+      const withdrawal = await this.prisma.withdrawal.findUniqueOrThrow({
+        where: { id: withdrawalId },
         include: { user: true },
       });
 
@@ -1374,29 +1400,50 @@ export class WebhookHandlersService {
   async handlePayoutFailed(payout: Stripe.Payout) {
     const withdrawalId = payout.metadata?.withdrawalId;
     if (withdrawalId) {
-      // Mettre à jour Withdrawal + rendre balance
+      // Mettre à jour Withdrawal + rendre balance — transition CONDITIONNELLE.
+      // On ne (re)crédite QUE si le retrait est encore PENDING/PROCESSING : si le
+      // wallet a déjà été re-crédité (catch de createWithdrawal, event rejoué ou
+      // payout.canceled antérieur), updateMany.count vaut 0 et on n'écrit rien.
       const withdrawal = await this.prisma.$transaction(async (tx) => {
-        const withdrawal = await tx.withdrawal.update({
-          where: { id: withdrawalId },
+        const transitioned = await tx.withdrawal.updateMany({
+          where: {
+            id: withdrawalId,
+            status: { in: [WithdrawalStatus.PENDING, WithdrawalStatus.PROCESSING] },
+          },
           data: {
             status: WithdrawalStatus.FAILED,
             failureReason: payout.failure_message,
           },
+        });
+
+        if (transitioned.count === 0) {
+          return null; // déjà dans un état final → pas de re-crédit
+        }
+
+        const withdrawal = await tx.withdrawal.findUnique({
+          where: { id: withdrawalId },
           include: { user: true },
         });
 
-        // Rendre le montant au wallet
-        await tx.wallet.update({
-          where: { userId: withdrawal.userId },
-          data: {
-            balance: {
-              increment: withdrawal.amount,
+        if (withdrawal) {
+          // Rendre le montant au wallet (une seule fois, garanti par la transition ci-dessus)
+          await tx.wallet.update({
+            where: { userId: withdrawal.userId },
+            data: {
+              balance: {
+                increment: withdrawal.amount,
+              },
             },
-          },
-        });
+          });
+        }
 
         return withdrawal;
       });
+
+      if (!withdrawal) {
+        this.logger.warn(`payout.failed pour withdrawal ${withdrawalId} ignoré (statut déjà final, pas de re-crédit).`);
+        return;
+      }
 
       // Audit
       await this.auditService.log(withdrawal.userId, AuditCategory.WALLET, 'PAYOUT_FAILED', {
@@ -1436,24 +1483,41 @@ export class WebhookHandlersService {
   async handlePayoutCanceled(payout: Stripe.Payout) {
     const withdrawalId = payout.metadata?.withdrawalId;
     if (withdrawalId) {
-      // Mettre à jour Withdrawal + rendre balance
-      await this.prisma.$transaction(async (tx) => {
-        const withdrawal = await tx.withdrawal.update({
-          where: { id: withdrawalId },
+      // Mettre à jour Withdrawal + rendre balance — transition CONDITIONNELLE
+      // (idem handlePayoutFailed) : re-crédit une seule fois, jamais sur un statut final.
+      const credited = await this.prisma.$transaction(async (tx) => {
+        const transitioned = await tx.withdrawal.updateMany({
+          where: {
+            id: withdrawalId,
+            status: { in: [WithdrawalStatus.PENDING, WithdrawalStatus.PROCESSING] },
+          },
           data: {
             status: WithdrawalStatus.CANCELLED,
           },
         });
 
-        await tx.wallet.update({
-          where: { userId: withdrawal.userId },
-          data: {
-            balance: {
-              increment: withdrawal.amount,
+        if (transitioned.count === 0) {
+          return false;
+        }
+
+        const withdrawal = await tx.withdrawal.findUnique({ where: { id: withdrawalId } });
+        if (withdrawal) {
+          await tx.wallet.update({
+            where: { userId: withdrawal.userId },
+            data: {
+              balance: {
+                increment: withdrawal.amount,
+              },
             },
-          },
-        });
+          });
+        }
+        return true;
       });
+
+      if (!credited) {
+        this.logger.warn(`payout.canceled pour withdrawal ${withdrawalId} ignoré (statut déjà final, pas de re-crédit).`);
+        return;
+      }
 
       await this.auditService.log(null, AuditCategory.WALLET, 'PAYOUT_CANCELED', {
         payoutId: payout.id,

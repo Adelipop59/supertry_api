@@ -1,5 +1,5 @@
-import { IsEmail, IsEnum, IsOptional, IsString } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsEnum, IsISO31661Alpha2, IsOptional } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export enum ConnectAccountType {
   EXPRESS = 'express',
@@ -7,19 +7,25 @@ export enum ConnectAccountType {
 }
 
 export class CreateConnectAccountDto {
-  @ApiProperty({
-    description: 'Adresse email associée au compte Connect Stripe',
+  // NOTE SÉCURITÉ : email et country sont désormais IGNORÉS côté serveur et dérivés
+  // du profil authentifié (cf. StripeController.createConnectAccount). Ils restent
+  // acceptés (optionnels) pour compatibilité ascendante, mais ne sont pas utilisés
+  // pour créer le compte Connect afin de préserver l'intégrité du KYC.
+  @ApiPropertyOptional({
+    description: 'DEPRECATED — ignoré, l’email est pris depuis le profil serveur',
     example: 'testeur@example.com',
   })
   @IsEmail()
-  email: string;
+  @IsOptional()
+  email?: string;
 
-  @ApiProperty({
-    description: 'Code pays ISO 3166-1 alpha-2 du compte',
+  @ApiPropertyOptional({
+    description: 'DEPRECATED — ignoré, le pays est pris depuis le profil serveur (ISO 3166-1 alpha-2)',
     example: 'FR',
   })
-  @IsString()
-  country: string;
+  @IsISO31661Alpha2()
+  @IsOptional()
+  country?: string;
 
   @ApiPropertyOptional({
     description: 'Type de compte Connect Stripe',

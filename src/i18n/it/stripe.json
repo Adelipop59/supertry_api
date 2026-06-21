@@ -31,5 +31,6 @@
   "topup_failed": "Ricarica di test fallita.",
   "destination_charges_disabled": "L'account di destinazione non può ricevere trasferimenti.",
   "destination_pending_requirements": "L'account di destinazione ha requisiti in sospeso.",
-  "insufficient_balance": "Saldo disponibile insufficiente per questo prelievo. Disponibile: {available}€. In elaborazione: {pending}€. {dateInfo}"
+  "insufficient_balance": "Saldo disponibile insufficiente per questo prelievo. Disponibile: {available}€. In elaborazione: {pending}€. {dateInfo}",
+  "identity_session_not_found": "Sessione di verifica dell'identità non trovata."
 }

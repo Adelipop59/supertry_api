@@ -1,4 +1,4 @@
-import { Injectable, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, HttpStatus } from '@nestjs/common';
 import { UGCType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateBusinessRulesDto } from './dto/create-business-rules.dto';
@@ -8,7 +8,31 @@ import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
 export class BusinessRulesService {
+  private readonly logger = new Logger(BusinessRulesService.name);
+
+  /**
+   * Taux de couverture des frais Stripe par défaut = pricing officiel (3,9 %).
+   * Appliqué en fallback si la valeur configurée en base est absente/invalide.
+   */
+  private static readonly DEFAULT_STRIPE_FEE_PERCENT = 0.039;
+
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * Retourne un taux de frais Stripe valide. Si la valeur configurée est absente,
+   * nulle, NaN ou hors de l'intervalle ]0, 1[, on retombe sur le pricing officiel
+   * (3,9 %) au lieu de propager une valeur erronée qui sous-facturerait le PRO.
+   */
+  private resolveStripeFeePercent(value: unknown): number {
+    const fee = Number(value);
+    if (!Number.isFinite(fee) || fee <= 0 || fee >= 1) {
+      this.logger.warn(
+        `stripeFeePercent invalide (${String(value)}) — fallback sur ${BusinessRulesService.DEFAULT_STRIPE_FEE_PERCENT} (pricing officiel 3,9%)`,
+      );
+      return BusinessRulesService.DEFAULT_STRIPE_FEE_PERCENT;
+    }
+    return fee;
+  }
 
   private toResponseDto(rules: any): BusinessRulesResponseDto {
     return {
@@ -35,7 +59,7 @@ export class BusinessRulesService {
   }
 
   /**
-   * Calcule la commission SuperTry (5€ fixe) + couverture frais Stripe (3.5%)
+   * Calcule la commission SuperTry (5€ fixe) + couverture frais Stripe (3.9%)
    * baseCost = productCost + shippingCost + testerBonus (SANS la commission)
    * Retourne le détail par testeur
    */
@@ -47,7 +71,7 @@ export class BusinessRulesService {
   }> {
     const rules = await this.findLatest();
     const commissionFixedFee = rules.commissionFixedFee;
-    const stripeFeePercent = rules.stripeFeePercent;
+    const stripeFeePercent = this.resolveStripeFeePercent(rules.stripeFeePercent);
 
     // baseCost + commission fixe SuperTry
     const baseWithCommission = baseCostWithoutCommission + commissionFixedFee;

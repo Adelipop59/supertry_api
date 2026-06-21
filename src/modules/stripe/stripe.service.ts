@@ -920,13 +920,24 @@ export class StripeService {
       }
 
       // Clé d'idempotence : si l'appelant en fournit une (déterministe, ex. par ugcId),
-      // un éventuel retry ne déclenchera PAS un second transfert. Sinon, fallback historique.
+      // un éventuel retry ne déclenchera PAS un second transfert.
+      // Sinon, fallback DÉTERMINISTE (sans Date.now()) composé des identifiants stables
+      // qui distinguent chaque transfert logique (type + session/ugc/tip/dispute). Deux
+      // transferts d'une même campagne restent distincts via sessionId/ugcId/transactionType,
+      // mais un retry du MÊME transfert ne crée pas de doublon.
+      const fallbackDiscriminator =
+        metadata.sessionId ||
+        metadata.ugcId ||
+        metadata.tipId ||
+        metadata.disputeId ||
+        metadata.campaignId ||
+        'na';
       const transfer = await this.stripe.transfers.create(
         transferParams,
         {
           idempotencyKey:
             idempotencyKey ||
-            `platform-transfer-${metadata.sessionId || metadata.campaignId}-${Date.now()}`,
+            `platform-transfer-${metadata.transactionType || 'generic'}-${fallbackDiscriminator}`,
         },
       );
 
@@ -1018,7 +1029,10 @@ export class StripeService {
         },
         {
           stripeAccount: stripeConnectAccountId, // Execute on behalf of Connect account
-          idempotencyKey: `payout-${metadata.withdrawalId}-${Date.now()}`,
+          // Clé d'idempotence DÉTERMINISTE (pas de Date.now()) : un retry réseau ou
+          // un double déclenchement sur le même retrait ne crée PAS un second virement.
+          // withdrawalId est toujours fourni par WithdrawalsService.createWithdrawal().
+          idempotencyKey: `payout-${metadata.withdrawalId}`,
         },
       );
 
@@ -1245,9 +1259,15 @@ export class StripeService {
     payload: string | Buffer | any,
     signature: string,
   ): Stripe.Event {
-    const skipVerification = this.configService.get<string>('STRIPE_SKIP_SIGNATURE_VERIFICATION') === 'true';
+    // SÉCURITÉ : le bypass de signature n'est JAMAIS autorisé en production, quelle que
+    // soit la valeur de la variable d'env. Sinon, une fuite de ce flag permettrait à
+    // n'importe qui de POSTer de faux events (ex. forcer le statut KYC, falsifier un payout).
+    const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const skipVerification =
+      !isProduction &&
+      this.configService.get<string>('STRIPE_SKIP_SIGNATURE_VERIFICATION') === 'true';
 
-    // Skip verification for local testing with Stripe CLI
+    // Skip verification for local testing with Stripe CLI (dev/test uniquement)
     if (skipVerification) {
       this.logger.warn('⚠️  Webhook signature verification SKIPPED (dev mode only!)');
       // If payload is already a parsed object (happens with NestJS body parsing)

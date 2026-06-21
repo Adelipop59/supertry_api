@@ -31,5 +31,6 @@
   "topup_failed": "La recarga de prueba ha fallado.",
   "destination_charges_disabled": "La cuenta de destino no puede recibir transferencias.",
   "destination_pending_requirements": "La cuenta de destino tiene requisitos pendientes.",
-  "insufficient_balance": "Saldo disponible insuficiente para este retiro. Disponible: {available}€. En proceso: {pending}€. {dateInfo}"
+  "insufficient_balance": "Saldo disponible insuficiente para este retiro. Disponible: {available}€. En proceso: {pending}€. {dateInfo}",
+  "identity_session_not_found": "Sesión de verificación de identidad no encontrada."
 }

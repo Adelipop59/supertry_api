@@ -73,10 +73,16 @@ export class StripeController {
       };
     }
 
-    // Create Stripe Connect account with prefilled individual data
+    // SÉCURITÉ KYC : l'email et le pays sont dérivés du profil serveur authentifié,
+    // PAS du DTO client. Le pays détermine la juridiction KYC et la devise de payout ;
+    // l'accepter du client permettrait de rattacher le compte de paiement à une identité
+    // ou une juridiction incohérente. Le DTO ne sert qu'au `type` (express/standard).
+    const accountEmail = profile.email;
+    const accountCountry = (profile.country || 'FR').toUpperCase();
+
     const account = await this.stripeService.createConnectAccount(
-      createDto.email,
-      createDto.country,
+      accountEmail,
+      accountCountry,
       createDto.type,
       {},
       {
@@ -102,7 +108,7 @@ export class StripeController {
       'STRIPE_CONNECT_ACCOUNT_CREATED',
       {
         stripeAccountId: account.id,
-        country: createDto.country,
+        country: accountCountry,
         type: createDto.type,
       },
     );
@@ -299,7 +305,23 @@ export class StripeController {
   @Roles(UserRole.USER, UserRole.PRO)
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
-  async getIdentityStatus(@Param('sessionId') sessionId: string) {
+  async getIdentityStatus(
+    @CurrentUser('id') userId: string,
+    @Param('sessionId') sessionId: string,
+  ) {
+    // SÉCURITÉ (anti-IDOR) : on ne renvoie le statut que si la session d'identité
+    // appartient bien à l'utilisateur authentifié. Sans ce contrôle, n'importe quel
+    // utilisateur pourrait lire le statut KYC (et les erreurs) d'un tiers en devinant
+    // un identifiant de session Stripe Identity.
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { stripeIdentitySessionId: true },
+    });
+
+    if (!profile?.stripeIdentitySessionId || profile.stripeIdentitySessionId !== sessionId) {
+      throw new I18nHttpException('stripe.identity_session_not_found', 'STRIPE_IDENTITY_SESSION_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
     return this.stripeService.getIdentityVerificationStatus(sessionId);
   }
 
@@ -343,31 +365,14 @@ export class StripeController {
   // ============================================================================
   // Payouts (Retraits IBAN)
   // ============================================================================
-
-  @Post('payouts/create')
-  @ApiOperation({ summary: 'Créer un retrait (payout) vers le compte bancaire du testeur' })
-  @ApiResponse({ status: 201, description: 'Retrait initié avec succès' })
-  @ApiResponse({ status: 400, description: 'Aucun compte Connect trouvé' })
-  @Roles(UserRole.USER)  // ONLY TESTERS
-  @ApiAuthResponses()
-  @ApiValidationErrorResponse()
-  async createPayout(
-    @CurrentUser('id') userId: string,
-    @Body() dto: { amount: number; withdrawalId: string },
-  ) {
-    const profile = await this.prisma.profile.findUnique({
-      where: { id: userId },
-      select: { stripeConnectAccountId: true },
-    });
-
-    if (!profile?.stripeConnectAccountId) {
-      throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
-    }
-
-    return this.stripeService.createPayout(dto.amount, profile.stripeConnectAccountId, 'eur', {
-      withdrawalId: dto.withdrawalId,
-    });
-  }
+  //
+  // ⚠️ SÉCURITÉ : l'ancien endpoint POST /stripe/payouts/create a été SUPPRIMÉ.
+  // Il créait un payout directement à partir d'un montant et d'un withdrawalId
+  // fournis par le client, SANS débiter le wallet ni vérifier l'identité (KYC),
+  // ce qui permettait un vidage de fonds. Le seul chemin de retrait autorisé est
+  // désormais POST /withdrawals → WithdrawalsService.createWithdrawal(), qui pose
+  // un verrou pessimiste sur le wallet, vérifie l'onboarding + l'identité et
+  // débite le solde de façon atomique avant de déclencher le payout.
 
   // ============================================================================
   // Stripe Webhooks
@@ -387,6 +392,22 @@ export class StripeController {
     const event = this.stripeService.constructEvent((req as any).rawBody, signature);
 
     this.logger.log(`Webhook received: ${event.type} - ${event.id}`);
+
+    // ── Déduplication (idempotence) ───────────────────────────────────────────
+    // Stripe livre les events "au moins une fois" : un même event peut arriver
+    // plusieurs fois (retry, timeout). On enregistre l'event.id de façon ATOMIQUE
+    // (INSERT ... ON CONFLICT DO NOTHING, race-safe via la PK). Si l'insertion ne
+    // crée aucune ligne, l'event a déjà été traité → on l'ignore et on répond 200.
+    // Cela empêche les double-crédits de wallet et les double-ajustements d'escrow.
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO stripe_webhook_events (id, type, processed_at)
+      VALUES (${event.id}, ${event.type}, NOW())
+      ON CONFLICT (id) DO NOTHING
+    `;
+    if (inserted === 0) {
+      this.logger.warn(`Webhook ${event.id} (${event.type}) déjà traité — ignoré (doublon Stripe).`);
+      return { received: true, duplicate: true };
+    }
 
     // Audit webhook
     await this.auditService.log(

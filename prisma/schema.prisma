@@ -1268,7 +1268,7 @@ model BusinessRules {
 
   // Commission hybride: fixe + couverture Stripe
   commissionFixedFee  Decimal @default(5.00) @map("commission_fixed_fee") @db.Decimal(10, 2) // Commission SuperTry fixe par produit
-  stripeFeePercent    Decimal @default(0.035) @map("stripe_fee_percent") @db.Decimal(5, 4)   // % couverture frais Stripe (3.5%)
+  stripeFeePercent    Decimal @default(0.039) @map("stripe_fee_percent") @db.Decimal(5, 4)   // % couverture frais Stripe (3.9% - pricing officiel)
 
   // Manual Capture: delai avant auto-capture
   captureDelayMinutes Int @default(60) @map("capture_delay_minutes")
@@ -1522,4 +1522,16 @@ model ApiMetric {
   @@index([timestamp])
   @@index([method, route])
   @@map("api_metrics")
+}
+
+/// Déduplication des webhooks Stripe (livraison "at-least-once").
+/// On enregistre chaque event.id traité ; un rejeu du même event est ignoré,
+/// ce qui évite les double-crédits de wallet / double-ajustements d'escrow.
+model StripeWebhookEvent {
+  id          String   @id // Stripe event id (evt_...)
+  type        String
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@index([processedAt])
+  @@map("stripe_webhook_events")
 }

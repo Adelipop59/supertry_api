@@ -31,5 +31,6 @@
   "topup_failed": "L'ajout de fonds de test a échoué.",
   "destination_charges_disabled": "Le compte destinataire ne peut pas recevoir de transferts.",
   "destination_pending_requirements": "Le compte destinataire a des informations manquantes.",
-  "insufficient_balance": "Solde disponible insuffisant pour ce retrait. Disponible : {available}€. En cours : {pending}€. {dateInfo}"
+  "insufficient_balance": "Solde disponible insuffisant pour ce retrait. Disponible : {available}€. En cours : {pending}€. {dateInfo}",
+  "identity_session_not_found": "Session de vérification d'identité introuvable."
 }

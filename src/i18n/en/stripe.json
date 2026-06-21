@@ -31,5 +31,6 @@
   "topup_failed": "Test top-up failed.",
   "destination_charges_disabled": "Destination account cannot receive transfers.",
   "destination_pending_requirements": "Destination account has pending requirements.",
-  "insufficient_balance": "Insufficient available balance for this withdrawal. Available: {available}€. Processing: {pending}€. {dateInfo}"
+  "insufficient_balance": "Insufficient available balance for this withdrawal. Available: {available}€. Processing: {pending}€. {dateInfo}",
+  "identity_session_not_found": "Identity verification session not found."
 }
