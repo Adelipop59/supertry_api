@@ -128,6 +128,9 @@ export class MediaService {
     // Validation du type MIME
     this.validateMimeType(file.mimetype, mediaType);
 
+    // Validation de la signature binaire réelle (anti-spoofing)
+    this.validateMagicBytes(file.buffer, mediaType);
+
     // Validation de la taille
     this.validateFileSize(file.size, mediaType);
 
@@ -197,6 +200,9 @@ export class MediaService {
   ): Promise<UploadResult> {
     // Validation du type MIME
     this.validateMimeType(mimeType, mediaType);
+
+    // Validation de la signature binaire réelle (anti-spoofing)
+    this.validateMagicBytes(buffer, mediaType);
 
     // Validation de la taille
     this.validateFileSize(buffer.length, mediaType);
@@ -392,6 +398,51 @@ export class MediaService {
     if (!allowedTypes.includes(mimeType)) {
       throw new BadRequestException(
         `Invalid file type. Allowed types for ${mediaType}: ${allowedTypes.join(', ')}`,
+      );
+    }
+  }
+
+  /**
+   * Détecte la catégorie réelle d'un fichier via sa signature binaire (magic bytes),
+   * indépendamment du Content-Type déclaré par le client (qui est falsifiable).
+   * Retourne 'image' | 'video' | null (inconnu).
+   */
+  private sniffCategory(buffer: Buffer): 'image' | 'video' | null {
+    if (!buffer || buffer.length < 12) return null;
+    const hex = buffer.subarray(0, 16).toString('hex').toLowerCase();
+    const ascii4 = buffer.subarray(0, 4).toString('latin1');
+    const brand = buffer.subarray(4, 8).toString('latin1'); // boîte ISO-BMFF
+
+    // Images
+    if (hex.startsWith('ffd8ff')) return 'image'; // JPEG
+    if (hex.startsWith('89504e470d0a1a0a')) return 'image'; // PNG
+    if (ascii4 === 'GIF8') return 'image'; // GIF
+    if (ascii4 === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP') return 'image';
+    if (hex.startsWith('424d')) return 'image'; // BMP
+    const head = buffer.subarray(0, 256).toString('latin1').trimStart();
+    if (head.startsWith('<?xml') || head.startsWith('<svg')) return 'image'; // SVG
+
+    // Vidéos
+    if (brand === 'ftyp') return 'video'; // MP4 / MOV / M4V
+    if (hex.startsWith('1a45dfa3')) return 'video'; // WebM / MKV (EBML)
+    if (ascii4 === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'AVI ') return 'video';
+    if (hex.startsWith('000001ba') || hex.startsWith('000001b3')) return 'video'; // MPEG-PS/ES
+
+    return null;
+  }
+
+  /**
+   * Vérifie que la signature binaire correspond à la catégorie attendue.
+   * Bloque les fichiers dont le contenu réel contredit le type (ex. exécutable
+   * renommé en .mp4, ou image envoyée comme vidéo). Tolère les formats non
+   * reconnus pour ne pas rejeter des conteneurs légitimes plus rares.
+   */
+  private validateMagicBytes(buffer: Buffer, mediaType: MediaType): void {
+    if (mediaType !== MediaType.IMAGE && mediaType !== MediaType.VIDEO) return;
+    const detected = this.sniffCategory(buffer);
+    if (detected && detected !== mediaType) {
+      throw new BadRequestException(
+        `File content does not match the declared type (${mediaType}).`,
       );
     }
   }

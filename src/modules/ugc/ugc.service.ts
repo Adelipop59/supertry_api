@@ -817,6 +817,26 @@ export class UgcService {
   }
 
   // ============================================================================
+  // PRICING (public au front authentifié) — P2.1
+  // ============================================================================
+
+  /**
+   * Tarifs UGC courants (issus des business rules, configurables par l'admin).
+   * Le front consomme cette source de vérité au lieu de prix codés en dur.
+   */
+  async getPublicPricing() {
+    const [video, photo] = await Promise.all([
+      this.businessRulesService.getUgcPricing(UGCType.VIDEO),
+      this.businessRulesService.getUgcPricing(UGCType.PHOTO),
+    ]);
+    return {
+      currency: 'EUR',
+      VIDEO: { price: video.price, commission: video.commission, total: video.price + video.commission },
+      PHOTO: { price: photo.price, commission: photo.commission, total: photo.price + photo.commission },
+    };
+  }
+
+  // ============================================================================
   // GET ENDPOINTS
   // ============================================================================
 
@@ -1162,8 +1182,9 @@ export class UgcService {
         });
       }
 
-      // Commission proportionnelle
-      const proportionalCommission = (pricing.commission * partialAmount) / pricing.price;
+      // Commission proportionnelle, arrondie au centime (Stripe = centimes entiers)
+      const proportionalCommission =
+        Math.round(((pricing.commission * partialAmount) / pricing.price) * 100) / 100;
       await tx.transaction.create({
         data: {
           walletId: null,

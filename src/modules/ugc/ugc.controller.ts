@@ -219,6 +219,18 @@ export class UgcController {
   }
 
   // ============================================================================
+  // GET /ugc/pricing — tarifs UGC courants (source de vérité pour le front)
+  // ============================================================================
+
+  @Get('pricing')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Tarifs UGC', description: 'Renvoie le prix et la commission courants par type d\'UGC payant (VIDEO, PHOTO)' })
+  @ApiAuthResponses()
+  async getUgcPricing() {
+    return this.ugcService.getPublicPricing();
+  }
+
+  // ============================================================================
   // 9. GET /ugc/my-requests — PRO liste ses demandes UGC
   // ============================================================================
 
