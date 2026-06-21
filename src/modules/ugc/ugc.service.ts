@@ -24,6 +24,7 @@ import { AuditService } from '../audit/audit.service';
 import { createPaginatedResponse, PaginatedResponse } from '../../common/dto/pagination.dto';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import { CreateUgcRequestDto } from './dto/create-ugc-request.dto';
+import { CreateUploadUrlsDto } from './dto/create-upload-urls.dto';
 import { SubmitUgcDto } from './dto/submit-ugc.dto';
 import { ValidateUgcDto } from './dto/validate-ugc.dto';
 import { RejectUgcDto } from './dto/reject-ugc.dto';
@@ -41,6 +42,7 @@ const UGC_INCLUDE = {
   },
   requester: { select: { id: true, firstName: true, lastName: true, email: true } },
   submitter: { select: { id: true, firstName: true, lastName: true, email: true, stripeConnectAccountId: true } },
+  assets: { orderBy: { position: 'asc' as const } },
 };
 
 @Injectable()
@@ -308,6 +310,59 @@ export class UgcService {
   }
 
   // ============================================================================
+  // UPLOAD URLS (TESTER) — presigned PUT pour upload direct S3 (P3.1)
+  // ============================================================================
+
+  async createUploadUrls(ugcId: string, userId: string, dto: CreateUploadUrlsDto) {
+    const ugc = await this.prisma.uGC.findUnique({ where: { id: ugcId } });
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
+    if (ugc.submittedBy !== userId) {
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
+    }
+    const validStatuses: UGCStatus[] = [UGCStatus.REQUESTED, UGCStatus.REJECTED];
+    if (!validStatuses.includes(ugc.status)) {
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+    if (ugc.stripePaymentIntentId && !ugc.escrowFundedAt) {
+      throw new I18nHttpException('ugc.payment_not_authorized', 'UGC_PAYMENT_NOT_AUTHORIZED', HttpStatus.BAD_REQUEST);
+    }
+    if (ugc.type !== 'VIDEO' && ugc.type !== 'PHOTO') {
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    // Contraintes de cardinalité : 1 seul fichier pour VIDEO, plusieurs pour PHOTO
+    const expectedPrefix = ugc.type === 'VIDEO' ? 'video/' : 'image/';
+    if (ugc.type === 'VIDEO' && dto.files.length !== 1) {
+      throw new I18nHttpException('ugc.file_required', 'UGC_FILE_REQUIRED', HttpStatus.BAD_REQUEST, { type: ugc.type });
+    }
+    for (const f of dto.files) {
+      if (!f.contentType.startsWith(expectedPrefix)) {
+        throw new I18nHttpException('ugc.file_required', 'UGC_FILE_TYPE_MISMATCH', HttpStatus.BAD_REQUEST, { type: ugc.type });
+      }
+    }
+
+    const buildUgcKey = (filename: string) =>
+      `${MediaFolder.UGC}/${ugcId}/${this.mediaService.generateFilename(filename)}`;
+
+    const uploads = await Promise.all(
+      dto.files.map(async (f) => {
+        const key = buildUgcKey(f.filename);
+        const uploadUrl = await this.mediaService.getUploadUrl(key, f.contentType);
+        return { key, uploadUrl, contentType: f.contentType };
+      }),
+    );
+
+    let thumbnail: { key: string; uploadUrl: string } | undefined;
+    if (dto.thumbnail && ugc.type === 'VIDEO' && dto.thumbnail.contentType.startsWith('image/')) {
+      const key = buildUgcKey(dto.thumbnail.filename);
+      const uploadUrl = await this.mediaService.getUploadUrl(key, dto.thumbnail.contentType);
+      thumbnail = { key, uploadUrl };
+    }
+
+    return { uploads, thumbnail };
+  }
+
+  // ============================================================================
   // SUBMIT UGC (TESTER)
   // ============================================================================
 
@@ -340,30 +395,72 @@ export class UgcService {
 
     // Upload ou URL selon le type
     let contentUrl = ugc.contentUrl;
+    let thumbnailKey: string | null = ugc.thumbnailKey;
+    let assetKeys: string[] = [];
+
     if (ugc.type === 'VIDEO' || ugc.type === 'PHOTO') {
-      if (!file) throw new I18nHttpException('ugc.file_required', 'UGC_FILE_REQUIRED', HttpStatus.BAD_REQUEST, { type: ugc.type });
       const mediaType = ugc.type === 'VIDEO' ? MediaType.VIDEO : MediaType.IMAGE;
-      const result = await this.mediaService.upload(file, MediaFolder.UGC, mediaType, {
-        subfolder: ugcId,
-      });
-      contentUrl = result.key;
+
+      if (dto.keys && dto.keys.length > 0) {
+        // Voie directe S3 (P3.1) : les fichiers ont été uploadés via presigned PUT.
+        if (ugc.type === 'VIDEO' && dto.keys.length !== 1) {
+          throw new I18nHttpException('ugc.file_required', 'UGC_FILE_REQUIRED', HttpStatus.BAD_REQUEST, { type: ugc.type });
+        }
+        const prefix = `${MediaFolder.UGC}/${ugcId}/`;
+        for (const key of dto.keys) {
+          if (!key.startsWith(prefix)) {
+            throw new I18nHttpException('ugc.invalid_status', 'UGC_KEY_FORBIDDEN', HttpStatus.BAD_REQUEST);
+          }
+          await this.mediaService.validateUploadedObject(key, mediaType);
+        }
+        assetKeys = dto.keys;
+        contentUrl = dto.keys[0];
+
+        // Vignette/poster (vidéo)
+        if (dto.thumbnailKey) {
+          if (!dto.thumbnailKey.startsWith(prefix)) {
+            throw new I18nHttpException('ugc.invalid_status', 'UGC_KEY_FORBIDDEN', HttpStatus.BAD_REQUEST);
+          }
+          await this.mediaService.validateUploadedObject(dto.thumbnailKey, MediaType.IMAGE);
+          thumbnailKey = dto.thumbnailKey;
+        }
+      } else if (file) {
+        // Voie legacy (multipart) : un seul fichier uploadé via le serveur
+        const result = await this.mediaService.upload(file, MediaFolder.UGC, mediaType, {
+          subfolder: ugcId,
+        });
+        contentUrl = result.key;
+        assetKeys = [result.key];
+      } else {
+        throw new I18nHttpException('ugc.file_required', 'UGC_FILE_REQUIRED', HttpStatus.BAD_REQUEST, { type: ugc.type });
+      }
     } else {
       if (!dto.contentUrl) throw new I18nHttpException('ugc.content_url_required', 'UGC_CONTENT_URL_REQUIRED', HttpStatus.BAD_REQUEST);
       contentUrl = dto.contentUrl;
     }
 
-    const updated = await this.prisma.uGC.update({
-      where: { id: ugcId },
-      data: {
-        status: UGCStatus.SUBMITTED,
-        contentUrl,
-        comment: dto.comment,
-        submittedAt: new Date(),
-        // Réinitialiser les champs de rejet
-        rejectedAt: null,
-        rejectionReason: null,
-      },
-      include: UGC_INCLUDE,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Remplacer les assets précédents (cas resoumission)
+      if (assetKeys.length > 0) {
+        await tx.uGCAsset.deleteMany({ where: { ugcId } });
+        await tx.uGCAsset.createMany({
+          data: assetKeys.map((key, i) => ({ ugcId, contentKey: key, position: i })),
+        });
+      }
+      return tx.uGC.update({
+        where: { id: ugcId },
+        data: {
+          status: UGCStatus.SUBMITTED,
+          contentUrl,
+          thumbnailKey,
+          comment: dto.comment,
+          submittedAt: new Date(),
+          // Réinitialiser les champs de rejet
+          rejectedAt: null,
+          rejectionReason: null,
+        },
+        include: UGC_INCLUDE,
+      });
     });
 
     // Notifier le PRO
@@ -892,11 +989,26 @@ export class UgcService {
     return this.mediaService.getSignedUrl(contentUrl, 3600);
   }
 
-  private async resolveUgcContentUrls<T extends { contentUrl?: string | null }>(ugc: T): Promise<T> {
-    if (ugc.contentUrl) {
-      return { ...ugc, contentUrl: await this.resolveContentUrl(ugc.contentUrl) };
-    }
-    return ugc;
+  private async resolveUgcContentUrls<
+    T extends {
+      contentUrl?: string | null;
+      thumbnailKey?: string | null;
+      assets?: { contentKey: string; position: number }[];
+    },
+  >(ugc: T): Promise<T & { thumbnailUrl?: string | null; assetUrls?: string[] }> {
+    const [contentUrl, thumbnailUrl, assetUrls] = await Promise.all([
+      ugc.contentUrl ? this.resolveContentUrl(ugc.contentUrl) : Promise.resolve(ugc.contentUrl ?? null),
+      ugc.thumbnailKey ? this.resolveContentUrl(ugc.thumbnailKey) : Promise.resolve(null),
+      ugc.assets && ugc.assets.length > 0
+        ? Promise.all(ugc.assets.map((a) => this.resolveContentUrl(a.contentKey)))
+        : Promise.resolve([] as (string | null)[]),
+    ]);
+    return {
+      ...ugc,
+      contentUrl,
+      thumbnailUrl,
+      assetUrls: assetUrls.filter((u): u is string => !!u),
+    };
   }
 
   private async resolveUgcListContentUrls<T extends { contentUrl?: string | null }>(ugcs: T[]): Promise<T[]> {

@@ -870,6 +870,8 @@ model UGC {
 
   type        UGCType
   contentUrl  String? @map("content_url") @db.Text
+  // Poster/vignette (vidéo) — généré côté client à la soumission
+  thumbnailKey String? @map("thumbnail_key") @db.Text
   description String  @db.Text
   comment     String? @db.Text
 
@@ -925,6 +927,7 @@ model UGC {
   submitter   Profile? @relation("UGCSubmitter", fields: [submittedBy], references: [id], onDelete: Restrict)
 
   transactions Transaction[]
+  assets       UGCAsset[] // Médias multiples (ex. plusieurs photos pour une demande PHOTO)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -934,6 +937,22 @@ model UGC {
   @@index([requestedBy])
   @@index([submittedBy])
   @@map("ugcs")
+}
+
+// Médias d'un UGC (1-N) — permet plusieurs photos par demande.
+// La vidéo reste un seul asset ; les photos peuvent en avoir plusieurs.
+model UGCAsset {
+  id         String  @id @default(uuid())
+  ugcId      String  @map("ugc_id")
+  ugc        UGC     @relation(fields: [ugcId], references: [id], onDelete: Cascade)
+  contentKey String  @map("content_key") @db.Text
+  mimeType   String? @map("mime_type")
+  position   Int     @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ugcId])
+  @@map("ugc_assets")
 }
 
 // Table Tip - Pourboires PRO → Testeur

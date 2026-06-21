@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsArray, IsOptional, IsString, MaxLength, ArrayMaxSize } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SubmitUgcDto {
@@ -14,11 +15,29 @@ export class SubmitUgcDto {
 
   @ApiPropertyOptional({
     description:
-      'URL du contenu pour TEXT_REVIEW (texte) ou EXTERNAL_REVIEW (lien). Pour VIDEO/PHOTO, utiliser le file upload multipart.',
+      'URL du contenu pour TEXT_REVIEW (texte) ou EXTERNAL_REVIEW (lien).',
     example: 'https://example.com/ugc-video.mp4',
   })
-  /** Pour TEXT_REVIEW (texte) ou EXTERNAL_REVIEW (URL). Pour VIDEO/PHOTO, utiliser le file upload multipart. */
   @IsOptional()
   @IsString()
   contentUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Clés S3 des fichiers déjà uploadés en direct (VIDEO: 1 clé ; PHOTO: 1 à 8 clés). Alternative au file upload multipart.',
+    type: [String],
+  })
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? [value] : value))
+  @IsArray()
+  @ArrayMaxSize(8)
+  @IsString({ each: true })
+  keys?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Clé S3 de la vignette/poster (VIDEO), uploadée en direct',
+  })
+  @IsOptional()
+  @IsString()
+  thumbnailKey?: string;
 }

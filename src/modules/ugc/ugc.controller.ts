@@ -14,6 +14,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiParam, ApiConsumes } from '@nestjs/swagger';
 import { UgcService } from './ugc.service';
 import { CreateUgcRequestDto } from './dto/create-ugc-request.dto';
+import { CreateUploadUrlsDto } from './dto/create-upload-urls.dto';
 import { SubmitUgcDto } from './dto/submit-ugc.dto';
 import { ValidateUgcDto } from './dto/validate-ugc.dto';
 import { RejectUgcDto } from './dto/reject-ugc.dto';
@@ -86,7 +87,26 @@ export class UgcController {
   }
 
   // ============================================================================
-  // 2. POST /ugc/:id/submit — Testeur soumet un UGC (multipart pour VIDEO/PHOTO)
+  // 2a. POST /ugc/:id/upload-urls — URLs d'upload direct S3 (presigned)
+  // ============================================================================
+
+  @Post(':id/upload-urls')
+  @Roles(UserRole.USER, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Obtenir des URLs d\'upload direct', description: 'Génère des URLs signées (PUT) pour uploader les fichiers directement vers S3 sans passer par le serveur' })
+  @ApiParam({ name: 'id', description: 'ID du UGC' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
+  async createUploadUrls(
+    @Param('id') ugcId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateUploadUrlsDto,
+  ) {
+    return this.ugcService.createUploadUrls(ugcId, userId, dto);
+  }
+
+  // ============================================================================
+  // 2. POST /ugc/:id/submit — Testeur soumet un UGC (multipart OU keys S3 directes)
   // ============================================================================
 
   @Post(':id/submit')

@@ -268,6 +268,70 @@ export class MediaService {
   }
 
   /**
+   * Génère une URL signée d'UPLOAD (PUT) pour un upload direct navigateur → S3 (P3.1).
+   * Le serveur impose la key et le Content-Type ; le client envoie les octets directement.
+   */
+  async getUploadUrl(
+    key: string,
+    contentType: string,
+    expiresIn: number = 900,
+  ): Promise<string> {
+    const command = new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+      ContentType: contentType,
+      ACL: 'private',
+    });
+    return getSignedUrl(this.s3Client, command, { expiresIn });
+  }
+
+  /**
+   * Métadonnées d'un objet (taille, type) — null si absent.
+   */
+  async head(key: string): Promise<{ size: number; contentType?: string } | null> {
+    try {
+      const res = await this.s3Client.send(
+        new HeadObjectCommand({ Bucket: this.bucketName, Key: key }),
+      );
+      return { size: res.ContentLength ?? 0, contentType: res.ContentType };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Valide la signature binaire réelle d'un objet déjà uploadé (P3.1 + P3.2).
+   * Récupère uniquement les premiers octets via une requête Range, puis applique
+   * le sniff de catégorie. Permet de conserver l'anti-spoofing en upload direct S3.
+   */
+  async validateUploadedObject(
+    key: string,
+    mediaType: MediaType,
+  ): Promise<void> {
+    // 1. Existence + taille
+    const meta = await this.head(key);
+    if (!meta) {
+      throw new BadRequestException(`Uploaded object not found: ${key}`);
+    }
+    this.validateFileSize(meta.size, mediaType);
+    if (meta.contentType) this.validateMimeType(meta.contentType, mediaType);
+
+    // 2. Magic bytes (premiers octets seulement)
+    try {
+      const res = await this.s3Client.send(
+        new GetObjectCommand({ Bucket: this.bucketName, Key: key, Range: 'bytes=0-31' }),
+      );
+      const bytes = await res.Body?.transformToByteArray();
+      if (bytes && bytes.length >= 12) {
+        this.validateMagicBytes(Buffer.from(bytes), mediaType);
+      }
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      // Si la lecture Range échoue (objet absent, etc.), on ne bloque pas sur le magic-byte
+    }
+  }
+
+  /**
    * Générer des URLs signées pour plusieurs keys
    */
   async getSignedUrls(keys: string[], expiresIn: number = 3600): Promise<string[]> {
