@@ -9,5 +9,9 @@
   "validated_success": "Content validated successfully.",
   "rejected_success": "Content rejected.",
   "declined_success": "Content request declined.",
-  "cancelled_success": "Content request cancelled."
+  "cancelled_success": "Content request cancelled.",
+  "payment_authorization_failed": "Payment authorization failed. Please check your payment method.",
+  "payment_authorization_expired": "The payment authorization has expired. Please re-authorize the payment to validate this content.",
+  "payment_action_pending": "A payment authentication is still pending. Please complete the 3D Secure step.",
+  "payment_not_authorized": "Payment for this request has not been authorized yet."
 }

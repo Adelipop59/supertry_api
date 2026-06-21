@@ -910,6 +910,10 @@ model UGC {
   // Paiement Stripe (manual capture pour VIDEO/PHOTO)
   stripePaymentIntentId String? @unique @map("stripe_payment_intent_id")
 
+  // Horodatage du financement de l'escrow (autorisation Stripe confirmée).
+  // Sert de garde d'idempotence : on ne crédite/décrédite l'escrow qu'une seule fois.
+  escrowFundedAt DateTime? @map("escrow_funded_at")
+
   // Relations
   sessionId String?      @map("session_id")
   session   TestSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -1273,7 +1277,9 @@ model BusinessRules {
 
   // Règles UGC
   maxUgcRejections       Int @default(3) @map("max_ugc_rejections")          // Nombre max de rejets avant auto-litige
-  ugcDefaultDeadlineDays Int @default(7) @map("ugc_default_deadline_days")   // Deadline par défaut en jours
+  // Deadline par défaut (jours). Doit rester < ~7j : une autorisation Stripe en manual
+  // capture expire au bout de 7 jours, sinon la capture à la validation échoue.
+  ugcDefaultDeadlineDays Int @default(4) @map("ugc_default_deadline_days")
 
   // KYC testeur : nombre de tests réussis avant obligation KYC Identity
   kycRequiredAfterTests Int @default(3) @map("kyc_required_after_tests")

@@ -9,5 +9,9 @@
   "validated_success": "Contenu validé avec succès.",
   "rejected_success": "Contenu refusé.",
   "declined_success": "Demande de contenu déclinée.",
-  "cancelled_success": "Demande de contenu annulée."
+  "cancelled_success": "Demande de contenu annulée.",
+  "payment_authorization_failed": "L'autorisation de paiement a échoué. Vérifiez votre moyen de paiement.",
+  "payment_authorization_expired": "L'autorisation de paiement a expiré. Veuillez ré-autoriser le paiement pour valider ce contenu.",
+  "payment_action_pending": "Une authentification du paiement est encore en attente. Terminez l'étape 3D Secure.",
+  "payment_not_authorized": "Le paiement de cette demande n'est pas encore autorisé."
 }

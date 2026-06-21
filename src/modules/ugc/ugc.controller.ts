@@ -20,6 +20,7 @@ import { RejectUgcDto } from './dto/reject-ugc.dto';
 import { DeclineUgcDto } from './dto/decline-ugc.dto';
 import { CancelUgcDto } from './dto/cancel-ugc.dto';
 import { ResolveUgcDisputeDto } from './dto/resolve-ugc-dispute.dto';
+import { ReauthorizeUgcPaymentDto } from './dto/reauthorize-ugc-payment.dto';
 import { UgcFilterDto } from './dto/ugc-filter.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -46,6 +47,42 @@ export class UgcController {
     @Body() dto: CreateUgcRequestDto,
   ) {
     return this.ugcService.requestUgc(userId, dto);
+  }
+
+  // ============================================================================
+  // 1b. POST /ugc/:id/confirm-authorization — PRO confirme après 3DS/SCA
+  // ============================================================================
+
+  @Post(':id/confirm-authorization')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Confirmer l\'autorisation UGC', description: 'Finalise une demande UGC après une étape 3DS/SCA : finance l\'escrow et notifie le testeur' })
+  @ApiParam({ name: 'id', description: 'ID du UGC' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async confirmUgcAuthorization(
+    @Param('id') ugcId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.ugcService.confirmUgcAuthorization(ugcId, userId);
+  }
+
+  // ============================================================================
+  // 1c. POST /ugc/:id/reauthorize-payment — PRO ré-autorise (autorisation expirée)
+  // ============================================================================
+
+  @Post(':id/reauthorize-payment')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Ré-autoriser le paiement UGC', description: 'Recrée une autorisation Stripe quand l\'autorisation initiale a expiré avant la validation' })
+  @ApiParam({ name: 'id', description: 'ID du UGC' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
+  async reauthorizeUgcPayment(
+    @Param('id') ugcId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: ReauthorizeUgcPaymentDto,
+  ) {
+    return this.ugcService.reauthorizeUgcPayment(ugcId, userId, dto.paymentMethodId);
   }
 
   // ============================================================================

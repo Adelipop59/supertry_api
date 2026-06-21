@@ -99,14 +99,25 @@ export class UgcService {
     // 3. Pricing
     const pricing = await this.businessRulesService.getUgcPricing(dto.type);
 
-    // 4. Si payant (VIDEO/PHOTO), créer PaymentIntent manual capture
+    // 4. Calculer deadline (doit rester < seuil d'expiration Stripe, cf. business rules)
+    const defaultDeadlineDays = await this.businessRulesService.getUgcDefaultDeadlineDays();
+    const deadline = dto.deadline
+      ? new Date(dto.deadline)
+      : new Date(Date.now() + defaultDeadlineDays * 24 * 60 * 60 * 1000);
+
+    // 5. Si payant (VIDEO/PHOTO), créer + confirmer PaymentIntent en CAPTURE MANUELLE.
+    //    L'escrow n'est financé qu'une fois l'autorisation effective (requires_capture),
+    //    pour ne pas compter de fonds tant qu'une étape 3DS/SCA est en attente.
+    const totalCharge = pricing.isPaid ? pricing.price + pricing.commission : 0;
     let stripePaymentIntentId: string | null = null;
+    let requiresAction = false;
+    let clientSecret: string | null = null;
+
     if (pricing.isPaid) {
       if (!dto.paymentMethodId) {
         throw new I18nHttpException('ugc.payment_required', 'UGC_PAYMENT_REQUIRED', HttpStatus.BAD_REQUEST);
       }
 
-      const totalCharge = pricing.price + pricing.commission;
       const paymentIntent = await this.stripeService.createPaymentIntent(
         totalCharge,
         'eur',
@@ -118,32 +129,33 @@ export class UgcService {
           campaignId: session.campaign.id,
           proId: userId,
           testerId: session.tester.id,
-          capture_method: 'manual',
         },
+        { captureMethod: 'manual' }, // ⚠️ capture manuelle réelle (était inopérante avant)
       );
-
-      // Confirmer avec la méthode de paiement du PRO (autorise sans capturer)
-      await this.stripeService.confirmPaymentIntent(paymentIntent.id, dto.paymentMethodId);
       stripePaymentIntentId = paymentIntent.id;
 
-      // Mettre à jour PlatformWallet escrow
-      const platformWallet = await this.prisma.platformWallet.findFirst();
-      if (platformWallet) {
-        await this.prisma.platformWallet.update({
-          where: { id: platformWallet.id },
-          data: {
-            escrowBalance: { increment: new Decimal(totalCharge) },
-            totalReceived: { increment: new Decimal(totalCharge) },
-          },
-        });
+      // Confirmer avec la méthode de paiement du PRO (autorise sans capturer)
+      const confirmed = await this.stripeService.confirmPaymentIntent(
+        paymentIntent.id,
+        dto.paymentMethodId,
+      );
+
+      if (confirmed.status === 'requires_action') {
+        // 3DS/SCA requis → on renvoie le client_secret, l'escrow sera financé après confirmation
+        requiresAction = true;
+        clientSecret = confirmed.client_secret ?? null;
+      } else if (confirmed.status !== 'requires_capture' && confirmed.status !== 'succeeded') {
+        // Autorisation échouée → annuler proprement le PI
+        await this.stripeService
+          .cancelPaymentIntent(paymentIntent.id, 'abandoned')
+          .catch(() => undefined);
+        throw new I18nHttpException(
+          'ugc.payment_authorization_failed',
+          'UGC_PAYMENT_AUTH_FAILED',
+          HttpStatus.BAD_REQUEST,
+        );
       }
     }
-
-    // 5. Calculer deadline
-    const defaultDeadlineDays = await this.businessRulesService.getUgcDefaultDeadlineDays();
-    const deadline = dto.deadline
-      ? new Date(dto.deadline)
-      : new Date(Date.now() + defaultDeadlineDays * 24 * 60 * 60 * 1000);
 
     // 6. Créer UGC
     const ugc = await this.prisma.uGC.create({
@@ -161,8 +173,13 @@ export class UgcService {
       include: UGC_INCLUDE,
     });
 
-    // 7. Notifier le testeur
-    if (session.tester.email) {
+    // 7. Financer l'escrow seulement si l'autorisation est effective (pas en attente 3DS)
+    if (pricing.isPaid && !requiresAction) {
+      await this.fundEscrowOnce(ugc.id, totalCharge);
+    }
+
+    // 8. Notifier le testeur uniquement si la demande est effective (sinon après 3DS)
+    if (!requiresAction && session.tester.email) {
       this.notificationsService.tryQueueEmail({
         to: session.tester.email,
         template: NotificationTemplate.GENERIC_NOTIFICATION,
@@ -184,7 +201,7 @@ export class UgcService {
       });
     }
 
-    // 8. Audit
+    // 9. Audit
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_REQUESTED', {
       ugcId: ugc.id,
       sessionId: dto.sessionId,
@@ -193,10 +210,119 @@ export class UgcService {
       isPaid: pricing.isPaid,
       price: pricing.price,
       commission: pricing.commission,
+      requiresAction,
     });
 
-    this.logger.log(`UGC requested: ${ugc.id} (${dto.type}) for session ${dto.sessionId}`);
-    return ugc;
+    this.logger.log(`UGC requested: ${ugc.id} (${dto.type}) for session ${dto.sessionId}${requiresAction ? ' [3DS pending]' : ''}`);
+    return { ...ugc, requiresAction, clientSecret };
+  }
+
+  // ============================================================================
+  // CONFIRM AUTHORIZATION (PRO) — après 3DS/SCA
+  // ============================================================================
+
+  async confirmUgcAuthorization(ugcId: string, userId: string) {
+    const ugc = await this.prisma.uGC.findUnique({ where: { id: ugcId }, include: UGC_INCLUDE });
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
+    if (ugc.requestedBy !== userId) {
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
+    }
+    if (ugc.status !== UGCStatus.REQUESTED || !ugc.stripePaymentIntentId) {
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    const pi = await this.stripeService.getPaymentIntent(ugc.stripePaymentIntentId);
+
+    if (pi.status === 'requires_capture' || pi.status === 'succeeded') {
+      const pricing = await this.businessRulesService.getUgcPricing(ugc.type);
+      await this.fundEscrowOnce(ugc.id, pricing.price + pricing.commission);
+
+      // Notifier le testeur maintenant que l'autorisation est effective
+      if (ugc.submitter?.email) {
+        this.notificationsService.tryQueueEmail({
+          to: ugc.submitter.email,
+          template: NotificationTemplate.GENERIC_NOTIFICATION,
+          subject: 'Nouvelle demande UGC',
+          variables: {
+            firstName: ugc.submitter.firstName || 'Testeur',
+            ugcType: ugc.type,
+            message: `Le PRO a demandé un contenu ${ugc.type}.`,
+          },
+          metadata: { ugcId: ugc.id, type: NotificationType.UGC_REQUESTED },
+        });
+      }
+
+      await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_AUTH_CONFIRMED', { ugcId: ugc.id });
+      this.logger.log(`UGC authorization confirmed: ${ugc.id}`);
+      return this.prisma.uGC.findUnique({ where: { id: ugcId }, include: UGC_INCLUDE });
+    }
+
+    if (pi.status === 'requires_action') {
+      throw new I18nHttpException('ugc.payment_action_pending', 'UGC_PAYMENT_ACTION_PENDING', HttpStatus.BAD_REQUEST);
+    }
+
+    // Échec définitif → annuler le PI et la demande
+    await this.stripeService.cancelPaymentIntent(ugc.stripePaymentIntentId, 'abandoned').catch(() => undefined);
+    await this.prisma.uGC.update({
+      where: { id: ugcId },
+      data: { status: UGCStatus.CANCELLED, cancelledAt: new Date(), cancellationReason: 'Payment authorization failed' },
+    });
+    throw new I18nHttpException('ugc.payment_authorization_failed', 'UGC_PAYMENT_AUTH_FAILED', HttpStatus.BAD_REQUEST);
+  }
+
+  // ============================================================================
+  // REAUTHORIZE PAYMENT (PRO) — autorisation expirée avant validation
+  // ============================================================================
+
+  async reauthorizeUgcPayment(ugcId: string, userId: string, paymentMethodId: string) {
+    const ugc = await this.prisma.uGC.findUnique({ where: { id: ugcId }, include: UGC_INCLUDE });
+    if (!ugc) throw new I18nHttpException('ugc.not_found', 'UGC_NOT_FOUND', HttpStatus.NOT_FOUND);
+    if (ugc.requestedBy !== userId) {
+      throw new I18nHttpException('ugc.not_owner', 'UGC_NOT_OWNER', HttpStatus.FORBIDDEN);
+    }
+    if (ugc.status !== UGCStatus.SUBMITTED) {
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    const pricing = await this.businessRulesService.getUgcPricing(ugc.type);
+    if (!pricing.isPaid) {
+      throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    const totalCharge = pricing.price + pricing.commission;
+    const paymentIntent = await this.stripeService.createPaymentIntent(
+      totalCharge,
+      'eur',
+      {
+        platform: 'supertry',
+        transactionType: 'UGC_PAYMENT',
+        ugcType: ugc.type,
+        sessionId: ugc.sessionId,
+        proId: userId,
+        reauthorizationOf: ugc.stripePaymentIntentId ?? '',
+      },
+      { captureMethod: 'manual' },
+    );
+    const confirmed = await this.stripeService.confirmPaymentIntent(paymentIntent.id, paymentMethodId);
+
+    if (confirmed.status === 'requires_action') {
+      await this.prisma.uGC.update({ where: { id: ugcId }, data: { stripePaymentIntentId: paymentIntent.id } });
+      return { requiresAction: true, clientSecret: confirmed.client_secret ?? null };
+    }
+    if (confirmed.status !== 'requires_capture' && confirmed.status !== 'succeeded') {
+      await this.stripeService.cancelPaymentIntent(paymentIntent.id, 'abandoned').catch(() => undefined);
+      throw new I18nHttpException('ugc.payment_authorization_failed', 'UGC_PAYMENT_AUTH_FAILED', HttpStatus.BAD_REQUEST);
+    }
+
+    // Nouvelle autorisation OK → remplacer le PI. Financer l'escrow seulement s'il ne l'était pas déjà.
+    await this.prisma.uGC.update({ where: { id: ugcId }, data: { stripePaymentIntentId: paymentIntent.id } });
+    if (!ugc.escrowFundedAt) {
+      await this.fundEscrowOnce(ugc.id, totalCharge);
+    }
+
+    await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_PAYMENT_REAUTHORIZED', { ugcId: ugc.id });
+    this.logger.log(`UGC payment reauthorized: ${ugc.id} → new PI ${paymentIntent.id}`);
+    return { requiresAction: false, clientSecret: null };
   }
 
   // ============================================================================
@@ -217,6 +343,17 @@ export class UgcService {
     const validStatuses: UGCStatus[] = [UGCStatus.REQUESTED, UGCStatus.REJECTED];
     if (!validStatuses.includes(ugc.status)) {
       throw new I18nHttpException('ugc.invalid_status', 'UGC_INVALID_STATUS', HttpStatus.BAD_REQUEST);
+    }
+
+    // Garde : pour un UGC payant, refuser la soumission tant que l'autorisation
+    // de paiement du PRO n'est pas effective (escrow financé). Évite qu'un testeur
+    // produise un contenu alors qu'une étape 3DS du PRO n'a jamais abouti.
+    if (ugc.stripePaymentIntentId && !ugc.escrowFundedAt) {
+      throw new I18nHttpException(
+        'ugc.payment_not_authorized',
+        'UGC_PAYMENT_NOT_AUTHORIZED',
+        HttpStatus.BAD_REQUEST,
+      );
     }
 
     // Upload ou URL selon le type
@@ -819,13 +956,37 @@ export class UgcService {
   // ============================================================================
 
   private async processUgcPayment(ugc: any, pricing: { price: number; commission: number }) {
+    // 0. Garde d'idempotence : si un paiement UGC a déjà été enregistré, ne pas rejouer
+    //    (évite tout double transfert en cas de retry après une erreur transitoire).
+    const alreadyPaid = await this.prisma.transaction.findFirst({
+      where: { ugcId: ugc.id, type: TransactionType.UGC_PAYMENT, status: TransactionStatus.COMPLETED },
+    });
+    if (alreadyPaid) {
+      this.logger.warn(`UGC ${ugc.id} already has a completed UGC_PAYMENT transaction — skipping`);
+      return;
+    }
+
     // 1. Vérifier le statut du PI avant capture
     const pi = await this.stripeService.getPaymentIntent(ugc.stripePaymentIntentId);
 
     if (pi.status === 'succeeded') {
       this.logger.log(`PI ${ugc.stripePaymentIntentId} already captured (succeeded), skipping capture`);
     } else if (pi.status === 'requires_capture') {
-      await this.stripeService.capturePaymentIntent(ugc.stripePaymentIntentId);
+      // Clé d'idempotence déterministe : un retry ne capturera pas deux fois
+      await this.stripeService.capturePaymentIntent(ugc.stripePaymentIntentId, `ugc-capture-${ugc.id}`);
+    } else if (
+      pi.status === 'canceled' ||
+      pi.status === 'requires_payment_method' ||
+      pi.status === 'requires_action'
+    ) {
+      // L'autorisation a expiré ou n'est plus valide → erreur métier explicite et
+      // actionnable (le PRO doit ré-autoriser), au lieu d'un 500 opaque qui bloque l'UGC.
+      this.logger.error(`PI ${ugc.stripePaymentIntentId} authorization expired/invalid: ${pi.status}`);
+      throw new I18nHttpException(
+        'ugc.payment_authorization_expired',
+        'UGC_PAYMENT_AUTH_EXPIRED',
+        HttpStatus.BAD_REQUEST,
+      );
     } else {
       this.logger.error(`PI ${ugc.stripePaymentIntentId} in unexpected status: ${pi.status}`);
       throw new I18nHttpException(
@@ -843,7 +1004,7 @@ export class UgcService {
       throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.NOT_FOUND);
     }
 
-    // 3. Transfert Stripe vers le testeur
+    // 3. Transfert Stripe vers le testeur (clé d'idempotence déterministe par ugcId)
     const transfer = await this.stripeService.createPlatformToConnectTransfer(
       pricing.price,
       testerStripeAccount,
@@ -856,6 +1017,9 @@ export class UgcService {
         sessionId: ugc.sessionId,
         campaignId: ugc.session?.campaign?.id,
       },
+      undefined,
+      undefined,
+      `ugc-transfer-${ugc.id}`,
     );
 
     // 4. Transactions DB dans une transaction atomique
@@ -1041,34 +1205,156 @@ export class UgcService {
   private async cancelUgcPaymentIntent(paymentIntentId: string, ugcId: string) {
     try {
       await this.stripeService.cancelPaymentIntent(paymentIntentId, 'abandoned');
-
-      // Décrémenter l'escrow
-      const pricing = await this.prisma.uGC.findUnique({
-        where: { id: ugcId },
-        select: { requestedBonus: true, type: true },
-      });
-
-      if (pricing?.requestedBonus) {
-        const ugcPricing = await this.businessRulesService.getUgcPricing(pricing.type);
-        const totalCharge = Number(pricing.requestedBonus) + ugcPricing.commission;
-
-        const platformWallet = await this.prisma.platformWallet.findFirst();
-        if (platformWallet) {
-          await this.prisma.platformWallet.update({
-            where: { id: platformWallet.id },
-            data: {
-              escrowBalance: { decrement: new Decimal(totalCharge) },
-              totalReceived: { decrement: new Decimal(totalCharge) },
-            },
-          });
-        }
-      }
-
+      // Libérer l'escrow de façon idempotente (seulement s'il avait été financé)
+      await this.releaseEscrowOnce(ugcId);
       this.logger.log(`UGC PaymentIntent cancelled: ${paymentIntentId}`);
     } catch (error) {
       this.logger.error(`Failed to cancel UGC PaymentIntent ${paymentIntentId}: ${error.message}`);
       throw new I18nHttpException('common.internal_error', 'UGC_CANCEL_PAYMENT_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
+  }
+
+  // ============================================================================
+  // ESCROW HELPERS (idempotents via UGC.escrowFundedAt)
+  // ============================================================================
+
+  /** Crédite l'escrow plateforme une seule fois pour un UGC donné. */
+  private async fundEscrowOnce(ugcId: string, totalCharge: number) {
+    await this.prisma.$transaction(async (tx) => {
+      const ugc = await tx.uGC.findUnique({ where: { id: ugcId }, select: { escrowFundedAt: true } });
+      if (!ugc || ugc.escrowFundedAt) return; // déjà financé → no-op
+
+      const platformWallet = await tx.platformWallet.findFirst();
+      if (platformWallet) {
+        await tx.platformWallet.update({
+          where: { id: platformWallet.id },
+          data: {
+            escrowBalance: { increment: new Decimal(totalCharge) },
+            totalReceived: { increment: new Decimal(totalCharge) },
+          },
+        });
+      }
+      await tx.uGC.update({ where: { id: ugcId }, data: { escrowFundedAt: new Date() } });
+    });
+  }
+
+  /** Libère l'escrow plateforme une seule fois (montant = bonus + commission). */
+  private async releaseEscrowOnce(ugcId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const ugc = await tx.uGC.findUnique({
+        where: { id: ugcId },
+        select: { escrowFundedAt: true, requestedBonus: true, type: true },
+      });
+      if (!ugc || !ugc.escrowFundedAt) return; // jamais financé → no-op
+
+      const ugcPricing = await this.businessRulesService.getUgcPricing(ugc.type);
+      const totalCharge = Number(ugc.requestedBonus ?? ugcPricing.price) + ugcPricing.commission;
+
+      const platformWallet = await tx.platformWallet.findFirst();
+      if (platformWallet) {
+        await tx.platformWallet.update({
+          where: { id: platformWallet.id },
+          data: {
+            escrowBalance: { decrement: new Decimal(totalCharge) },
+            totalReceived: { decrement: new Decimal(totalCharge) },
+          },
+        });
+      }
+      await tx.uGC.update({ where: { id: ugcId }, data: { escrowFundedAt: null } });
+    });
+  }
+
+  // ============================================================================
+  // SCHEDULER HOOKS (appelés par UgcScheduler) — P0.2
+  // ============================================================================
+
+  /**
+   * Expire les demandes UGC jamais acceptées (statut REQUESTED) dont la deadline
+   * est dépassée : annule le PI (0 frais), libère l'escrow, passe en CANCELLED,
+   * et notifie les deux parties. Renvoie le nombre d'UGC expirés.
+   */
+  async expireOverdueUgcs(): Promise<number> {
+    const now = new Date();
+    const overdue = await this.prisma.uGC.findMany({
+      where: { status: UGCStatus.REQUESTED, deadline: { lt: now } },
+      include: UGC_INCLUDE,
+    });
+
+    let count = 0;
+    for (const ugc of overdue) {
+      try {
+        if (ugc.stripePaymentIntentId) {
+          // Annule le PI + libère l'escrow (idempotent)
+          await this.cancelUgcPaymentIntent(ugc.stripePaymentIntentId, ugc.id);
+        }
+        await this.prisma.uGC.update({
+          where: { id: ugc.id },
+          data: {
+            status: UGCStatus.CANCELLED,
+            cancelledAt: now,
+            cancellationReason: 'Deadline dépassée — demande expirée automatiquement',
+          },
+        });
+
+        for (const party of [ugc.requester, ugc.submitter]) {
+          if (party?.email) {
+            this.notificationsService.tryQueueEmail({
+              to: party.email,
+              template: NotificationTemplate.GENERIC_NOTIFICATION,
+              subject: 'Demande UGC expirée',
+              variables: {
+                firstName: party.firstName || 'Utilisateur',
+                ugcType: ugc.type,
+                message: `La demande de ${ugc.type} UGC a expiré (deadline dépassée) et a été annulée sans frais.`,
+              },
+              metadata: { ugcId: ugc.id, type: NotificationType.UGC_CANCELLED },
+            });
+          }
+        }
+
+        await this.auditService.log(ugc.requestedBy, AuditCategory.SESSION, 'UGC_EXPIRED', { ugcId: ugc.id });
+        count += 1;
+      } catch (error) {
+        this.logger.error(`Failed to expire UGC ${ugc.id}: ${error.message}`);
+      }
+    }
+
+    if (count > 0) this.logger.log(`Expired ${count} overdue UGC request(s)`);
+    return count;
+  }
+
+  /**
+   * Rappel J-1 aux testeurs pour les UGC REQUESTED dont la deadline tombe dans
+   * les prochaines 24h. Renvoie le nombre de rappels envoyés.
+   */
+  async sendUgcDeadlineReminders(): Promise<number> {
+    const now = new Date();
+    const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const soon = await this.prisma.uGC.findMany({
+      where: { status: UGCStatus.REQUESTED, deadline: { gte: now, lt: in24h } },
+      include: UGC_INCLUDE,
+    });
+
+    let count = 0;
+    for (const ugc of soon) {
+      if (!ugc.submitter?.email || !ugc.deadline) continue;
+      this.notificationsService.tryQueueEmail({
+        to: ugc.submitter.email,
+        template: NotificationTemplate.GENERIC_NOTIFICATION,
+        subject: 'Rappel — demande UGC bientôt expirée',
+        variables: {
+          firstName: ugc.submitter.firstName || 'Testeur',
+          ugcType: ugc.type,
+          deadline: ugc.deadline.toLocaleDateString('fr-FR'),
+          message: `Il vous reste moins de 24h pour répondre à une demande de ${ugc.type} UGC (deadline: ${ugc.deadline.toLocaleDateString('fr-FR')}).`,
+        },
+        metadata: { ugcId: ugc.id, type: NotificationType.UGC_REQUESTED },
+      });
+      count += 1;
+    }
+
+    if (count > 0) this.logger.log(`Sent ${count} UGC deadline reminder(s)`);
+    return count;
   }
 
   private async autoEscalateToDispute(ugc: any, lastRejectionReason: string, rejectionCount: number, proId: string) {

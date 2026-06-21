@@ -577,9 +577,17 @@ export class StripeService {
     }
   }
 
-  async capturePaymentIntent(paymentIntentId: string): Promise<Stripe.PaymentIntent> {
+  async capturePaymentIntent(
+    paymentIntentId: string,
+    idempotencyKey?: string,
+  ): Promise<Stripe.PaymentIntent> {
     try {
-      const paymentIntent = await this.stripe.paymentIntents.capture(paymentIntentId);
+      const requestOptions = idempotencyKey ? { idempotencyKey } : undefined;
+      const paymentIntent = await this.stripe.paymentIntents.capture(
+        paymentIntentId,
+        undefined,
+        requestOptions,
+      );
       this.logger.log(`PaymentIntent captured: ${paymentIntentId}`);
       return paymentIntent;
     } catch (error) {
@@ -842,6 +850,7 @@ export class StripeService {
     metadata: Record<string, any> = {},
     description?: string,
     transferGroup?: string,
+    idempotencyKey?: string,
   ): Promise<Stripe.Transfer> {
     try {
       // 1. Vérifier compte destination AVANT transfer
@@ -910,10 +919,14 @@ export class StripeService {
         transferParams.transfer_group = transferGroup;
       }
 
+      // Clé d'idempotence : si l'appelant en fournit une (déterministe, ex. par ugcId),
+      // un éventuel retry ne déclenchera PAS un second transfert. Sinon, fallback historique.
       const transfer = await this.stripe.transfers.create(
         transferParams,
         {
-          idempotencyKey: `platform-transfer-${metadata.sessionId || metadata.campaignId}-${Date.now()}`,
+          idempotencyKey:
+            idempotencyKey ||
+            `platform-transfer-${metadata.sessionId || metadata.campaignId}-${Date.now()}`,
         },
       );
 
