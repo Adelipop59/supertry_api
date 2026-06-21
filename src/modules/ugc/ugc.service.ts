@@ -179,26 +179,14 @@ export class UgcService {
     }
 
     // 8. Notifier le testeur uniquement si la demande est effective (sinon après 3DS)
-    if (!requiresAction && session.tester.email) {
-      this.notificationsService.tryQueueEmail({
-        to: session.tester.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'Nouvelle demande UGC',
-        variables: {
-          firstName: session.tester.firstName || 'Testeur',
-          campaignTitle: session.campaign.title,
-          ugcType: dto.type,
-          description: dto.description,
-          bonus: pricing.isPaid ? `${pricing.price}€` : 'Gratuit',
-          deadline: deadline.toLocaleDateString('fr-FR'),
-          message: `Le PRO a demandé un contenu ${dto.type} pour la campagne "${session.campaign.title}".${pricing.isPaid ? ` Bonus: ${pricing.price}€.` : ''} Deadline: ${deadline.toLocaleDateString('fr-FR')}.`,
-        },
-        metadata: {
-          ugcId: ugc.id,
-          sessionId: dto.sessionId,
-          type: NotificationType.UGC_REQUESTED,
-        },
-      });
+    if (!requiresAction) {
+      await this.notifyUgc(
+        { id: session.tester.id, email: session.tester.email, firstName: session.tester.firstName },
+        'ugc_requested',
+        { ugcType: dto.type, campaignTitle: session.campaign.title, deadline: deadline.toLocaleDateString('fr-FR') },
+        NotificationType.UGC_REQUESTED,
+        ugc.id,
+      );
     }
 
     // 9. Audit
@@ -238,19 +226,13 @@ export class UgcService {
       await this.fundEscrowOnce(ugc.id, pricing.price + pricing.commission);
 
       // Notifier le testeur maintenant que l'autorisation est effective
-      if (ugc.submitter?.email) {
-        this.notificationsService.tryQueueEmail({
-          to: ugc.submitter.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Nouvelle demande UGC',
-          variables: {
-            firstName: ugc.submitter.firstName || 'Testeur',
-            ugcType: ugc.type,
-            message: `Le PRO a demandé un contenu ${ugc.type}.`,
-          },
-          metadata: { ugcId: ugc.id, type: NotificationType.UGC_REQUESTED },
-        });
-      }
+      await this.notifyUgc(
+        ugc.submitter,
+        'ugc_requested',
+        { ugcType: ugc.type, campaignTitle: ugc.session?.campaign?.title ?? '', deadline: ugc.deadline ? new Date(ugc.deadline).toLocaleDateString('fr-FR') : '' },
+        NotificationType.UGC_REQUESTED,
+        ugc.id,
+      );
 
       await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_AUTH_CONFIRMED', { ugcId: ugc.id });
       this.logger.log(`UGC authorization confirmed: ${ugc.id}`);
@@ -385,22 +367,13 @@ export class UgcService {
     });
 
     // Notifier le PRO
-    if (ugc.requester?.email) {
-      this.notificationsService.tryQueueEmail({
-        to: ugc.requester.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'UGC soumis par le testeur',
-        variables: {
-          firstName: ugc.requester.firstName || 'PRO',
-          ugcType: ugc.type,
-          message: `Le testeur a soumis un contenu ${ugc.type}. Veuillez le vérifier et le valider ou le rejeter.`,
-        },
-        metadata: {
-          ugcId,
-          type: NotificationType.UGC_SUBMITTED,
-        },
-      });
-    }
+    await this.notifyUgc(
+      ugc.requester,
+      'ugc_submitted',
+      { ugcType: ugc.type },
+      NotificationType.UGC_SUBMITTED,
+      ugcId,
+    );
 
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_SUBMITTED', {
       ugcId,
@@ -450,25 +423,18 @@ export class UgcService {
     });
 
     // Notifier le testeur
-    if (ugc.submitter?.email) {
-      const message = pricing.isPaid
-        ? `Votre ${ugc.type} UGC a été validé ! Vous recevez ${pricing.price}€.`
-        : `Votre ${ugc.type} UGC a été validé ! Merci pour votre contribution.`;
-
-      this.notificationsService.tryQueueEmail({
-        to: ugc.submitter.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'UGC validé',
-        variables: {
-          firstName: ugc.submitter.firstName || 'Testeur',
-          message,
-        },
-        metadata: {
-          ugcId,
-          type: NotificationType.UGC_VALIDATED,
-        },
-      });
-    }
+    await this.notifyUgc(
+      ugc.submitter,
+      'ugc_validated',
+      {
+        ugcType: ugc.type,
+        paymentInfo: pricing.isPaid
+          ? `Vous recevez ${pricing.price}€.`
+          : 'Merci pour votre contribution.',
+      },
+      NotificationType.UGC_VALIDATED,
+      ugcId,
+    );
 
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_VALIDATED', {
       ugcId,
@@ -520,24 +486,17 @@ export class UgcService {
     });
 
     // Notifier le testeur
-    if (ugc.submitter?.email) {
-      this.notificationsService.tryQueueEmail({
-        to: ugc.submitter.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'UGC rejeté - Modification demandée',
-        variables: {
-          firstName: ugc.submitter.firstName || 'Testeur',
-          ugcType: ugc.type,
-          rejectionReason: dto.rejectionReason,
-          remainingAttempts: maxRejections - newRejectionCount,
-          message: `Votre ${ugc.type} UGC a été rejeté. Raison: ${dto.rejectionReason}. Vous pouvez le resoumettre (${maxRejections - newRejectionCount} tentative(s) restante(s)).`,
-        },
-        metadata: {
-          ugcId,
-          type: NotificationType.UGC_REJECTED,
-        },
-      });
-    }
+    await this.notifyUgc(
+      ugc.submitter,
+      'ugc_rejected',
+      {
+        ugcType: ugc.type,
+        rejectionReason: dto.rejectionReason,
+        remainingAttempts: maxRejections - newRejectionCount,
+      },
+      NotificationType.UGC_REJECTED,
+      ugcId,
+    );
 
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_REJECTED', {
       ugcId,
@@ -586,22 +545,13 @@ export class UgcService {
     });
 
     // Notifier le PRO
-    if (ugc.requester?.email) {
-      this.notificationsService.tryQueueEmail({
-        to: ugc.requester.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'UGC décliné par le testeur',
-        variables: {
-          firstName: ugc.requester.firstName || 'PRO',
-          ugcType: ugc.type,
-          message: `Le testeur a décliné votre demande de ${ugc.type} UGC.${dto.declineReason ? ` Raison: ${dto.declineReason}` : ''}`,
-        },
-        metadata: {
-          ugcId,
-          type: NotificationType.UGC_DECLINED,
-        },
-      });
-    }
+    await this.notifyUgc(
+      ugc.requester,
+      'ugc_declined',
+      { ugcType: ugc.type },
+      NotificationType.UGC_DECLINED,
+      ugcId,
+    );
 
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_DECLINED', {
       ugcId,
@@ -647,22 +597,13 @@ export class UgcService {
     });
 
     // Notifier le testeur
-    if (ugc.submitter?.email) {
-      this.notificationsService.tryQueueEmail({
-        to: ugc.submitter.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'Demande UGC annulée',
-        variables: {
-          firstName: ugc.submitter.firstName || 'Testeur',
-          ugcType: ugc.type,
-          message: `La demande de ${ugc.type} UGC a été annulée par le PRO.`,
-        },
-        metadata: {
-          ugcId,
-          type: NotificationType.UGC_CANCELLED,
-        },
-      });
-    }
+    await this.notifyUgc(
+      ugc.submitter,
+      'ugc_cancelled',
+      { ugcType: ugc.type },
+      NotificationType.UGC_CANCELLED,
+      ugcId,
+    );
 
     await this.auditService.log(userId, AuditCategory.SESSION, 'UGC_CANCELLED', {
       ugcId,
@@ -787,22 +728,13 @@ export class UgcService {
 
     // Notifier les deux parties
     for (const party of [ugc.requester, ugc.submitter]) {
-      if (party?.email) {
-        this.notificationsService.tryQueueEmail({
-          to: party.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Litige UGC résolu',
-          variables: {
-            firstName: party.firstName || 'Utilisateur',
-            resolution: dto.disputeResolution,
-            message: `Le litige UGC a été résolu par un administrateur. Décision: ${dto.disputeResolution}`,
-          },
-          metadata: {
-            ugcId,
-            type: NotificationType.UGC_DISPUTE_RESOLVED,
-          },
-        });
-      }
+      await this.notifyUgc(
+        party,
+        'ugc_dispute_resolved',
+        { ugcType: ugc.type, resolution: dto.disputeResolution },
+        NotificationType.UGC_DISPUTE_RESOLVED,
+        ugcId,
+      );
     }
 
     await this.auditService.log(adminId, AuditCategory.ADMIN, 'UGC_DISPUTE_RESOLVED', {
@@ -1318,19 +1250,13 @@ export class UgcService {
         });
 
         for (const party of [ugc.requester, ugc.submitter]) {
-          if (party?.email) {
-            this.notificationsService.tryQueueEmail({
-              to: party.email,
-              template: NotificationTemplate.GENERIC_NOTIFICATION,
-              subject: 'Demande UGC expirée',
-              variables: {
-                firstName: party.firstName || 'Utilisateur',
-                ugcType: ugc.type,
-                message: `La demande de ${ugc.type} UGC a expiré (deadline dépassée) et a été annulée sans frais.`,
-              },
-              metadata: { ugcId: ugc.id, type: NotificationType.UGC_CANCELLED },
-            });
-          }
+          await this.notifyUgc(
+            party,
+            'ugc_expired',
+            { ugcType: ugc.type },
+            NotificationType.UGC_CANCELLED,
+            ugc.id,
+          );
         }
 
         await this.auditService.log(ugc.requestedBy, AuditCategory.SESSION, 'UGC_EXPIRED', { ugcId: ugc.id });
@@ -1359,18 +1285,13 @@ export class UgcService {
     let count = 0;
     for (const ugc of soon) {
       if (!ugc.submitter?.email || !ugc.deadline) continue;
-      this.notificationsService.tryQueueEmail({
-        to: ugc.submitter.email,
-        template: NotificationTemplate.GENERIC_NOTIFICATION,
-        subject: 'Rappel — demande UGC bientôt expirée',
-        variables: {
-          firstName: ugc.submitter.firstName || 'Testeur',
-          ugcType: ugc.type,
-          deadline: ugc.deadline.toLocaleDateString('fr-FR'),
-          message: `Il vous reste moins de 24h pour répondre à une demande de ${ugc.type} UGC (deadline: ${ugc.deadline.toLocaleDateString('fr-FR')}).`,
-        },
-        metadata: { ugcId: ugc.id, type: NotificationType.UGC_REQUESTED },
-      });
+      await this.notifyUgc(
+        ugc.submitter,
+        'ugc_reminder',
+        { ugcType: ugc.type, deadline: ugc.deadline.toLocaleDateString('fr-FR') },
+        NotificationType.UGC_REQUESTED,
+        ugc.id,
+      );
       count += 1;
     }
 
@@ -1404,46 +1325,54 @@ export class UgcService {
     return updated;
   }
 
-  private async notifyDispute(ugc: any, escalatedBy: string) {
-    // Notifier les deux parties
+  /**
+   * Envoie un email UGC traduit dans la langue préférée du destinataire (P2.3).
+   * Réutilise le helper i18n du service de notifications.
+   */
+  private async notifyUgc(
+    recipient: { id: string; email: string | null; firstName: string | null } | null | undefined,
+    key: string,
+    args: Record<string, any>,
+    notifType: NotificationType,
+    ugcId: string,
+  ) {
+    if (!recipient?.email) return;
+    const { title, message } = await this.notificationsService.getTranslatedNotification(
+      recipient.id,
+      key,
+      args,
+    );
+    this.notificationsService.tryQueueEmail({
+      to: recipient.email,
+      template: NotificationTemplate.GENERIC_NOTIFICATION,
+      subject: title,
+      variables: { firstName: recipient.firstName || '', message, ...args },
+      metadata: { ugcId, type: notifType },
+    });
+  }
+
+  private async notifyDispute(ugc: any, _escalatedBy: string) {
+    // Notifier les deux parties (dans leur langue)
     for (const party of [ugc.requester, ugc.submitter]) {
-      if (party?.email) {
-        this.notificationsService.tryQueueEmail({
-          to: party.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Litige UGC créé',
-          variables: {
-            firstName: party.firstName || 'Utilisateur',
-            ugcType: ugc.type,
-            message: `Un litige a été créé pour le ${ugc.type} UGC (escaladé par ${escalatedBy}). Un administrateur va examiner la situation.`,
-          },
-          metadata: {
-            ugcId: ugc.id,
-            type: NotificationType.UGC_DISPUTED,
-          },
-        });
-      }
+      await this.notifyUgc(
+        party,
+        'ugc_disputed',
+        { ugcType: ugc.type },
+        NotificationType.UGC_DISPUTED,
+        ugc.id,
+      );
     }
 
     // Notifier tous les admins
     const admins = await this.prisma.profile.findMany({ where: { role: UserRole.ADMIN } });
     for (const admin of admins) {
-      if (admin.email) {
-        this.notificationsService.tryQueueEmail({
-          to: admin.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Nouveau litige UGC à traiter',
-          variables: {
-            firstName: admin.firstName || 'Admin',
-            ugcType: ugc.type,
-            message: `Litige UGC à traiter. Type: ${ugc.type}. Escaladé par: ${escalatedBy}.`,
-          },
-          metadata: {
-            ugcId: ugc.id,
-            type: NotificationType.UGC_DISPUTED,
-          },
-        });
-      }
+      await this.notifyUgc(
+        admin,
+        'ugc_admin_dispute',
+        { ugcType: ugc.type },
+        NotificationType.UGC_DISPUTED,
+        ugc.id,
+      );
     }
   }
 }
