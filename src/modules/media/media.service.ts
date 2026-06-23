@@ -63,7 +63,8 @@ export class MediaService {
       'image/png',
       'image/gif',
       'image/webp',
-      'image/svg+xml',
+      // SEC-E10 : SVG retiré (vecteur XSS stocké). Ne pas réautoriser sans
+      // sanitisation serveur + service via domaine isolé / Content-Disposition.
     ],
     [MediaType.VIDEO]: [
       'video/mp4',

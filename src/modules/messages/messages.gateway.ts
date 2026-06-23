@@ -15,6 +15,7 @@ import { createClient } from 'redis';
 import { LuciaService } from '../lucia/lucia.service';
 import { PrismaService } from '../../database/prisma.service';
 import { MessagesService } from './messages.service';
+import { WsTicketService } from '../../common/services/ws-ticket.service';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -32,6 +33,7 @@ export class MessagesGateway
     private readonly luciaService: LuciaService,
     private readonly prismaService: PrismaService,
     private readonly messagesService: MessagesService,
+    private readonly wsTicketService: WsTicketService,
   ) {}
 
   async afterInit(server: Server) {
@@ -67,14 +69,23 @@ export class MessagesGateway
         return;
       }
 
-      const result = await this.luciaService.validateSession(token);
-      if (!result.session || !result.user) {
-        client.disconnect();
-        return;
+      // SEC-C3 : on tente d'abord le ticket WS éphémère (nouveau chemin sûr).
+      // Repli rétro-compatible sur la validation du token de session (ancien
+      // chemin) tant que tous les clients ne sont pas migrés. Toute erreur de
+      // ticket bascule sur le repli → aucune coupure du chat.
+      let userId = this.wsTicketService.verify(token);
+
+      if (!userId) {
+        const result = await this.luciaService.validateSession(token);
+        if (!result.session || !result.user) {
+          client.disconnect();
+          return;
+        }
+        userId = result.user.id;
       }
 
       const profile = await this.prismaService.profile.findUnique({
-        where: { id: result.user.id },
+        where: { id: userId },
         select: {
           id: true,
           role: true,

@@ -7,7 +7,9 @@ import {
   Res,
   Req,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
+import { RateLimit, RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 import type { Request, Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -30,14 +32,21 @@ import {
 } from './dto/auth.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { SkipOnboarding } from '../../common/decorators/skip-onboarding.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { WsTicketService } from '../../common/services/ws-ticket.service';
 import { ApiAuthResponses, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private readonly wsTicketService: WsTicketService,
+  ) {}
 
   @Post('signup')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(10, 300)
   @Public()
   @ApiOperation({ summary: 'Inscription classique email/password' })
   @ApiResponse({ status: 201, type: AuthResponseDto })
@@ -56,6 +65,8 @@ export class AuthController {
   }
 
   @Post('login')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(10, 60)
   @Public()
   @ApiOperation({ summary: 'Connexion email/password' })
   @ApiResponse({ status: 200, type: AuthResponseDto })
@@ -98,6 +109,8 @@ export class AuthController {
   }
 
   @Post('check-email')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(20, 60)
   @Public()
   @ApiOperation({ summary: "Vérifier si un email existe" })
   @ApiResponse({ status: 200, type: CheckEmailResponseDto })
@@ -272,6 +285,8 @@ export class AuthController {
   }
 
   @Post('forgot-password')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 300)
   @Public()
   @ApiOperation({ summary: 'Demander un lien de réinitialisation de mot de passe' })
   @ApiResponse({ status: 200, type: MessageResponseDto })
@@ -283,6 +298,8 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(10, 300)
   @Public()
   @ApiOperation({ summary: 'Réinitialiser le mot de passe avec un token reçu par email' })
   @ApiResponse({ status: 200, type: MessageResponseDto })
@@ -297,6 +314,8 @@ export class AuthController {
   }
 
   @Post('verify-email')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(10, 300)
   @SkipOnboarding()
   @ApiOperation({ summary: 'Vérifier email avec code OTP à 6 chiffres' })
   @ApiResponse({ status: 200, description: 'Email vérifié', schema: { properties: { verified: { type: 'boolean' } } } })
@@ -330,6 +349,8 @@ export class AuthController {
   }
 
   @Post('resend-verification')
+  @UseGuards(RateLimitGuard)
+  @RateLimit(5, 300)
   @SkipOnboarding()
   @ApiOperation({ summary: 'Renvoyer code de vérification email OTP' })
   @ApiResponse({ status: 200, description: 'Code renvoyé', schema: { properties: { sent: { type: 'boolean' } } } })
@@ -382,7 +403,26 @@ export class AuthController {
       where: { id: result.user.id },
     });
 
-    return { user: profile };
+    if (!profile) {
+      return { user: null };
+    }
+
+    // Ne jamais exposer le hash du mot de passe (même pattern que users.service.getMe).
+    // On retire UNIQUEMENT passwordHash, tous les autres champs restent inchangés
+    // pour ne casser aucun consommateur de /auth/session.
+    const { passwordHash: _passwordHash, ...safeProfile } = profile;
+    return { user: safeProfile };
+  }
+
+  @Get('ws-ticket')
+  @SkipOnboarding()
+  @ApiOperation({ summary: 'Obtenir un ticket WebSocket éphémère (handshake chat)' })
+  @ApiResponse({ status: 200 })
+  @ApiAuthResponses()
+  getWsTicket(@CurrentUser('id') userId: string): { ticket: string } {
+    // SEC-C3 : remplace l'exposition du JWT de session. Ticket court (~60 s),
+    // signé, sans accès HTTP — utilisé uniquement pour authentifier le socket.
+    return { ticket: this.wsTicketService.issue(userId) };
   }
 
   @Post('refresh')

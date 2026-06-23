@@ -63,3 +63,6 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Secrets / comptes de test (ne jamais committer)
+auth-tokens.txt

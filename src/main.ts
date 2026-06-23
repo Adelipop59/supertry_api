@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import cookieParser from 'cookie-parser';
-import { json } from 'express';
+import { json, Request, Response, NextFunction } from 'express';
 
 async function bootstrap() {
   // Disable default body parser so we can configure rawBody for Stripe webhooks only
@@ -21,14 +21,45 @@ async function bootstrap() {
     }),
   );
 
-  // Enable CORS
+  // CORS — liste blanche (SEC-E2). Origines via env CORS_ORIGINS (CSV) ou
+  // FRONTEND_URL ; localhost autorisé hors production. Les requêtes SANS Origin
+  // (apps mobiles natives, server-to-server, curl) restent autorisées.
+  const isProd = process.env.NODE_ENV === 'production';
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? process.env.FRONTEND_URL ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: true, // Allow all origins (mobile app, web, etc.)
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      if (!isProd && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS: origin non autorisée (${origin})`), false);
+    },
     credentials: true,
   });
+  console.log(`[CORS] Origines autorisées: ${allowedOrigins.join(', ') || '(aucune — définir CORS_ORIGINS/FRONTEND_URL)'}`);
 
   // Cookie parser for session cookies
   app.use(cookieParser());
+
+  // En-têtes de sécurité (SEC-E3) — sans dépendance externe.
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('X-DNS-Prefetch-Control', 'off');
+    if (isProd) {
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains',
+      );
+    }
+    next();
+  });
 
   // Global exception filter is now registered via APP_FILTER in AppModule (DI-based for i18n support)
 

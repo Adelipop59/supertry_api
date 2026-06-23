@@ -24,7 +24,7 @@ import {
 } from './dto/auth.dto';
 import { Session } from 'lucia';
 import { decodeIdToken } from 'arctic';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomInt } from 'crypto';
 
 export type OAuthProvider = 'google' | 'github' | 'microsoft' | 'apple' | 'facebook' | 'discord';
 
@@ -1261,7 +1261,8 @@ export class AuthService {
    * Helper: Generate 6-digit OTP code
    */
   private generateOTPCode(): string {
-    return Math.floor(100000 + Math.random() * 900000).toString();
+    // SEC-E7 : OTP cryptographiquement sûr (randomInt) au lieu de Math.random().
+    return randomInt(100000, 1000000).toString();
   }
 
   /**
