@@ -72,10 +72,12 @@ export class MediaController {
    * Supprimer un fichier par sa clé S3
    */
   @Delete('delete/*path')
-  @ApiOperation({ summary: 'Supprimer un fichier par sa clé S3' })
+  @ApiOperation({ summary: 'Supprimer un fichier par sa clé S3 (ADMIN)' })
   @ApiResponse({ status: 200, description: 'Fichier supprimé avec succès' })
   @ApiResponse({ status: 404, description: 'Fichier non trouvé' })
-  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  // SEC-E1 : endpoint brut par clé arbitraire → réservé ADMIN (anti-IDOR).
+  // Les flux applicatifs passent par des endpoints scopés à l'entité.
+  @Roles(UserRole.ADMIN)
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
   async deleteFile(@Param('path') key: string) {
@@ -91,7 +93,9 @@ export class MediaController {
   @ApiQuery({ name: 'expiresIn', required: false, description: 'Durée de validité en secondes (défaut: 3600)', example: '3600' })
   @ApiResponse({ status: 200, description: 'URL signée générée avec succès' })
   @ApiResponse({ status: 404, description: 'Fichier non trouvé' })
-  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  // SEC-E1 : endpoint brut par clé arbitraire → réservé ADMIN (anti-IDOR).
+  // Flux web : GET /test-sessions/:id/proof-url (scopé à la session).
+  @Roles(UserRole.ADMIN)
   @ApiAuthResponses()
   @ApiNotFoundErrorResponse()
   async getSignedUrl(
@@ -109,7 +113,8 @@ export class MediaController {
   @Get('exists/*path')
   @ApiOperation({ summary: 'Vérifier si un fichier existe dans le stockage S3' })
   @ApiResponse({ status: 200, description: 'Résultat de la vérification' })
-  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  // SEC-E1 : endpoint brut par clé arbitraire → réservé ADMIN (anti-IDOR).
+  @Roles(UserRole.ADMIN)
   @ApiAuthResponses()
   async checkExists(@Param('path') key: string) {
     const exists = await this.mediaService.exists(key);

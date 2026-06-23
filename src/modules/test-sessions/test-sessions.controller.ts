@@ -108,6 +108,23 @@ export class TestSessionsController {
     return this.testSessionsService.findOne(id, userId, role);
   }
 
+  @Get(':id/proof-url')
+  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  @ApiOperation({ summary: "URL signée d'une preuve d'achat (scopée à la session)" })
+  @ApiResponse({ status: 200, description: 'URL signée temporaire' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Session ou média introuvable' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async getProofUrl(
+    @Param('id') id: string,
+    @Query('key') key: string,
+    @CurrentUser('id') userId: string,
+    @CurrentUser('role') role: UserRole,
+  ): Promise<{ url: string }> {
+    return this.testSessionsService.getProofSignedUrl(id, key, userId, role);
+  }
+
   @Post(':id/cancel')
   @Roles(UserRole.USER)
   @ApiOperation({ summary: 'Annuler une session de test en tant que testeur' })

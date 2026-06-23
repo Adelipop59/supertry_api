@@ -222,13 +222,13 @@ Config/middleware sans nouvelle dépendance. `tsc --noEmit` OK sur les 2 repos.
 | 8b | SEC-E8 | Expiration/rotation des sessions Lucia | ⏸️ **reporté** — `expires:false` imbriqué avec le cookie 30 j géré par le front + Bearer mobile → risque de déconnexions ; à faire en tâche dédiée avec test web+mobile |
 | 9 | SEC-E10 | SVG retiré des types image autorisés à l'upload | ✅ fait (`media.service.ts`) |
 
-### 🟠 Lot 2 — IDOR média + SSRF (1 à 2 jours) · +7 pts → ~85 %
-Demande un peu de logique (ownership / allowlist).
+### 🟠 Lot 2 — IDOR média + SSRF · ✅ APPLIQUÉ (23/06) → ~85 %
+`tsc --noEmit` OK sur les 2 repos.
 
-| # | ID | Action | Fichier |
+| # | ID | Action | Statut |
 |---|---|---|---|
-| 10 | SEC-E1 | Contrôle d'ownership sur `delete`/`signed-url`/`exists` (préfixe clé par `userId` ou table de mapping) | `media.controller.ts:73-118` |
-| 11 | SEC-E5 | Allowlist de domaines sur `/api/images` (bloquer IP privées/loopback/`file:`) | `saas/.../api/images/route.ts` |
+| 10 | SEC-E1 | Endpoints média bruts (`delete`/`signed-url`/`exists`) **réservés ADMIN** ; nouvel endpoint **scopé** `GET /test-sessions/:id/proof-url` (autorise testeur/vendeur/admin + vérifie clé ∈ preuves de la session) ; front PRO migré | ✅ fait — ⚠️ **confirmer que le mobile n'appelle pas `/media/signed-url`** (sinon prévoir endpoints scopés mobiles) |
+| 11 | SEC-E5 | `/api/images` : http/https only + résolution DNS + blocage IP privées/loopback/metadata + pas de redirection + `image/*` only (sans casser les images publiques) | ✅ fait (`saas/.../api/images/route.ts`) |
 
 ### 🟠 Lot 3 — Intégrité anti-fraude (2 à 3 jours) · +6 pts → ~91 % ✅
 Les garde-fous qui sécurisent le modèle « rembourser vite + dissuasion ».

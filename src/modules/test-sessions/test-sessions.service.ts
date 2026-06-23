@@ -1465,6 +1465,40 @@ export class TestSessionsService {
   }
 
   /**
+   * SEC-E1 : URL signée d'une preuve d'achat, SCOPÉE à la session.
+   * findOne() impose l'autorisation (testeur / vendeur de la campagne / admin),
+   * et on vérifie que la clé appartient bien aux preuves de CETTE session →
+   * remplace l'endpoint média brut (IDOR) pour ce flux.
+   */
+  async getProofSignedUrl(
+    sessionId: string,
+    key: string,
+    currentUserId: string,
+    currentUserRole: string,
+  ): Promise<{ url: string }> {
+    // Autorise l'accès à la session ou lève 403/404.
+    await this.findOne(sessionId, currentUserId, currentUserRole);
+
+    const record = await this.prisma.testSession.findUnique({
+      where: { id: sessionId },
+      select: { purchaseProofKeys: true },
+    });
+    const raw = record?.purchaseProofKeys;
+    const allowedKeys = Array.isArray(raw) ? raw.map((k) => String(k)) : [];
+
+    if (!key || !allowedKeys.includes(key)) {
+      throw new I18nHttpException(
+        'session.media_not_found',
+        'SESSION_MEDIA_NOT_FOUND',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const url = await this.mediaService.getSignedUrl(key, 3600);
+    return { url };
+  }
+
+  /**
    * Vérifie que la date du jour correspond à la scheduledPurchaseDate de la session.
    * Si ce n'est pas le bon jour, lève une erreur 400.
    * Bypass possible via BYPASS_BUSINESS_RULES=true uniquement hors production.
