@@ -18,7 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
 import { WebhookHandlersService } from './handlers/webhook-handlers.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
-import { UserRole, AuditCategory, NotificationType } from '@prisma/client';
+import { UserRole, AuditCategory, NotificationType, StripeWebhookStatus } from '@prisma/client';
 import { CreateConnectAccountDto } from './dto/create-connect-account.dto';
 import { CreateOnboardingLinkDto } from './dto/create-onboarding-link.dto';
 import { KycStatusResponseDto, KycRequiredResponseDto } from './dto/kyc-status-response.dto';
@@ -32,6 +32,13 @@ import { Param } from '@nestjs/common';
 @Controller('stripe')
 export class StripeController {
   private readonly logger = new Logger(StripeController.name);
+
+  /**
+   * Nombre de tentatives de traitement au-delà duquel on cesse de demander à Stripe de
+   * retenter (l'event reste en FAILED, donc rejouable manuellement). Évite qu'un event
+   * "poison" déclenche des retries pendant 3 jours.
+   */
+  private static readonly MAX_WEBHOOK_ATTEMPTS = 5;
 
   constructor(
     private readonly stripeService: StripeService,
@@ -393,21 +400,35 @@ export class StripeController {
 
     this.logger.log(`Webhook received: ${event.type} - ${event.id}`);
 
-    // ── Déduplication (idempotence) ───────────────────────────────────────────
-    // Stripe livre les events "au moins une fois" : un même event peut arriver
-    // plusieurs fois (retry, timeout). On enregistre l'event.id de façon ATOMIQUE
-    // (INSERT ... ON CONFLICT DO NOTHING, race-safe via la PK). Si l'insertion ne
-    // crée aucune ligne, l'event a déjà été traité → on l'ignore et on répond 200.
-    // Cela empêche les double-crédits de wallet et les double-ajustements d'escrow.
-    const inserted = await this.prisma.$executeRaw`
-      INSERT INTO stripe_webhook_events (id, type, processed_at)
-      VALUES (${event.id}, ${event.type}, NOW())
-      ON CONFLICT (id) DO NOTHING
+    // ── Déduplication + fiabilité (SEC-S3) ───────────────────────────────────
+    // Stripe livre les events "au moins une fois". On réclame l'event de façon
+    // ATOMIQUE via la PK (race-safe) :
+    //   • ligne absente          → INSERT en PROCESSING, on traite.
+    //   • ligne en FAILED        → on la reprend (PROCESSING, attempts+1), on retraite.
+    //   • ligne PROCESSED/PROCESSING → 0 ligne retournée → doublon, on ignore (200).
+    //
+    // AVANT : la ligne était insérée puis TOUTE erreur du handler était avalée avec un
+    // 200 renvoyé à Stripe. Un handler financier en échec perdait donc l'événement
+    // DÉFINITIVEMENT (aucun retry Stripe, et la dédup bloquait tout rejeu manuel).
+    // Désormais l'event n'est marqué PROCESSED qu'APRÈS succès du handler, et un échec
+    // renvoie 500 pour que Stripe retente (backoff automatique).
+    const claimed = await this.prisma.$queryRaw<{ attempts: number }[]>`
+      INSERT INTO stripe_webhook_events (id, type, status, attempts, received_at)
+      VALUES (${event.id}, ${event.type}, 'PROCESSING'::"StripeWebhookStatus", 1, NOW())
+      ON CONFLICT (id) DO UPDATE
+        SET status = 'PROCESSING'::"StripeWebhookStatus",
+            attempts = stripe_webhook_events.attempts + 1,
+            received_at = NOW()
+        WHERE stripe_webhook_events.status = 'FAILED'::"StripeWebhookStatus"
+      RETURNING attempts
     `;
-    if (inserted === 0) {
-      this.logger.warn(`Webhook ${event.id} (${event.type}) déjà traité — ignoré (doublon Stripe).`);
+
+    if (claimed.length === 0) {
+      this.logger.warn(`Webhook ${event.id} (${event.type}) déjà traité/en cours — ignoré (doublon Stripe).`);
       return { received: true, duplicate: true };
     }
+
+    const attempts = claimed[0].attempts;
 
     // Audit webhook
     await this.auditService.log(
@@ -526,12 +547,57 @@ export class StripeController {
         default:
           this.logger.log(`Unhandled webhook event type: ${event.type}`);
       }
-    } catch (error) {
-      this.logger.error(`Error handling webhook ${event.type}: ${error.message}`, error.stack);
-      // Don't throw - return 200 to Stripe to avoid retries
-    }
 
-    return { received: true };
+      // Succès : l'event est définitivement consommé (les rejeux seront ignorés).
+      await this.prisma.stripeWebhookEvent.update({
+        where: { id: event.id },
+        data: {
+          status: StripeWebhookStatus.PROCESSED,
+          processedAt: new Date(),
+          lastError: null,
+        },
+      });
+
+      return { received: true };
+    } catch (error) {
+      this.logger.error(
+        `Error handling webhook ${event.type} (${event.id}, tentative ${attempts}): ${error.message}`,
+        error.stack,
+      );
+
+      // Échec : on marque l'event REJOUABLE (FAILED) — il ne sera pas dédupliqué.
+      await this.prisma.stripeWebhookEvent.update({
+        where: { id: event.id },
+        data: {
+          status: StripeWebhookStatus.FAILED,
+          lastError: String(error?.message ?? 'unknown').slice(0, 500),
+        },
+      });
+
+      await this.auditService.log(null, AuditCategory.SYSTEM, 'STRIPE_WEBHOOK_FAILED', {
+        eventId: event.id,
+        eventType: event.type,
+        attempts,
+        error: error?.message,
+      });
+
+      // Au-delà du plafond, on cesse de solliciter Stripe (évite une tempête de retries
+      // sur un event "poison") : on répond 200 et l'event reste en FAILED, donc rejouable
+      // manuellement. En dessous, on renvoie 500 pour que Stripe retente automatiquement.
+      if (attempts >= StripeController.MAX_WEBHOOK_ATTEMPTS) {
+        this.logger.error(
+          `⚠️  Webhook ${event.id} (${event.type}) en échec après ${attempts} tentatives — ` +
+            `abandon des retries Stripe. Event conservé en FAILED pour rejeu manuel.`,
+        );
+        return { received: true, failed: true, replayable: true };
+      }
+
+      throw new I18nHttpException(
+        'stripe.webhook_processing_failed',
+        'STRIPE_WEBHOOK_PROCESSING_FAILED',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   // ============================================================================

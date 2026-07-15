@@ -221,6 +221,38 @@ export class NotificationsService {
   }
 
   /**
+   * Number of unread notifications for a user (for the nav badge).
+   */
+  async getUnreadCount(userId: string): Promise<number> {
+    return this.prisma.notification.count({
+      where: { userId, isRead: false },
+    });
+  }
+
+  /**
+   * Mark a single notification as read. Scoped by userId so a user can only
+   * ever touch their own rows.
+   */
+  async markAsRead(userId: string, id: string): Promise<{ updated: number }> {
+    const res = await this.prisma.notification.updateMany({
+      where: { id, userId, isRead: false },
+      data: { isRead: true, readAt: new Date() },
+    });
+    return { updated: res.count };
+  }
+
+  /**
+   * Mark every unread notification of a user as read.
+   */
+  async markAllAsRead(userId: string): Promise<{ updated: number }> {
+    const res = await this.prisma.notification.updateMany({
+      where: { userId, isRead: false },
+      data: { isRead: true, readAt: new Date() },
+    });
+    return { updated: res.count };
+  }
+
+  /**
    * Get pending action counts for PRO sidebar badges.
    * Uses groupBy/count queries — no data is fetched.
    */

@@ -4,6 +4,7 @@
   "refund_failed": "O reembolso falhou. Por favor, entre em contato com o suporte.",
   "not_authorized": "Você não está autorizado a consultar essas informações.",
   "nothing_to_refund": "Nenhum valor a reembolsar.",
+  "already_refunded": "As vagas não utilizadas desta campanha já foram reembolsadas.",
   "confirmation_failed": "A confirmação do pagamento falhou. Por favor, tente novamente.",
   "campaign_not_found": "Campanha ou oferta não encontrada.",
   "success": "Pagamento realizado com sucesso.",

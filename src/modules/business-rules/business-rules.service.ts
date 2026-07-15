@@ -4,6 +4,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { CreateBusinessRulesDto } from './dto/create-business-rules.dto';
 import { UpdateBusinessRulesDto } from './dto/update-business-rules.dto';
 import { BusinessRulesResponseDto } from './dto/business-rules-response.dto';
+import { PublicBusinessRulesDto } from './dto/public-business-rules.dto';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
@@ -119,6 +120,34 @@ export class BusinessRulesService {
     }
 
     return this.toResponseDto(rules);
+  }
+
+  /**
+   * SEC-S6 — Projection PUBLIQUE des règles en vigueur : uniquement les champs
+   * tarifaires nécessaires à l'affichage front (facture prévisionnelle, paliers).
+   * N'expose PAS la mécanique anti-fraude/opérationnelle (bannissement, KYC, XP…).
+   */
+  async findLatestPublic(): Promise<PublicBusinessRulesDto> {
+    const rules = await this.prisma.businessRules.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!rules) {
+      throw new I18nHttpException('common.business_rules_not_found', 'BUSINESS_RULES_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    return {
+      id: rules.id,
+      testerBonus: Number(rules.testerBonus),
+      commissionFixedFee: Number(rules.commissionFixedFee),
+      stripeFeePercent: Number(rules.stripeFeePercent),
+      priceRangeTiers: rules.priceRangeTiers,
+      tierBronzeMaxProductPrice: Number(rules.tierBronzeMaxProductPrice),
+      tierSilverMaxProductPrice: Number(rules.tierSilverMaxProductPrice),
+      tierGoldMaxProductPrice: Number(rules.tierGoldMaxProductPrice),
+      tierPlatinumMaxProductPrice: Number(rules.tierPlatinumMaxProductPrice),
+      tierDiamondMaxProductPrice: Number(rules.tierDiamondMaxProductPrice),
+    };
   }
 
   async findOne(id: string): Promise<BusinessRulesResponseDto> {

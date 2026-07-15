@@ -6,6 +6,7 @@
   "payouts_disabled": "您的账户尚未开通转账功能。",
   "charges_disabled": "您的支付账户尚未准备好接收付款。",
   "webhook_invalid": "无效请求。",
+  "webhook_processing_failed": "Webhook 处理失败。",
   "identity_create_account_first": "请先设置支付账户再进行身份验证。",
   "payout_failed": "转账失败。请重试或联系客服。",
   "payout_success": "转账成功。",

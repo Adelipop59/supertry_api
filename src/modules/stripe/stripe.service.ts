@@ -643,6 +643,7 @@ export class StripeService {
     sourceTransaction?: string,
     transferGroup?: string,
     description?: string,
+    idempotencyKey?: string,
   ): Promise<Stripe.Transfer> {
     try {
       const transferParams: Stripe.TransferCreateParams = {
@@ -666,7 +667,10 @@ export class StripeService {
         transferParams.transfer_group = transferGroup;
       }
 
-      const transfer = await this.stripe.transfers.create(transferParams);
+      // Clé d'idempotence optionnelle : un retry réseau ou un double déclenchement sur
+      // le même transfert logique (ex. compensation d'une session) ne crée pas de doublon.
+      const requestOptions = idempotencyKey ? { idempotencyKey } : undefined;
+      const transfer = await this.stripe.transfers.create(transferParams, requestOptions);
 
       this.logger.log(`Transfer created: ${transfer.id} - ${amount}${currency.toUpperCase()} to ${destination}`);
       return transfer;

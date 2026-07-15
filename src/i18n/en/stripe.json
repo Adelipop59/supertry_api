@@ -6,6 +6,7 @@
   "payouts_disabled": "Payouts are not yet enabled on your account.",
   "charges_disabled": "Your payment account is not yet ready to receive payments.",
   "webhook_invalid": "Invalid request.",
+  "webhook_processing_failed": "Webhook processing failed.",
   "identity_create_account_first": "Please set up your payment account before verifying your identity.",
   "payout_failed": "The payout failed. Please try again or contact support.",
   "payout_success": "Payout completed successfully.",

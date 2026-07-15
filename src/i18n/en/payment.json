@@ -4,6 +4,7 @@
   "refund_failed": "The refund failed. Please contact support.",
   "not_authorized": "You are not authorized to view this information.",
   "nothing_to_refund": "No amount to refund.",
+  "already_refunded": "The unused slots for this campaign have already been refunded.",
   "confirmation_failed": "Payment confirmation failed. Please try again.",
   "campaign_not_found": "Campaign or offer not found.",
   "success": "Payment completed successfully.",

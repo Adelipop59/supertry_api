@@ -76,67 +76,71 @@ export class AdminModerationService {
     const proBonus = Number(offer.bonus ?? 0);
     const maxReward = maxProductPrice + maxShippingCost + testerBonus + proBonus;
 
-    // Check if tester was already paid for this session
-    const existingReward = await this.prisma.transaction.findFirst({
-      where: {
-        sessionId,
-        type: TransactionType.TEST_REWARD,
-        status: TransactionStatus.COMPLETED,
-      },
-    });
-
-    const alreadyPaid = existingReward ? Number(existingReward.amount) : 0;
-    const transferAmount = Math.round((maxReward - alreadyPaid) * 100) / 100;
-
-    if (transferAmount <= 0) {
-      throw new I18nHttpException('wallet.insufficient_balance', 'TESTER_ALREADY_PAID_MAX', HttpStatus.BAD_REQUEST);
-    }
-
-    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-    this.logger.log(`🔧 ADMIN CREDIT TESTER MAX for session ${sessionId}`);
-    this.logger.log(`   Max reward: ${maxReward}€`);
-    this.logger.log(`   Already paid: ${alreadyPaid}€`);
-    this.logger.log(`   Transfer amount: ${transferAmount}€`);
-    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-
-    // Ensure tester wallet exists
+    // Ensure tester wallet exists (nécessaire : on pose un verrou dessus juste après)
     await this.walletService.createWallet(session.testerId);
 
-    // Create Stripe transfer
-    const transfer = await this.stripeService.createPlatformToConnectTransfer(
-      transferAmount,
-      testerStripeAccount,
-      'eur',
-      {
-        platform: 'supertry',
-        transactionType: 'ADMIN_CREDIT_MAX',
-        sessionId,
-        campaignId: session.campaignId,
-        adminId,
-        maxReward: maxReward.toFixed(2),
-        alreadyPaid: alreadyPaid.toFixed(2),
-        transferAmount: transferAmount.toFixed(2),
-      },
-      `Admin credit max: ${session.campaign.title}`,
-      `campaign_${session.campaignId}`,
-    );
+    // ════════════════════════════════════════════════════════════════════════
+    // SÉCURITÉ (SEC-S2) — Pattern "réserver → transférer → solder".
+    //
+    // AVANT : le montant déjà versé était lu par un `findFirst` HORS transaction et
+    // SANS verrou, puis le transfert Stripe était émis AVANT la $transaction DB.
+    // Deux conséquences :
+    //   1. Deux appels concurrents (double-clic admin, retry) franchissaient tous deux
+    //      la garde et créditaient DEUX FOIS le wallet interne + décrémentaient deux
+    //      fois l'escrow, alors que Stripe ne virait qu'une fois (grâce à sa clé
+    //      d'idempotence) → comptabilité interne fausse.
+    //   2. Si l'écriture DB échouait après un transfert réussi, l'argent partait SANS
+    //      aucune trace locale (ni transaction, ni décrément d'escrow).
+    //
+    // MAINTENANT :
+    //   Phase 1 : verrou pessimiste sur le wallet (sérialise les appels concurrents),
+    //             recalcul du restant dû en comptant AUSSI les réservations PENDING,
+    //             puis création d'une transaction PENDING = réservation atomique.
+    //   Phase 2 : transfert Stripe avec clé d'idempotence déterministe.
+    //   Phase 3 : la réservation passe à COMPLETED et les soldes sont mis à jour.
+    //   En cas d'échec Stripe, la réservation passe à FAILED (elle ne bloque donc pas
+    //   une nouvelle tentative) ; en cas de crash entre 2 et 3, la ligne PENDING reste
+    //   en base et rend l'argent réconciliable.
+    // ════════════════════════════════════════════════════════════════════════
 
-    // DB updates
-    const testerWallet = await this.prisma.wallet.findUnique({
-      where: { userId: session.testerId },
-    });
+    const reservation = await this.prisma.$transaction(async (tx) => {
+      // Verrou pessimiste : sérialise toute opération concurrente sur ce wallet.
+      const lockedWallets = await tx.$queryRaw<
+        { id: string }[]
+      >`SELECT id FROM wallets WHERE user_id = ${session.testerId}::uuid FOR UPDATE`;
+      const walletId = lockedWallets[0]?.id ?? null;
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.transaction.create({
+      // Somme de TOUT ce qui est déjà versé OU réservé pour cette session, afin qu'un
+      // appel concurrent voie la réservation de l'autre et ne double pas le crédit.
+      const paid = await tx.transaction.aggregate({
+        where: {
+          sessionId,
+          type: TransactionType.TEST_REWARD,
+          status: { in: [TransactionStatus.COMPLETED, TransactionStatus.PENDING] },
+        },
+        _sum: { amount: true },
+      });
+
+      const alreadyPaid = Number(paid._sum.amount ?? 0);
+      const transferAmount = Math.round((maxReward - alreadyPaid) * 100) / 100;
+
+      if (transferAmount <= 0) {
+        throw new I18nHttpException(
+          'wallet.insufficient_balance',
+          'TESTER_ALREADY_PAID_MAX',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+
+      const pendingTx = await tx.transaction.create({
         data: {
-          walletId: testerWallet?.id || null,
+          walletId,
           campaignId: session.campaignId,
           sessionId,
           type: TransactionType.TEST_REWARD,
           amount: new Decimal(transferAmount),
           reason: dto.reason || `Admin credit max: ${session.campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-          stripeTransferId: transfer.id,
+          status: TransactionStatus.PENDING,
           metadata: {
             adminOverride: true,
             adminId,
@@ -147,12 +151,85 @@ export class AdminModerationService {
         },
       });
 
-      if (testerWallet) {
+      return { pendingTx, walletId, alreadyPaid, transferAmount };
+    });
+
+    const { pendingTx, walletId, alreadyPaid, transferAmount } = reservation;
+
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    this.logger.log(`🔧 ADMIN CREDIT TESTER MAX for session ${sessionId}`);
+    this.logger.log(`   Max reward: ${maxReward}€`);
+    this.logger.log(`   Already paid/reserved: ${alreadyPaid}€`);
+    this.logger.log(`   Transfer amount: ${transferAmount}€ (réservation ${pendingTx.id})`);
+    this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // ── Phase 2 : transfert Stripe (idempotent) ──────────────────────────────
+    let transfer: { id: string };
+    try {
+      transfer = await this.stripeService.createPlatformToConnectTransfer(
+        transferAmount,
+        testerStripeAccount,
+        'eur',
+        {
+          platform: 'supertry',
+          transactionType: 'ADMIN_CREDIT_MAX',
+          sessionId,
+          campaignId: session.campaignId,
+          adminId,
+          maxReward: maxReward.toFixed(2),
+          alreadyPaid: alreadyPaid.toFixed(2),
+          transferAmount: transferAmount.toFixed(2),
+        },
+        `Admin credit max: ${session.campaign.title}`,
+        `campaign_${session.campaignId}`,
+        // Clé d'idempotence explicite et déterministe : un retry réseau ou un
+        // double déclenchement sur la MÊME réservation ne crée pas un 2e virement.
+        `admin-credit-max-${pendingTx.id}`,
+      );
+    } catch (error) {
+      // Libérer la réservation pour ne pas bloquer une future tentative légitime.
+      await this.prisma.transaction.update({
+        where: { id: pendingTx.id },
+        data: {
+          status: TransactionStatus.FAILED,
+          metadata: {
+            ...(pendingTx.metadata as any),
+            failureReason: error?.message ?? 'stripe_transfer_failed',
+          },
+        },
+      });
+
+      await this.auditService.log(adminId, AuditCategory.ADMIN, 'ADMIN_CREDIT_TESTER_MAX_FAILED', {
+        sessionId,
+        testerId: session.testerId,
+        transferAmount,
+        reservationId: pendingTx.id,
+        error: error?.message,
+      });
+
+      this.logger.error(
+        `❌ ADMIN CREDIT MAX transfer failed (session ${sessionId}, réservation ${pendingTx.id}): ${error?.message}`,
+      );
+      throw error;
+    }
+
+    // ── Phase 3 : solder la réservation et mettre à jour les soldes ──────────
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transaction.update({
+        where: { id: pendingTx.id },
+        data: {
+          status: TransactionStatus.COMPLETED,
+          stripeTransferId: transfer.id,
+        },
+      });
+
+      if (walletId) {
         await tx.wallet.update({
-          where: { id: testerWallet.id },
+          where: { id: walletId },
           data: {
             balance: { increment: new Decimal(transferAmount) },
             totalEarned: { increment: new Decimal(transferAmount) },
+            lastCreditedAt: new Date(),
           },
         });
       }

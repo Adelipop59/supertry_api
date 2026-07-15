@@ -14,6 +14,7 @@ import { BusinessRulesService } from './business-rules.service';
 import { CreateBusinessRulesDto } from './dto/create-business-rules.dto';
 import { UpdateBusinessRulesDto } from './dto/update-business-rules.dto';
 import { BusinessRulesResponseDto } from './dto/business-rules-response.dto';
+import { PublicBusinessRulesDto } from './dto/public-business-rules.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
@@ -37,20 +38,26 @@ export class BusinessRulesController {
     return this.businessRulesService.create(createDto);
   }
 
+  // SEC-S6 : liste COMPLÈTE de toutes les versions de règles (mécanique anti-fraude
+  // incluse) → réservée à l'ADMIN. Était auparavant @Public().
   @Get()
-  @Public()
-  @ApiOperation({ summary: 'Lister toutes les règles métier' })
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Lister toutes les règles métier (ADMIN)' })
   @ApiResponse({ status: 200, description: 'Liste des règles métier', type: [BusinessRulesResponseDto] })
+  @ApiAuthResponses()
   async findAll(): Promise<BusinessRulesResponseDto[]> {
     return this.businessRulesService.findAll();
   }
 
+  // SEC-S6 : reste public (consommé par le wizard de campagne) MAIS renvoie une
+  // PROJECTION minimale — uniquement les champs tarifaires d'affichage, jamais la
+  // mécanique anti-fraude/opérationnelle (bannissement, seuil KYC, XP, commissions…).
   @Get('latest')
   @Public()
-  @ApiOperation({ summary: 'Récupérer les règles métier en vigueur' })
-  @ApiResponse({ status: 200, description: 'Règles métier en vigueur', type: BusinessRulesResponseDto })
-  async findLatest(): Promise<BusinessRulesResponseDto> {
-    return this.businessRulesService.findLatest();
+  @ApiOperation({ summary: 'Récupérer les règles tarifaires publiques en vigueur' })
+  @ApiResponse({ status: 200, description: 'Projection publique des règles', type: PublicBusinessRulesDto })
+  async findLatest(): Promise<PublicBusinessRulesDto> {
+    return this.businessRulesService.findLatestPublic();
   }
 
   @Get(':id')

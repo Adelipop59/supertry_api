@@ -6,6 +6,7 @@
   "payouts_disabled": "I bonifici non sono ancora attivati sul tuo account.",
   "charges_disabled": "Il tuo account di pagamento non è ancora pronto per ricevere pagamenti.",
   "webhook_invalid": "Richiesta non valida.",
+  "webhook_processing_failed": "Elaborazione del webhook non riuscita.",
   "identity_create_account_first": "Configura il tuo account di pagamento prima di verificare la tua identità.",
   "payout_failed": "Il bonifico non è riuscito. Riprova o contatta l'assistenza.",
   "payout_success": "Bonifico effettuato con successo.",

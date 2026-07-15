@@ -4,6 +4,7 @@
   "refund_failed": "Il rimborso non è riuscito. Contatta l'assistenza.",
   "not_authorized": "Non sei autorizzato a consultare queste informazioni.",
   "nothing_to_refund": "Nessun importo da rimborsare.",
+  "already_refunded": "Gli slot non utilizzati di questa campagna sono già stati rimborsati.",
   "confirmation_failed": "La conferma del pagamento non è riuscita. Riprova.",
   "campaign_not_found": "Campagna o offerta non trovata.",
   "success": "Pagamento effettuato con successo.",

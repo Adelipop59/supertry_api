@@ -209,22 +209,24 @@ export class CampaignsService {
     createDto.offer.priceRangeMin = priceRange.min;
     createDto.offer.priceRangeMax = priceRange.max;
 
-    // Validation 3: Calculate escrow amount (basé sur les MAX remboursables)
-    const platformCommission = rules.testerBonus;
-    const commissionFixedFee = Number(rules.commissionFixedFee);
+    // Escrow amount (basé sur les MAX remboursables).
+    // On calcule EXACTEMENT ce que le checkout débitera : même base
+    // (produit + livraison + bonus testeur + bonus PRO) puis calculateCommission,
+    // qui ajoute la commission fixe SuperTry ET la couverture Stripe.
+    // Avant, ce calcul omettait la couverture Stripe : le montant annoncé à la
+    // création était inférieur au montant réellement débité (cf.
+    // PaymentsService.calculateCampaignEscrow, source de vérité du paiement).
+    const maxPrice = Number(createDto.offer.maxReimbursedPrice ?? createDto.offer.expectedPrice);
+    const maxShipping = Number(createDto.offer.maxReimbursedShipping ?? createDto.offer.shippingCost);
+    const proBonus = Number(createDto.offer.bonus ?? 0);
+    const baseCostWithoutCommission =
+      maxPrice + maxShipping + Number(rules.testerBonus) + proBonus;
 
-    const maxPrice = createDto.offer.maxReimbursedPrice ?? createDto.offer.expectedPrice;
-    const maxShipping = createDto.offer.maxReimbursedShipping ?? createDto.offer.shippingCost;
-    const proBonus = createDto.offer.bonus ?? 0;
-    const costPerTester =
-      (maxPrice +
-        maxShipping +
-        platformCommission +
-        commissionFixedFee +
-        proBonus) *
-      createDto.offer.quantity;
+    const { totalPerTester } = await this.businessRulesService.calculateCommission(
+      baseCostWithoutCommission,
+    );
 
-    const totalEscrow = costPerTester * createDto.totalSlots;
+    const totalEscrow = Math.round(totalPerTester * createDto.totalSlots * 100) / 100;
 
     // Create campaign with all nested relations in transaction
     const {
@@ -920,28 +922,27 @@ export class CampaignsService {
       updateDto.offer.priceRangeMax = priceRange.max;
     }
 
-    // Recalculate escrow if offer changes (basé sur les MAX remboursables)
+    // Recalculate escrow if offer changes (basé sur les MAX remboursables).
+    // Même formule que la création et le checkout : calculateCommission ajoute
+    // la commission fixe ET la couverture Stripe, pour que le montant gelé
+    // corresponde exactement au montant débité.
     let escrowAmount = campaign.escrowAmount;
     if (updateDto.offer || updateDto.totalSlots) {
       const offer = updateDto.offer || campaign.offers[0];
       const totalSlots = updateDto.totalSlots || campaign.totalSlots;
 
       const rules = await this.businessRulesService.findLatest();
-      const platformCommission = rules.testerBonus;
-      const commissionFixedFee = Number(rules.commissionFixedFee);
-
       const maxPrice = Number(offer.maxReimbursedPrice ?? offer.expectedPrice);
       const maxShipping = Number(offer.maxReimbursedShipping ?? offer.shippingCost);
       const proBonus = Number(offer.bonus ?? 0);
-      const costPerTester =
-        (maxPrice +
-          maxShipping +
-          platformCommission +
-          commissionFixedFee +
-          proBonus) *
-        offer.quantity;
+      const baseCostWithoutCommission =
+        maxPrice + maxShipping + Number(rules.testerBonus) + proBonus;
 
-      escrowAmount = costPerTester * totalSlots;
+      const { totalPerTester } = await this.businessRulesService.calculateCommission(
+        baseCostWithoutCommission,
+      );
+
+      escrowAmount = Math.round(totalPerTester * totalSlots * 100) / 100;
     }
 
     const updateData: any = { ...updateDto };

@@ -6,6 +6,7 @@
   "payouts_disabled": "Auszahlungen sind für Ihr Konto noch nicht aktiviert.",
   "charges_disabled": "Ihr Zahlungskonto ist noch nicht bereit, Zahlungen zu empfangen.",
   "webhook_invalid": "Ungültige Anfrage.",
+  "webhook_processing_failed": "Die Verarbeitung des Webhooks ist fehlgeschlagen.",
   "identity_create_account_first": "Bitte richten Sie Ihr Zahlungskonto ein, bevor Sie Ihre Identität verifizieren.",
   "payout_failed": "Die Auszahlung ist fehlgeschlagen. Bitte versuchen Sie es erneut oder wenden Sie sich an den Support.",
   "payout_success": "Auszahlung erfolgreich durchgeführt.",

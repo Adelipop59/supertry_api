@@ -416,6 +416,8 @@ export class WithdrawalsService {
       );
     }
 
+    // Pré-check informatif (message d'erreur clair). La garde qui fait AUTORITÉ est
+    // la transition conditionnelle DANS la transaction ci-dessous.
     if (withdrawal.status !== WithdrawalStatus.PENDING) {
       throw new I18nHttpException(
         'wallet.cannot_reject',
@@ -424,25 +426,30 @@ export class WithdrawalsService {
       );
     }
 
-    // Rejeter et refund dans une transaction
+    // SÉCURITÉ (SEC-S4d) — Rejet + refund atomiques AVEC garde de statut DANS la
+    // transaction. Auparavant, la vérification `status === PENDING` était faite hors
+    // transaction et l'update n'était pas conditionnel : deux rejets concurrents
+    // (double-clic admin) lisaient tous deux PENDING puis créditaient DEUX FOIS le
+    // wallet. On utilise désormais un `updateMany` conditionnel (WHERE status = PENDING)
+    // : un seul appel obtient count=1 et déclenche le refund.
     const rejected = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.withdrawal.update({
-        where: { id: withdrawalId },
+      const transition = await tx.withdrawal.updateMany({
+        where: { id: withdrawalId, status: WithdrawalStatus.PENDING },
         data: {
           status: WithdrawalStatus.FAILED,
           failureReason: `[ADMIN REJECT] ${reason}`,
           failedAt: new Date(),
         },
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              firstName: true,
-            },
-          },
-        },
       });
+
+      // Un concurrent a déjà traité ce retrait → on n'effectue PAS de second refund.
+      if (transition.count === 0) {
+        throw new I18nHttpException(
+          'wallet.cannot_reject',
+          'WITHDRAWAL_CANNOT_REJECT',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
 
       // Refund au wallet
       await tx.wallet.update({
@@ -454,7 +461,18 @@ export class WithdrawalsService {
         },
       });
 
-      return updated;
+      return tx.withdrawal.findUnique({
+        where: { id: withdrawalId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              firstName: true,
+            },
+          },
+        },
+      });
     });
 
     // Audit

@@ -4,6 +4,7 @@
   "refund_failed": "退款失败。请联系客服。",
   "not_authorized": "您无权查看此信息。",
   "nothing_to_refund": "没有可退款的金额。",
+  "already_refunded": "此活动的未使用名额已退款。",
   "confirmation_failed": "付款确认失败。请重试。",
   "campaign_not_found": "未找到活动或报价。",
   "success": "付款成功。",

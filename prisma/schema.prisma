@@ -438,6 +438,11 @@ model Campaign {
   // Completion tracking
   completedAt DateTime? @map("completed_at")
 
+  // Remboursement des slots non utilisés (fin de campagne).
+  // SEC-S4c : sert de verrou d'idempotence — un `updateMany` conditionnel (WHERE NULL)
+  // garantit qu'un seul appel déclenche le remboursement Stripe.
+  unusedSlotsRefundedAt DateTime? @map("unused_slots_refunded_at")
+
   // Cancellation tracking
   activationGracePeriodEndsAt DateTime? @map("activation_grace_period_ends_at")
   cancelledAt                 DateTime? @map("cancelled_at")
@@ -1524,14 +1529,34 @@ model ApiMetric {
   @@map("api_metrics")
 }
 
-/// Déduplication des webhooks Stripe (livraison "at-least-once").
-/// On enregistre chaque event.id traité ; un rejeu du même event est ignoré,
-/// ce qui évite les double-crédits de wallet / double-ajustements d'escrow.
-model StripeWebhookEvent {
-  id          String   @id // Stripe event id (evt_...)
-  type        String
-  processedAt DateTime @default(now()) @map("processed_at")
+/// Statut de traitement d'un webhook Stripe.
+enum StripeWebhookStatus {
+  PROCESSING // Réclamé par une instance, traitement en cours
+  PROCESSED // Handler terminé avec succès — un rejeu du même event sera ignoré
+  FAILED // Handler en erreur — l'event est rejouable (Stripe retry ou rejeu manuel)
+}
 
+/// Déduplication ET fiabilité des webhooks Stripe (livraison "at-least-once").
+///
+/// SEC-S3 : auparavant, la ligne était insérée AVANT l'exécution du handler et le
+/// contrôleur renvoyait toujours 200 à Stripe. Un handler financier en échec
+/// (crédit, refund, transfert) perdait donc l'événement DÉFINITIVEMENT : Stripe ne
+/// retentait pas (200 reçu) et la déduplication bloquait tout rejeu manuel.
+///
+/// Le statut permet désormais : PROCESSING (réclamé) → PROCESSED (succès, dédupliqué)
+/// ou FAILED (rejouable). Seul PROCESSED court-circuite un event entrant.
+model StripeWebhookEvent {
+  id     String              @id // Stripe event id (evt_...)
+  type   String
+  status StripeWebhookStatus @default(PROCESSING)
+
+  attempts   Int       @default(1)
+  lastError  String?   @map("last_error")
+  receivedAt DateTime  @default(now()) @map("received_at")
+  /// Renseigné uniquement lorsque le handler a réussi.
+  processedAt DateTime? @map("processed_at")
+
+  @@index([status])
   @@index([processedAt])
   @@map("stripe_webhook_events")
 }

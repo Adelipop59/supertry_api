@@ -201,6 +201,29 @@ export class PaymentsService {
       throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // SÉCURITÉ (SEC-S4a) — CLAIM atomique AVANT le transfert Stripe.
+    // Auparavant, la garde `if (session.purchaseReimbursedAt)` était lue en début de
+    // méthode SANS verrou et le transfert était émis AVANT la $transaction DB. Deux
+    // appels concurrents (retry, double événement) pouvaient donc créditer DEUX FOIS
+    // le wallet interne. On « réserve » désormais la session de façon atomique : un
+    // `updateMany` conditionnel (WHERE purchaseReimbursedAt IS NULL) ne réussit que
+    // pour UN SEUL appelant. Le second voit count=0 et sort en idempotent.
+    // (Le virement Stripe lui-même est déjà protégé par sa clé d'idempotence dérivée
+    // du sessionId ; ce claim protège la comptabilité INTERNE.)
+    // ════════════════════════════════════════════════════════════════════════
+    const claim = await this.prisma.testSession.updateMany({
+      where: { id: sessionId, purchaseReimbursedAt: null },
+      data: {
+        purchaseReimbursedAt: new Date(),
+        purchaseReimbursementAmount: new Decimal(reimbursementAmount),
+      },
+    });
+    if (claim.count === 0) {
+      this.logger.warn(`Purchase reimbursement already claimed for session ${sessionId} — ignoré (idempotent).`);
+      return null as any;
+    }
+
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     this.logger.log(`💰 PURCHASE REIMBURSEMENT FOR SESSION ${sessionId}`);
     this.logger.log(`   Product Cost: ${productCost}€`);
@@ -240,6 +263,14 @@ export class PaymentsService {
       this.logger.log(`✅ Purchase reimbursement transfer: ${testerTransfer.id} - ${reimbursementAmount}€ → ${testerStripeAccount}`);
     } catch (error) {
       this.logger.error(`❌ PURCHASE REIMBURSEMENT TRANSFER FAILED - Session ${sessionId}: ${error.message}`);
+
+      // Libérer le claim pour permettre une nouvelle tentative (le transfert Stripe a
+      // échoué, aucun argent n'est parti ; sa clé d'idempotence évite tout doublon si
+      // l'appel précédent avait en réalité abouti côté Stripe).
+      await this.prisma.testSession.update({
+        where: { id: sessionId },
+        data: { purchaseReimbursedAt: null, purchaseReimbursementAmount: null },
+      });
 
       await this.auditService.log(
         null,
@@ -316,14 +347,8 @@ export class PaymentsService {
         },
       });
 
-      // Mark session as reimbursed
-      await tx.testSession.update({
-        where: { id: sessionId },
-        data: {
-          purchaseReimbursedAt: new Date(),
-          purchaseReimbursementAmount: new Decimal(reimbursementAmount),
-        },
-      });
+      // NB : la session a déjà été marquée `purchaseReimbursedAt` par le CLAIM atomique
+      // (SEC-S4a) réalisé avant le transfert — on ne la ré-écrit pas ici.
 
       return { testerTransaction };
     });
@@ -428,6 +453,18 @@ export class PaymentsService {
       throw new I18nHttpException('payment.kyc_required', 'PAYMENT_KYC_REQUIRED', HttpStatus.BAD_REQUEST, { threshold: kycThreshold }, { identityRequired: true });
     }
 
+    // SÉCURITÉ (SEC-S4a) — CLAIM atomique du bonus AVANT le transfert Stripe (même
+    // raisonnement que processPurchaseReimbursement : empêche le double-crédit interne
+    // sur appels concurrents). `bonusPaidAt` sert de verrou logique.
+    const bonusClaim = await this.prisma.testSession.updateMany({
+      where: { id: sessionId, bonusPaidAt: null },
+      data: { bonusPaidAt: new Date(), bonusAmount: new Decimal(bonusAmount) },
+    });
+    if (bonusClaim.count === 0) {
+      this.logger.warn(`Bonus already claimed for session ${sessionId} — ignoré (idempotent).`);
+      return null as any;
+    }
+
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     this.logger.log(`💰 BONUS PAYMENT FOR SESSION ${sessionId}`);
     this.logger.log(`   Tester Fee (fixed): ${testerBonus}€`);
@@ -468,6 +505,12 @@ export class PaymentsService {
       this.logger.log(`✅ Bonus transfer: ${testerTransfer.id} - ${bonusAmount}€ → ${testerStripeAccount}`);
     } catch (error) {
       this.logger.error(`❌ BONUS TRANSFER FAILED - Session ${sessionId}: ${error.message}`);
+
+      // Libérer le claim pour permettre une nouvelle tentative.
+      await this.prisma.testSession.update({
+        where: { id: sessionId },
+        data: { bonusPaidAt: null, bonusAmount: null },
+      });
 
       await this.auditService.log(
         null,
@@ -562,14 +605,7 @@ export class PaymentsService {
         },
       });
 
-      // Mark session bonus as paid
-      await tx.testSession.update({
-        where: { id: sessionId },
-        data: {
-          bonusPaidAt: new Date(),
-          bonusAmount: new Decimal(bonusAmount),
-        },
-      });
+      // NB : la session a déjà été marquée `bonusPaidAt` par le CLAIM atomique (SEC-S4a).
 
       return { testerTransaction, commissionTransaction };
     });
@@ -632,7 +668,7 @@ export class PaymentsService {
   // Refund Unused Slots
   // ============================================================================
 
-  async refundUnusedSlots(campaignId: string): Promise<{
+  async refundUnusedSlots(campaignId: string, userId?: string): Promise<{
     unusedSlots: number;
     totalPriceDifference: number;
     refundAmount: number;
@@ -646,6 +682,13 @@ export class PaymentsService {
 
     if (!campaign) {
       throw new I18nHttpException('payment.campaign_not_found', 'PAYMENT_CAMPAIGN_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    // SÉCURITÉ (SEC-S4c/IDOR) — Contrôle d'appartenance : l'endpoint est réservé au PRO,
+    // mais rien ne vérifiait que la campagne lui appartenait. Sans ce contrôle, un PRO
+    // pouvait déclencher le remboursement de la campagne d'un AUTRE PRO en devinant un id.
+    if (userId && campaign.sellerId !== userId) {
+      throw new I18nHttpException('payment.not_authorized', 'PAYMENT_NOT_AUTHORIZED', HttpStatus.FORBIDDEN);
     }
 
     if (!campaign.stripePaymentIntentId) {
@@ -702,6 +745,21 @@ export class PaymentsService {
       throw new I18nHttpException('payment.nothing_to_refund', 'PAYMENT_NOTHING_TO_REFUND', HttpStatus.BAD_REQUEST);
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // SÉCURITÉ (SEC-S4c) — CLAIM atomique AVANT le remboursement Stripe.
+    // Auparavant, `createRefund` était appelé sans clé d'idempotence ni verrou : un
+    // double déclenchement (retry, double-clic, cron concurrent) remboursait DEUX FOIS.
+    // Le flag `unusedSlotsRefundedAt` (updateMany conditionnel) garantit qu'un seul
+    // appel passe ; combiné à la clé d'idempotence Stripe déterministe, plus de doublon.
+    // ════════════════════════════════════════════════════════════════════════
+    const refundClaim = await this.prisma.campaign.updateMany({
+      where: { id: campaignId, unusedSlotsRefundedAt: null },
+      data: { unusedSlotsRefundedAt: new Date() },
+    });
+    if (refundClaim.count === 0) {
+      throw new I18nHttpException('payment.already_refunded', 'PAYMENT_ALREADY_REFUNDED', HttpStatus.BAD_REQUEST);
+    }
+
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     this.logger.log(`💰 CAMPAIGN END REFUND for ${campaignId}`);
     this.logger.log(`   Unused slots: ${unusedSlots} × ${escrow.perTester}€ = ${unusedSlotsRefund}€`);
@@ -730,10 +788,21 @@ export class PaymentsService {
           totalRefund: refundAmount.toFixed(2),
           createdAt: new Date().toISOString(),
         },
+        // Clé d'idempotence déterministe (SEC-S4c) : un retry ne crée pas un 2e refund.
+        `refund-unused-${campaignId}`,
       );
       this.logger.log(`Refund created: ${refund.id} - ${refundAmount}€ → PRO card`);
     } catch (error) {
       this.logger.error(`Refund failed: ${error.message}`, error.stack);
+
+      // Libérer le claim pour permettre une nouvelle tentative (le refund Stripe a
+      // échoué ; sa clé d'idempotence protège contre un doublon si l'appel avait en
+      // réalité abouti côté Stripe).
+      await this.prisma.campaign.update({
+        where: { id: campaignId },
+        data: { unusedSlotsRefundedAt: null },
+      });
+
       throw new I18nHttpException('payment.refund_failed', 'PAYMENT_REFUND_FAILED', HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
@@ -1186,6 +1255,19 @@ export class PaymentsService {
       throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
+    // SÉCURITÉ (SEC-S4b) — Idempotence : ne pas enregistrer deux fois la commission
+    // d'annulation pour la même session (double appel / retry).
+    const existingCommission = await this.prisma.transaction.findFirst({
+      where: {
+        sessionId,
+        type: TransactionType.CANCELLATION_COMMISSION,
+      },
+    });
+    if (existingCommission) {
+      this.logger.warn(`Tester cancellation commission already recorded for session ${sessionId} — ignoré (idempotent).`);
+      return { supertryCommission: Number(existingCommission.amount) };
+    }
+
     // Commission réduite SuperTry (50% de la commission normale)
     const { supertryCommission } =
       await this.businessRulesService.calculateTesterCancellationImpact();
@@ -1194,33 +1276,29 @@ export class PaymentsService {
       `Processing tester cancellation for session ${sessionId}: commission=${supertryCommission}€ (tester keeps purchase reimbursement)`,
     );
 
-    // Enregistrer la commission réduite SuperTry
-    await this.prisma.transaction.create({
-      data: {
-        walletId: null, // PLATEFORME
-        campaignId: session.campaignId,
-        sessionId,
-        type: TransactionType.CANCELLATION_COMMISSION,
-        amount: new Decimal(supertryCommission),
-        reason: `Cancellation commission (50%) for session: ${session.campaign.title}`,
-        status: TransactionStatus.COMPLETED,
-      },
-    });
+    // SÉCURITÉ (SEC-S4b) — Écritures financières ATOMIQUES (auparavant : deux appels
+    // Prisma séparés → un crash entre les deux laissait l'escrow incohérent).
+    await this.prisma.$transaction(async (tx) => {
+      await tx.transaction.create({
+        data: {
+          walletId: null, // PLATEFORME
+          campaignId: session.campaignId,
+          sessionId,
+          type: TransactionType.CANCELLATION_COMMISSION,
+          amount: new Decimal(supertryCommission),
+          reason: `Cancellation commission (50%) for session: ${session.campaign.title}`,
+          status: TransactionStatus.COMPLETED,
+        },
+      });
 
-    // Mettre à jour escrow balance pour la commission
-    await this.prisma.platformWallet.update({
-      where: { id: platformWallet.id },
-      data: {
-        escrowBalance: {
-          decrement: new Decimal(supertryCommission),
+      await tx.platformWallet.update({
+        where: { id: platformWallet.id },
+        data: {
+          escrowBalance: { decrement: new Decimal(supertryCommission) },
+          commissionBalance: { increment: new Decimal(supertryCommission) },
+          totalCommissions: { increment: new Decimal(supertryCommission) },
         },
-        commissionBalance: {
-          increment: new Decimal(supertryCommission),
-        },
-        totalCommissions: {
-          increment: new Decimal(supertryCommission),
-        },
-      },
+      });
     });
 
     // Notifier le testeur
@@ -1285,7 +1363,7 @@ export class PaymentsService {
     sessionId: string,
   ): Promise<{
     compensationAmount: number;
-    transfer: Stripe.Transfer;
+    transfer: Stripe.Transfer | null;
     transaction: Transaction;
   }> {
     const session = await this.prisma.testSession.findUnique({
@@ -1314,6 +1392,22 @@ export class PaymentsService {
       throw new I18nHttpException('payment.no_platform_wallet', 'PAYMENT_NO_PLATFORM_WALLET', HttpStatus.NOT_FOUND);
     }
 
+    // SÉCURITÉ (SEC-S4b) — Idempotence : ne pas compenser deux fois la même session.
+    const existingCompensation = await this.prisma.transaction.findFirst({
+      where: {
+        sessionId,
+        type: TransactionType.TESTER_COMPENSATION,
+      },
+    });
+    if (existingCompensation) {
+      this.logger.warn(`Tester compensation already processed for session ${sessionId} — ignoré (idempotent).`);
+      return {
+        compensationAmount: Number(existingCompensation.amount),
+        transfer: null,
+        transaction: existingCompensation,
+      };
+    }
+
     // Récupérer le montant de compensation via BusinessRules
     const compensationAmount =
       await this.businessRulesService.getTesterCompensationOnProCancellation();
@@ -1322,7 +1416,8 @@ export class PaymentsService {
       `Processing tester compensation for session ${sessionId}: ${compensationAmount}€`,
     );
 
-    // Transférer la compensation au testeur
+    // Transférer la compensation au testeur.
+    // SEC-S4b : clé d'idempotence déterministe → un retry ne crée pas un 2e virement.
     const transfer = await this.stripeService.createTransfer(
       compensationAmount,
       session.tester.stripeConnectAccountId,
@@ -1335,6 +1430,7 @@ export class PaymentsService {
       undefined, // sourceTransaction
       `campaign_${session.campaignId}`, // transferGroup
       `Compensation session: ${session.campaign.title} - annulation PRO`, // description
+      `compensation-pro-session-${sessionId}`, // idempotencyKey
     );
 
     // Trouver le wallet du testeur
@@ -1342,39 +1438,40 @@ export class PaymentsService {
       where: { userId: session.testerId },
     });
 
-    // Créer transaction
-    const transaction = await this.prisma.transaction.create({
-      data: {
-        walletId: testerWallet?.id || null,
-        campaignId: session.campaignId,
-        sessionId,
-        type: TransactionType.TESTER_COMPENSATION,
-        amount: new Decimal(compensationAmount),
-        reason: `Compensation for PRO session cancellation: ${session.campaign.title}`,
-        status: TransactionStatus.COMPLETED,
-        stripeTransferId: transfer.id,
-      },
-    });
-
-    // Mettre à jour le wallet du testeur
-    if (testerWallet) {
-      await this.prisma.wallet.update({
-        where: { id: testerWallet.id },
+    // SÉCURITÉ (SEC-S4b) — Écritures financières ATOMIQUES (auparavant : 3 appels
+    // Prisma séparés → un crash au milieu laissait l'escrow / le wallet incohérents).
+    const transaction = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.transaction.create({
         data: {
-          balance: { increment: new Decimal(compensationAmount) },
-          totalEarned: { increment: new Decimal(compensationAmount) },
+          walletId: testerWallet?.id || null,
+          campaignId: session.campaignId,
+          sessionId,
+          type: TransactionType.TESTER_COMPENSATION,
+          amount: new Decimal(compensationAmount),
+          reason: `Compensation for PRO session cancellation: ${session.campaign.title}`,
+          status: TransactionStatus.COMPLETED,
+          stripeTransferId: transfer.id,
         },
       });
-    }
 
-    // Mettre à jour escrow balance
-    await this.prisma.platformWallet.update({
-      where: { id: platformWallet.id },
-      data: {
-        escrowBalance: {
-          decrement: new Decimal(compensationAmount),
+      if (testerWallet) {
+        await tx.wallet.update({
+          where: { id: testerWallet.id },
+          data: {
+            balance: { increment: new Decimal(compensationAmount) },
+            totalEarned: { increment: new Decimal(compensationAmount) },
+          },
+        });
+      }
+
+      await tx.platformWallet.update({
+        where: { id: platformWallet.id },
+        data: {
+          escrowBalance: { decrement: new Decimal(compensationAmount) },
         },
-      },
+      });
+
+      return created;
     });
 
     // Notifier le testeur

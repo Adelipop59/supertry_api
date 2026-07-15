@@ -6,6 +6,7 @@
   "payouts_disabled": "Les virements ne sont pas encore activés sur votre compte.",
   "charges_disabled": "Votre compte de paiement n'est pas encore prêt à recevoir des paiements.",
   "webhook_invalid": "Requête invalide.",
+  "webhook_processing_failed": "Le traitement du webhook a échoué.",
   "identity_create_account_first": "Veuillez configurer votre compte de paiement avant de vérifier votre identité.",
   "payout_failed": "Le virement a échoué. Veuillez réessayer ou contacter le support.",
   "payout_success": "Virement effectué avec succès.",

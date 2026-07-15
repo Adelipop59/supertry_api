@@ -107,7 +107,7 @@ export class PaymentsController {
     @Param('id') campaignId: string,
     @CurrentUser('id') userId: string,
   ) {
-    const result = await this.paymentsService.refundUnusedSlots(campaignId);
+    const result = await this.paymentsService.refundUnusedSlots(campaignId, userId);
 
     return {
       message: 'Refund processed successfully',

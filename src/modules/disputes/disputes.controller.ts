@@ -6,13 +6,13 @@ import {
   Body,
   Query,
   UseGuards,
-  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { DisputesService } from './disputes.service';
 import { LuciaAuthGuard } from '../../common/guards/lucia-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { CreateDisputeDto } from './dto/create-dispute.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
@@ -34,9 +34,12 @@ export class DisputesController {
   async createDispute(
     @Param('id') sessionId: string,
     @Body() dto: CreateDisputeDto,
-    @Request() req: any,
+    // SÉCURITÉ (SEC-S7) : le guard attache `request.user = profile` (clé `id`).
+    // L'ancien `req.user.userId` était donc TOUJOURS undefined → litiges journalisés
+    // avec userId=null et résolution 403 systématique. On lit l'id via @CurrentUser.
+    @CurrentUser('id') userId: string,
   ) {
-    return this.disputesService.createDispute(sessionId, req.user.userId, dto);
+    return this.disputesService.createDispute(sessionId, userId, dto);
   }
 
   @ApiOperation({ summary: 'Résoudre un litige (ADMIN)' })
@@ -49,13 +52,9 @@ export class DisputesController {
   async resolveDispute(
     @Param('id') sessionId: string,
     @Body() dto: ResolveDisputeDto,
-    @Request() req: any,
+    @CurrentUser('id') adminId: string,
   ) {
-    return this.disputesService.resolveDispute(
-      sessionId,
-      req.user.userId,
-      dto,
-    );
+    return this.disputesService.resolveDispute(sessionId, adminId, dto);
   }
 
   @ApiOperation({ summary: 'Lister les litiges (ADMIN)' })
@@ -76,8 +75,8 @@ export class DisputesController {
   @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
   async getDisputeDetails(
     @Param('id') sessionId: string,
-    @Request() req: any,
+    @CurrentUser('id') userId: string,
   ) {
-    return this.disputesService.getDisputeDetails(sessionId, req.user.userId);
+    return this.disputesService.getDisputeDetails(sessionId, userId);
   }
 }

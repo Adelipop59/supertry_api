@@ -17,7 +17,7 @@ import {
   TransactionStatus,
 } from '@prisma/client';
 import { CreateDisputeDto } from './dto/create-dispute.dto';
-import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { ResolveDisputeDto, DisputeResolutionMode } from './dto/resolve-dispute.dto';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
 import { GamificationService } from '../gamification/gamification.service';
@@ -247,12 +247,14 @@ export class DisputesService {
     const proBonus = Number(offer.bonus ?? 0);
     const maxTotal = maxProductPrice + maxShippingCost + testerBonus + proBonus;
 
-    // Valider le montant testeur
-    if (dto.testerAmount < 0 || dto.testerAmount > maxTotal) {
-      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_INVALID_AMOUNT', HttpStatus.BAD_REQUEST, { maxTotal });
-    }
-
-    const testerAmount = Math.round(dto.testerAmount * 100) / 100;
+    // Modèle binaire (SEC-P1.7) : le MONTANT est calculé côté serveur à partir du sens
+    // de résolution, jamais fourni par le client.
+    //  - REFUND_TESTER → le testeur reçoit le montant max, rien au PRO.
+    //  - REFUND_PRO    → le PRO est intégralement remboursé, rien au testeur.
+    const testerAmount =
+      dto.resolution === DisputeResolutionMode.REFUND_TESTER
+        ? Math.round(maxTotal * 100) / 100
+        : 0;
     const proRefundAmount = Math.round((maxTotal - testerAmount) * 100) / 100;
 
     this.logger.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -270,21 +272,44 @@ export class DisputesService {
       throw new I18nHttpException('common.not_found', 'PLATFORM_WALLET_NOT_FOUND', HttpStatus.NOT_FOUND);
     }
 
-    let totalEscrowDecrement = 0;
+    // SÉCURITÉ (SEC-P1.7) — Idempotence : ne pas résoudre deux fois le même litige.
+    const existingResolution = await this.prisma.transaction.findFirst({
+      where: { sessionId, type: TransactionType.DISPUTE_RESOLUTION },
+    });
+    if (existingResolution) {
+      this.logger.warn(`Dispute already resolved for session ${sessionId} — ignoré (idempotent).`);
+      throw new I18nHttpException('dispute.invalid_status', 'DISPUTE_ALREADY_RESOLVED', HttpStatus.BAD_REQUEST);
+    }
 
-    // 1. Transfer to tester if testerAmount > 0
+    // Pré-requis Stripe validés AVANT tout appel (fail-fast, évite un état à moitié fait).
+    let testerStripeAccount: string | null = null;
     if (testerAmount > 0) {
-      const testerStripeAccount = session.tester.stripeConnectAccountId;
+      testerStripeAccount = session.tester.stripeConnectAccountId;
       if (!testerStripeAccount) {
         throw new I18nHttpException('stripe.no_account', 'STRIPE_NO_ACCOUNT', HttpStatus.BAD_REQUEST);
       }
-
-      // Ensure tester wallet exists
       await this.walletService.createWallet(session.testerId);
+    }
+    if (proRefundAmount > 0 && !session.campaign.stripePaymentIntentId) {
+      throw new I18nHttpException('common.not_found', 'PAYMENT_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
 
+    let totalEscrowDecrement = 0;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SÉCURITÉ (SEC-P1.7) — PHASE 1 : appels Stripe (non transactionnels).
+    // Auparavant, transferts/refunds et écritures DB étaient entrelacés sans
+    // `$transaction` : une panne au milieu laissait l'escrow incohérent (session
+    // toujours DISPUTED, wallet crédité mais escrow non décrémenté, etc.). On isole
+    // désormais les appels Stripe (idempotents), PUIS on persiste tout en une seule
+    // transaction (PHASE 2).
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // 1. Transfert au testeur (clé d'idempotence dérivée du sessionId côté service)
+    if (testerAmount > 0) {
       testerTransfer = await this.stripeService.createPlatformToConnectTransfer(
         testerAmount,
-        testerStripeAccount,
+        testerStripeAccount!,
         'eur',
         {
           platform: 'supertry',
@@ -296,47 +321,13 @@ export class DisputesService {
         `Dispute resolution: ${session.campaign.title}`,
         `campaign_${session.campaignId}`,
       );
-
-      const testerWallet = await this.prisma.wallet.findUnique({
-        where: { userId: session.testerId },
-      });
-
-      await this.prisma.transaction.create({
-        data: {
-          walletId: testerWallet?.id || null,
-          campaignId: session.campaignId,
-          sessionId,
-          type: TransactionType.DISPUTE_RESOLUTION,
-          amount: new Decimal(testerAmount),
-          reason: `Dispute resolution (tester): ${session.campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-          stripeTransferId: testerTransfer.id,
-          metadata: { recipient: 'tester', testerAmount },
-        },
-      });
-
-      // Update tester wallet balance
-      if (testerWallet) {
-        await this.prisma.wallet.update({
-          where: { id: testerWallet.id },
-          data: {
-            balance: { increment: new Decimal(testerAmount) },
-            totalEarned: { increment: new Decimal(testerAmount) },
-          },
-        });
-      }
-
       totalEscrowDecrement += testerAmount;
     }
 
-    // 2. Refund to PRO if proRefundAmount > 0
+    // 2. Remboursement au PRO (clé d'idempotence explicite → pas de double refund)
     if (proRefundAmount > 0) {
-      if (!session.campaign.stripePaymentIntentId) {
-        throw new I18nHttpException('common.not_found', 'PAYMENT_NOT_FOUND', HttpStatus.NOT_FOUND);
-      }
-
       proRefund = await this.stripeService.createRefund(
-        session.campaign.stripePaymentIntentId,
+        session.campaign.stripePaymentIntentId!,
         proRefundAmount,
         'requested_by_customer',
         {
@@ -345,52 +336,85 @@ export class DisputesService {
           transactionType: 'DISPUTE_REFUND_PRO',
           proRefundAmount: proRefundAmount.toFixed(2),
         },
+        `dispute-refund-${sessionId}`,
       );
-
-      await this.prisma.transaction.create({
-        data: {
-          walletId: null, // PLATEFORME
-          campaignId: session.campaignId,
-          sessionId,
-          type: TransactionType.DISPUTE_RESOLUTION,
-          amount: new Decimal(proRefundAmount),
-          reason: `Dispute resolution (PRO refund): ${session.campaign.title}`,
-          status: TransactionStatus.COMPLETED,
-          stripeRefundId: proRefund.id,
-          metadata: { recipient: 'pro', proRefundAmount },
-        },
-      });
-
       totalEscrowDecrement += proRefundAmount;
     }
 
-    // 3. Update PlatformWallet
-    if (totalEscrowDecrement > 0) {
-      await this.prisma.platformWallet.update({
-        where: { id: platformWallet.id },
-        data: {
-          escrowBalance: {
-            decrement: new Decimal(totalEscrowDecrement),
+    // ══════════════════════════════════════════════════════════════════════════
+    // PHASE 2 : toutes les écritures DB dans UNE SEULE $transaction.
+    // ══════════════════════════════════════════════════════════════════════════
+    const updatedSession = await this.prisma.$transaction(async (tx) => {
+      if (testerAmount > 0) {
+        const testerWallet = await tx.wallet.findUnique({
+          where: { userId: session.testerId },
+        });
+
+        await tx.transaction.create({
+          data: {
+            walletId: testerWallet?.id || null,
+            campaignId: session.campaignId,
+            sessionId,
+            type: TransactionType.DISPUTE_RESOLUTION,
+            amount: new Decimal(testerAmount),
+            reason: `Dispute resolution (tester): ${session.campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+            stripeTransferId: testerTransfer.id,
+            metadata: { recipient: 'tester', testerAmount },
           },
-          ...(testerAmount > 0 && {
-            totalTransferred: { increment: new Decimal(testerAmount) },
-          }),
+        });
+
+        if (testerWallet) {
+          await tx.wallet.update({
+            where: { id: testerWallet.id },
+            data: {
+              balance: { increment: new Decimal(testerAmount) },
+              totalEarned: { increment: new Decimal(testerAmount) },
+            },
+          });
+        }
+      }
+
+      if (proRefundAmount > 0) {
+        await tx.transaction.create({
+          data: {
+            walletId: null, // PLATEFORME
+            campaignId: session.campaignId,
+            sessionId,
+            type: TransactionType.DISPUTE_RESOLUTION,
+            amount: new Decimal(proRefundAmount),
+            reason: `Dispute resolution (PRO refund): ${session.campaign.title}`,
+            status: TransactionStatus.COMPLETED,
+            stripeRefundId: proRefund.id,
+            metadata: { recipient: 'pro', proRefundAmount },
+          },
+        });
+      }
+
+      if (totalEscrowDecrement > 0) {
+        await tx.platformWallet.update({
+          where: { id: platformWallet.id },
+          data: {
+            escrowBalance: { decrement: new Decimal(totalEscrowDecrement) },
+            ...(testerAmount > 0 && {
+              totalTransferred: { increment: new Decimal(testerAmount) },
+            }),
+          },
+        });
+      }
+
+      return tx.testSession.update({
+        where: { id: sessionId },
+        data: {
+          status: SessionStatus.COMPLETED,
+          disputeResolution: dto.reason,
+          disputeResolvedAt: new Date(),
+        },
+        include: {
+          campaign: { include: { seller: true } },
+          tester: true,
         },
       });
-    }
-
-    // 4. Update session status
-    const updatedSession = await this.prisma.testSession.update({
-      where: { id: sessionId },
-      data: {
-        status: SessionStatus.COMPLETED,
-        disputeResolution: dto.disputeResolution,
-        disputeResolvedAt: new Date(),
-      },
-      include: {
-        campaign: { include: { seller: true } },
-        tester: true,
-      },
     });
 
     // 5. Notify tester & PRO
@@ -409,7 +433,7 @@ export class DisputesService {
       variables: {
         firstName: session.tester.firstName || 'Testeur',
         campaignTitle: session.campaign.title,
-        message: `Le litige concernant "${session.campaign.title}" a été résolu. ${testerMessage} Décision: ${dto.disputeResolution}`,
+        message: `Le litige concernant "${session.campaign.title}" a été résolu. ${testerMessage} Motif: ${dto.reason}`,
       },
       metadata: {
         sessionId,
@@ -424,7 +448,7 @@ export class DisputesService {
       variables: {
         firstName: session.campaign.seller.firstName || 'Pro',
         campaignTitle: session.campaign.title,
-        message: `Le litige concernant "${session.campaign.title}" a été résolu. ${proMessage} Décision: ${dto.disputeResolution}`,
+        message: `Le litige concernant "${session.campaign.title}" a été résolu. ${proMessage} Motif: ${dto.reason}`,
       },
       metadata: {
         sessionId,
@@ -440,7 +464,8 @@ export class DisputesService {
       {
         sessionId,
         campaignId: session.campaignId,
-        resolution: dto.disputeResolution,
+        resolution: dto.resolution,
+        reason: dto.reason,
         testerAmount,
         proRefundAmount,
         maxTotal,
@@ -453,7 +478,7 @@ export class DisputesService {
       sessionId,
       campaignId: session.campaignId,
       sellerId: session.campaign.seller.id,
-      resolution: dto.disputeResolution,
+      resolution: dto.resolution,
       testerAmount,
       proRefundAmount,
       resolvedBy: adminId,
