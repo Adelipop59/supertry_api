@@ -53,6 +53,16 @@ spec:
               value: "redis.__NAMESPACE__.svc.cluster.local"
             - name: REDIS_PORT
               value: "6379"
+            # PostHog (US Cloud) — APP_ENV vaut "dev" ou "prod" (via __ENV__),
+            # normalisé en "preprod"/"production" dans PostHogService
+            - name: APP_ENV
+              value: "__ENV__"
+            - name: POSTHOG_ENABLED
+              value: "true"
+            - name: POSTHOG_API_KEY
+              value: "phc_swK4pkbPVD9pHivbcFF3TfzAtSBSPDpUPKw2xSThnMFn"
+            - name: POSTHOG_HOST
+              value: "https://us.i.posthog.com"
             # K8s Downward API - infos pod/serveur pour /admin/system/info
             - name: POD_NAME
               valueFrom:
