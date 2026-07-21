@@ -16,6 +16,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserRole } from '@prisma/client';
 import { CreateDisputeDto } from './dto/create-dispute.dto';
 import { ResolveDisputeDto } from './dto/resolve-dispute.dto';
+import { CreateDisputeMessageDto } from './dto/create-dispute-message.dto';
 import { ApiAuthResponses, ApiNotFoundErrorResponse, ApiValidationErrorResponse } from '../../common/decorators/api-error-responses.decorator';
 
 @ApiTags('Disputes')
@@ -78,5 +79,35 @@ export class DisputesController {
     @CurrentUser('id') userId: string,
   ) {
     return this.disputesService.getDisputeDetails(sessionId, userId);
+  }
+
+  @ApiOperation({
+    summary: 'Lister les messages du litige (filtré par visibilité selon le rôle)',
+  })
+  @ApiResponse({ status: 200, description: 'Liste des messages du litige' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @Get('sessions/:id/messages')
+  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  async getDisputeMessages(
+    @Param('id') sessionId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.disputesService.getDisputeMessages(sessionId, userId);
+  }
+
+  @ApiOperation({ summary: 'Envoyer un message dans le litige' })
+  @ApiResponse({ status: 201, description: 'Message envoyé' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  @ApiValidationErrorResponse()
+  @Post('sessions/:id/messages')
+  @Roles(UserRole.USER, UserRole.PRO, UserRole.ADMIN)
+  async createDisputeMessage(
+    @Param('id') sessionId: string,
+    @Body() dto: CreateDisputeMessageDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.disputesService.createDisputeMessage(sessionId, userId, dto);
   }
 }

@@ -7,6 +7,7 @@ import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BusinessRulesModule } from '../business-rules/business-rules.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { MessagesModule } from '../messages/messages.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { WalletModule } from '../wallet/wallet.module';
     NotificationsModule,
     BusinessRulesModule,
     WalletModule,
+    MessagesModule,
   ],
   controllers: [DisputesController],
   providers: [DisputesService],

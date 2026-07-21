@@ -61,4 +61,30 @@ export class AdminUsersController {
   ) {
     return this.adminModerationService.resolveVerification(userId, adminId, body);
   }
+
+  @Post(':id/ban')
+  @ApiOperation({ summary: 'Suspendre un utilisateur (admin)' })
+  @ApiResponse({ status: 201, description: 'Utilisateur suspendu' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async banUser(
+    @Param('id') userId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() body: { reason: string },
+  ) {
+    return this.adminModerationService.banUser(userId, adminId, body?.reason ?? '');
+  }
+
+  @Post(':id/unban')
+  @ApiOperation({ summary: 'Réactiver un utilisateur suspendu (admin)' })
+  @ApiResponse({ status: 201, description: 'Utilisateur réactivé' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async unbanUser(
+    @Param('id') userId: string,
+    @CurrentUser('id') adminId: string,
+    @Body() body: { reason: string },
+  ) {
+    return this.adminModerationService.unbanUser(userId, adminId, body?.reason ?? '');
+  }
 }

@@ -13,16 +13,20 @@ import {
   UserRole,
   AuditCategory,
   NotificationType,
+  NotificationChannel,
+  DisputeVisibility,
   TransactionType,
   TransactionStatus,
 } from '@prisma/client';
 import { CreateDisputeDto } from './dto/create-dispute.dto';
 import { ResolveDisputeDto, DisputeResolutionMode } from './dto/resolve-dispute.dto';
+import { CreateDisputeMessageDto } from './dto/create-dispute-message.dto';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { Decimal } from '@prisma/client/runtime/library';
 import { GamificationService } from '../gamification/gamification.service';
 import { BusinessRulesService } from '../business-rules/business-rules.service';
 import { PostHogService } from '../posthog/posthog.service';
+import { MessagesGateway } from '../messages/messages.gateway';
 import { I18nHttpException } from '../../common/exceptions/i18n.exception';
 
 @Injectable()
@@ -38,6 +42,7 @@ export class DisputesService {
     private readonly gamificationService: GamificationService,
     private readonly businessRulesService: BusinessRulesService,
     private readonly posthog: PostHogService,
+    private readonly messagesGateway: MessagesGateway,
   ) {}
 
   /**
@@ -567,5 +572,272 @@ export class DisputesService {
     });
 
     return sessions;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // MESSAGERIE DE LITIGE À 3 PARTIES (marque ↔ testeur ↔ SuperTry)
+  // La visibilité de chaque message est TOUJOURS vérifiée côté serveur : le front
+  // ne peut jamais lire un message hors de sa visibilité (SEC : pas de filtrage
+  // côté client). USER/PRO écrivent uniquement en BOTH ; seul l'ADMIN peut
+  // adresser un message à une seule partie (BRAND_ONLY / TESTER_ONLY).
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Résout le rôle de l'appelant vis-à-vis de la session + garde d'accès.
+   * L'appelant doit être le testeur, le vendeur (PRO) de la campagne, ou un ADMIN.
+   * La session doit être en litige (DISPUTED).
+   */
+  private async resolveDisputeParticipant(sessionId: string, userId: string) {
+    const user = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    const session = await this.prisma.testSession.findUnique({
+      where: { id: sessionId },
+      include: {
+        campaign: { include: { seller: true } },
+        tester: true,
+      },
+    });
+
+    if (!session) {
+      throw new I18nHttpException(
+        'dispute.session_not_found',
+        'DISPUTE_SESSION_NOT_FOUND',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const isAdmin = user?.role === UserRole.ADMIN;
+    const isTester = session.testerId === userId;
+    const isPro = session.campaign.sellerId === userId;
+
+    if (!isAdmin && !isTester && !isPro) {
+      throw new I18nHttpException('common.forbidden', 'FORBIDDEN', HttpStatus.FORBIDDEN);
+    }
+
+    if (session.status !== SessionStatus.DISPUTED) {
+      throw new I18nHttpException(
+        'dispute.invalid_status',
+        'DISPUTE_NOT_ACTIVE',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Rôle métier de l'appelant (source de vérité serveur).
+    const role: UserRole = isAdmin
+      ? UserRole.ADMIN
+      : isPro
+        ? UserRole.PRO
+        : UserRole.USER;
+
+    return { session, role, isAdmin, isTester, isPro };
+  }
+
+  /** Statuts de visibilité qu'un rôle donné est autorisé à lire. */
+  private visibilitiesForRole(role: UserRole): DisputeVisibility[] {
+    if (role === UserRole.ADMIN) {
+      return [
+        DisputeVisibility.BOTH,
+        DisputeVisibility.BRAND_ONLY,
+        DisputeVisibility.TESTER_ONLY,
+      ];
+    }
+    if (role === UserRole.PRO) {
+      return [DisputeVisibility.BOTH, DisputeVisibility.BRAND_ONLY];
+    }
+    // USER (testeur)
+    return [DisputeVisibility.BOTH, DisputeVisibility.TESTER_ONLY];
+  }
+
+  /** Nom d'affichage d'un expéditeur selon son rôle. */
+  private senderDisplayName(sender: {
+    // Profile.role is nullable (unset during OAuth onboarding), so accept null.
+    role: UserRole | null;
+    firstName: string | null;
+    lastName: string | null;
+    companyName: string | null;
+  }): string {
+    if (sender.role === UserRole.ADMIN) return 'SuperTry';
+    if (sender.role === UserRole.PRO && sender.companyName) {
+      return sender.companyName;
+    }
+    const first = sender.firstName ?? '';
+    const initial = sender.lastName ? `${sender.lastName.charAt(0)}.` : '';
+    return `${first} ${initial}`.trim() || 'Utilisateur';
+  }
+
+  /**
+   * GET disputes/sessions/:id/messages
+   * Liste des messages du litige, filtrée par la visibilité autorisée au rôle
+   * de l'appelant (vérification CÔTÉ SERVEUR).
+   */
+  async getDisputeMessages(sessionId: string, userId: string): Promise<any[]> {
+    const { role } = await this.resolveDisputeParticipant(sessionId, userId);
+
+    const allowed = this.visibilitiesForRole(role);
+
+    const messages = await this.prisma.disputeMessage.findMany({
+      where: { sessionId, visibility: { in: allowed } },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            role: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return messages.map((m) => ({
+      id: m.id,
+      sessionId: m.sessionId,
+      senderId: m.senderId,
+      senderRole: m.senderRole,
+      senderName: this.senderDisplayName(m.sender),
+      content: m.content,
+      attachments: m.attachments ?? null,
+      visibility: m.visibility,
+      createdAt: m.createdAt,
+      isMine: m.senderId === userId,
+    }));
+  }
+
+  /**
+   * POST disputes/sessions/:id/messages
+   * USER/PRO : visibilité FORCÉE à BOTH. ADMIN : visibilité = dto.visibility ?? BOTH.
+   * Persiste, émet le socket `new_dispute_message` aux destinataires autorisés
+   * (respect de la visibilité) et crée une notification pour chaque partie
+   * autorisée sauf l'expéditeur.
+   */
+  async createDisputeMessage(
+    sessionId: string,
+    userId: string,
+    dto: CreateDisputeMessageDto,
+  ): Promise<any> {
+    const { session, role } = await this.resolveDisputeParticipant(sessionId, userId);
+
+    // La visibilité n'est jamais décidée par le client (sauf ADMIN).
+    const visibility: DisputeVisibility =
+      role === UserRole.ADMIN
+        ? (dto.visibility ?? DisputeVisibility.BOTH)
+        : DisputeVisibility.BOTH;
+
+    const created = await this.prisma.disputeMessage.create({
+      data: {
+        sessionId,
+        senderId: userId,
+        senderRole: role,
+        content: dto.content,
+        attachments: dto.attachments ?? undefined,
+        visibility,
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            role: true,
+            firstName: true,
+            lastName: true,
+            companyName: true,
+          },
+        },
+      },
+    });
+
+    const senderName = this.senderDisplayName(created.sender);
+
+    const buildPayload = (viewerId: string) => ({
+      id: created.id,
+      sessionId: created.sessionId,
+      senderId: created.senderId,
+      senderRole: created.senderRole,
+      senderName,
+      content: created.content,
+      attachments: created.attachments ?? null,
+      visibility: created.visibility,
+      createdAt: created.createdAt,
+      isMine: created.senderId === viewerId,
+    });
+
+    // Ensemble des utilisateurs AUTORISÉS à voir ce message selon la visibilité.
+    const admins = await this.prisma.profile.findMany({
+      where: { role: UserRole.ADMIN },
+      select: { id: true },
+    });
+
+    const authorizedIds = new Set<string>();
+    // La marque (vendeur) : visible en BOTH ou BRAND_ONLY.
+    if (
+      visibility === DisputeVisibility.BOTH ||
+      visibility === DisputeVisibility.BRAND_ONLY
+    ) {
+      authorizedIds.add(session.campaign.sellerId);
+    }
+    // Le testeur : visible en BOTH ou TESTER_ONLY.
+    if (
+      visibility === DisputeVisibility.BOTH ||
+      visibility === DisputeVisibility.TESTER_ONLY
+    ) {
+      authorizedIds.add(session.testerId);
+    }
+    // SuperTry (admins) : voit toujours tout.
+    for (const a of admins) authorizedIds.add(a.id);
+
+    // Émission socket vers les rooms personnelles des destinataires autorisés
+    // (l'expéditeur inclus, pour synchro multi-appareils).
+    for (const viewerId of authorizedIds) {
+      this.messagesGateway.emitToUser(
+        viewerId,
+        'new_dispute_message',
+        buildPayload(viewerId),
+      );
+    }
+
+    // La room partagée `dispute:{sessionId}` ne reçoit le message QUE s'il est
+    // visible par tout le monde (BOTH). Pour un message restreint, on ne diffuse
+    // JAMAIS dans la room commune (un participant non autorisé pourrait l'y lire).
+    if (visibility === DisputeVisibility.BOTH) {
+      this.messagesGateway.emitToDispute(
+        sessionId,
+        'new_dispute_message',
+        buildPayload(''),
+      );
+    }
+
+    // Notifications in-app pour chaque partie autorisée, sauf l'expéditeur.
+    for (const viewerId of authorizedIds) {
+      if (viewerId === userId) continue;
+      try {
+        await this.prisma.notification.create({
+          data: {
+            userId: viewerId,
+            type: NotificationType.DISPUTE_MESSAGE,
+            channel: NotificationChannel.IN_APP,
+            title: 'Nouveau message dans un litige',
+            message: `${senderName} : ${created.content.slice(0, 140)}`,
+            data: { sessionId, disputeMessageId: created.id },
+          },
+        });
+      } catch (error) {
+        this.logger.error(
+          `Failed to create dispute message notification for ${viewerId}: ${error.message}`,
+        );
+      }
+    }
+
+    this.posthog.capture(userId, 'dispute_message_sent', {
+      sessionId,
+      campaignId: session.campaignId,
+      senderRole: role,
+      visibility,
+    });
+
+    return buildPayload(userId);
   }
 }

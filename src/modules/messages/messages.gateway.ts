@@ -204,6 +204,38 @@ export class MessagesGateway
     }
   }
 
+  @SubscribeMessage('join_dispute')
+  async handleJoinDispute(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { sessionId: string },
+  ) {
+    const userId = (client as any).userId;
+    const userRole = (client as any).userRole;
+    if (!userId) return { success: false, error: 'Non authentifié.' };
+
+    try {
+      await this.messagesService.validateDisputeAccess(
+        data.sessionId,
+        userId,
+        userRole,
+      );
+      client.join(`dispute:${data.sessionId}`);
+      this.logger.log(`User ${userId} joined dispute:${data.sessionId}`);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  @SubscribeMessage('leave_dispute')
+  handleLeaveDispute(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { sessionId: string },
+  ) {
+    client.leave(`dispute:${data.sessionId}`);
+    return { success: true };
+  }
+
   @SubscribeMessage('mark_read')
   async handleMarkRead(
     @ConnectedSocket() client: Socket,
@@ -270,5 +302,9 @@ export class MessagesGateway
 
   emitToUser(userId: string, event: string, data: any) {
     this.server.to(`user:${userId}`).emit(event, data);
+  }
+
+  emitToDispute(sessionId: string, event: string, data: any) {
+    this.server.to(`dispute:${sessionId}`).emit(event, data);
   }
 }

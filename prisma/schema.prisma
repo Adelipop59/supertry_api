@@ -63,6 +63,7 @@ enum NotificationType {
   TEST_VALIDATED // Test validé
   SESSION_CANCELLED // Session annulée
   DISPUTE_CREATED // Litige créé
+  DISPUTE_MESSAGE // Nouveau message dans un litige
   MESSAGE_RECEIVED // Nouveau message
   PAYMENT_RECEIVED // Paiement reçu
   CAMPAIGN_CREATED // Nouvelle campagne
@@ -77,6 +78,13 @@ enum NotificationType {
   UGC_DISPUTED         // UGC escaladé en litige
   UGC_DISPUTE_RESOLVED // Litige UGC résolu par admin
   TIP_RECEIVED         // Tip reçu
+}
+
+// Enum pour la visibilité d'un message de litige (messagerie 3 parties)
+enum DisputeVisibility {
+  BOTH // Visible par la marque ET le testeur
+  BRAND_ONLY // Visible uniquement par la marque (et SuperTry)
+  TESTER_ONLY // Visible uniquement par le testeur (et SuperTry)
 }
 
 // Enum pour canaux de notification
@@ -313,6 +321,7 @@ model Profile {
   campaigns               Campaign[] // Campagnes créées (PRO)
   testSessions            TestSession[] // Sessions de test (USER)
   messages                Message[] // Messages envoyés
+  disputeMessages         DisputeMessage[] // Messages de litige envoyés
   notifications           Notification[] // Notifications reçues
   notificationPreferences NotificationPreference? // Préférences de notification
   reviews                 Review[] // Avis créés (USER)
@@ -805,6 +814,7 @@ model TestSession {
   // Relations
   stepProgress     SessionStepProgress[]
   messages         Message[]
+  disputeMessages  DisputeMessage[]
   review           Review?
   testerRating     TesterRating?
   ugcs             UGC[]
@@ -1014,6 +1024,29 @@ model Message {
   @@index([senderId])
   @@index([isRead])
   @@map("messages")
+}
+
+// Table DisputeMessage - Messagerie de litige à 3 parties (marque ↔ testeur ↔ SuperTry)
+model DisputeMessage {
+  id String @id @default(uuid())
+
+  sessionId String      @map("session_id")
+  session   TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  senderId String  @map("sender_id")
+  sender   Profile @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  senderRole UserRole @map("sender_role")
+
+  content     String @db.Text
+  attachments Json?
+
+  visibility DisputeVisibility @default(BOTH)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId])
+  @@map("dispute_messages")
 }
 
 // Table Notification - Notifications utilisateurs

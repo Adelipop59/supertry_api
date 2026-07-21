@@ -529,6 +529,80 @@ export class AdminModerationService {
    * APPROVE : débloquer le compte (verificationStatus = COHERENT)
    * REJECT : désactiver le compte (isActive = false, l'utilisateur peut se connecter mais ne peut rien faire)
    */
+  /**
+   * Ban a user (admin). Indefinite by default — `bannedUntil` is set far in the
+   * future and cleared by `unbanUser`. A banned tester cannot apply to campaigns
+   * (enforced in TestSessionsService.apply via `bannedUntil`).
+   */
+  async banUser(userId: string, adminId: string, reason: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true },
+    });
+    if (!profile) {
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    const bannedUntil = new Date('9999-12-31T23:59:59.000Z');
+    await this.prisma.profile.update({
+      where: { id: userId },
+      data: { bannedUntil },
+    });
+
+    await this.auditService.log(adminId, AuditCategory.ADMIN, 'USER_BANNED', {
+      userId,
+      reason,
+    });
+
+    this.notificationsService.tryQueueEmail({
+      to: profile.email,
+      template: NotificationTemplate.GENERIC_NOTIFICATION,
+      subject: 'Compte suspendu',
+      variables: {
+        firstName: profile.firstName || 'Utilisateur',
+        message:
+          'Votre compte a été suspendu par notre équipe. Vous ne pouvez plus postuler aux campagnes. Contactez le support pour plus d\'informations.',
+      },
+      metadata: { userId },
+    });
+
+    return { banned: true, bannedUntil };
+  }
+
+  /** Lift a ban immediately. */
+  async unbanUser(userId: string, adminId: string, reason: string) {
+    const profile = await this.prisma.profile.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true },
+    });
+    if (!profile) {
+      throw new I18nHttpException('user.profile_not_found', 'USER_NOT_FOUND', HttpStatus.NOT_FOUND);
+    }
+
+    await this.prisma.profile.update({
+      where: { id: userId },
+      data: { bannedUntil: null },
+    });
+
+    await this.auditService.log(adminId, AuditCategory.ADMIN, 'USER_UNBANNED', {
+      userId,
+      reason,
+    });
+
+    this.notificationsService.tryQueueEmail({
+      to: profile.email,
+      template: NotificationTemplate.GENERIC_NOTIFICATION,
+      subject: 'Compte réactivé',
+      variables: {
+        firstName: profile.firstName || 'Utilisateur',
+        message: 'Votre compte a été réactivé. Vous pouvez à nouveau postuler aux campagnes.',
+      },
+      metadata: { userId },
+    });
+
+    return { banned: false };
+  }
+
   async resolveVerification(
     userId: string,
     adminId: string,

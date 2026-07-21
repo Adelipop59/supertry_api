@@ -78,6 +78,45 @@ export class MessagesService {
     return { session, isTester, isPro, isAdmin: false };
   }
 
+  /**
+   * Accès à la messagerie de litige : l'appelant doit être le testeur, le
+   * vendeur (PRO) ou un ADMIN, ET la session doit être en litige (DISPUTED).
+   * Utilisé par le gateway pour `join_dispute`.
+   */
+  async validateDisputeAccess(
+    sessionId: string,
+    userId: string,
+    userRole?: string,
+  ) {
+    const session = await this.prisma.testSession.findUnique({
+      where: { id: sessionId },
+      include: { campaign: { select: { sellerId: true } } },
+    });
+
+    if (!session) {
+      throw new BadRequestException('Session not found');
+    }
+
+    if (userRole === UserRole.ADMIN) {
+      return { session, isTester: false, isPro: false, isAdmin: true };
+    }
+
+    const isTester = session.testerId === userId;
+    const isPro = session.campaign.sellerId === userId;
+
+    if (!isTester && !isPro) {
+      throw new ForbiddenException(
+        'You are not a participant of this dispute',
+      );
+    }
+
+    if (session.status !== SessionStatus.DISPUTED) {
+      throw new BadRequestException('Dispute chat is not available');
+    }
+
+    return { session, isTester, isPro, isAdmin: false };
+  }
+
   async createMessage(dto: CreateMessageDto, senderId: string) {
     return this.prisma.message.create({
       data: {
