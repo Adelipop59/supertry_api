@@ -14,11 +14,10 @@ import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { StripeService } from './stripe.service';
 import { PrismaService } from '../../database/prisma.service';
-import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
 import { WebhookHandlersService } from './handlers/webhook-handlers.service';
-import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
-import { UserRole, AuditCategory, NotificationType, StripeWebhookStatus } from '@prisma/client';
+import { PaymentReconciliationService } from './payment-reconciliation.service';
+import { UserRole, AuditCategory, StripeWebhookStatus } from '@prisma/client';
 import { CreateConnectAccountDto } from './dto/create-connect-account.dto';
 import { CreateOnboardingLinkDto } from './dto/create-onboarding-link.dto';
 import { KycStatusResponseDto, KycRequiredResponseDto } from './dto/kyc-status-response.dto';
@@ -43,9 +42,9 @@ export class StripeController {
   constructor(
     private readonly stripeService: StripeService,
     private readonly prisma: PrismaService,
-    private readonly notificationsService: NotificationsService,
     private readonly auditService: AuditService,
     private readonly webhookHandlers: WebhookHandlersService,
+    private readonly paymentReconciliation: PaymentReconciliationService,
   ) {}
 
   // ============================================================================
@@ -606,190 +605,10 @@ export class StripeController {
 
   private async handleCheckoutSessionCompleted(event: any) {
     const session = event.data.object;
-    const paymentIntentId = session.payment_intent as string;
-    this.logger.log(`Checkout Session completed: ${session.id} (PI: ${paymentIntentId})`);
+    this.logger.log(`Checkout Session completed: ${session.id} (PI: ${session.payment_intent})`);
 
-    // Find transaction by stripeSessionId
-    const transaction = await this.prisma.transaction.findUnique({
-      where: { stripeSessionId: session.id },
-    });
-
-    if (!transaction) {
-      this.logger.warn(`Transaction not found for session ${session.id}`);
-      return;
-    }
-
-    if (!transaction.campaignId) {
-      this.logger.warn(`Transaction ${transaction.id} has no campaignId`);
-      return;
-    }
-
-    // Find campaign
-    const campaign = await this.prisma.campaign.findUnique({
-      where: { id: transaction.campaignId },
-    });
-
-    if (!campaign) {
-      this.logger.warn(`Campaign ${transaction.campaignId} not found`);
-      return;
-    }
-
-    // Vérifier le statut du PaymentIntent pour déterminer manual capture vs automatic
-    const paymentStatus = session.payment_status; // 'paid' = auto capture, 'unpaid' = manual capture pending
-
-    // Avec manual capture, le checkout est "completed" mais le PI est en requires_capture
-    // On doit vérifier le PI pour savoir si c'est auto ou manual
-    const isManualCapture = session.payment_intent && paymentStatus === 'paid';
-    // Note: Stripe marque toujours payment_status='paid' même en manual capture quand l'auth réussit
-
-    // Sauvegarder le PaymentIntent ID sur la campagne dans tous les cas
-    await this.prisma.transaction.update({
-      where: { id: transaction.id },
-      data: {
-        stripePaymentIntentId: paymentIntentId,
-      },
-    });
-
-    // Vérifier si le PI est en requires_capture (manual capture)
-    let piStatus: string | undefined;
-    try {
-      const pi = await this.stripeService.getPaymentIntent(paymentIntentId);
-      piStatus = pi.status;
-    } catch {
-      this.logger.warn(`Could not retrieve PI ${paymentIntentId}, assuming succeeded`);
-      piStatus = 'succeeded';
-    }
-
-    if (piStatus === 'requires_capture') {
-      // MANUAL CAPTURE: Paiement autorisé mais pas encore capturé
-      // Le PRO peut annuler dans 1h sans frais
-      this.logger.log(`━━━ MANUAL CAPTURE: PI ${paymentIntentId} requires_capture ━━━`);
-
-      // Calculer la fin de la grace period
-      const rules = await this.prisma.businessRules.findFirst({ orderBy: { createdAt: 'desc' } });
-      const captureDelayMinutes = rules?.captureDelayMinutes ?? 60;
-      const now = new Date();
-      const gracePeriodEnd = new Date(now.getTime() + captureDelayMinutes * 60 * 1000);
-
-      await this.prisma.campaign.update({
-        where: { id: campaign.id },
-        data: {
-          status: 'PENDING_PAYMENT' as any,
-          stripePaymentIntentId: paymentIntentId,
-          paymentAuthorizedAt: now,
-          activationGracePeriodEndsAt: gracePeriodEnd,
-        },
-      });
-
-      // Transaction reste PENDING (sera COMPLETED après capture)
-      await this.prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: 'PENDING' as any },
-      });
-
-      // Notification: paiement autorisé, campagne sera active après 1h
-      const sellerProfile = await this.prisma.profile.findUnique({
-        where: { id: campaign.sellerId },
-        select: { email: true, firstName: true },
-      });
-
-      if (sellerProfile) {
-        this.notificationsService.tryQueueEmail({
-          to: sellerProfile.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Payment Authorized - Campaign Pending',
-          variables: {
-            campaignTitle: campaign.title,
-            message: `Your payment for "${campaign.title}" has been authorized. You have 1 hour to cancel for free. After that, the campaign will be activated automatically.`,
-          },
-          metadata: {
-            userId: campaign.sellerId,
-            campaignId: campaign.id,
-            type: NotificationType.SYSTEM_ALERT,
-          },
-        });
-      }
-
-      await this.auditService.log(
-        campaign.sellerId,
-        AuditCategory.CAMPAIGN,
-        'CAMPAIGN_PAYMENT_AUTHORIZED',
-        {
-          campaignId: campaign.id,
-          paymentIntentId,
-          captureMethod: 'manual',
-          gracePeriodMinutes: 60,
-        },
-      );
-
-      this.logger.log(`Campaign ${campaign.id} payment authorized (manual capture, 1h grace period)`);
-    } else {
-      // AUTOMATIC CAPTURE: Paiement déjà capturé (succeeded)
-      // Transaction atomique: transaction + campagne + wallet
-      await this.prisma.$transaction(async (tx) => {
-        await tx.transaction.update({
-          where: { id: transaction.id },
-          data: { status: 'COMPLETED' as any },
-        });
-
-        await tx.campaign.update({
-          where: { id: campaign.id },
-          data: {
-            status: 'ACTIVE' as any,
-            stripePaymentIntentId: paymentIntentId,
-            paymentCapturedAt: new Date(),
-          },
-        });
-
-        const platformWallet = await tx.platformWallet.findFirst();
-        if (platformWallet) {
-          await tx.platformWallet.update({
-            where: { id: platformWallet.id },
-            data: {
-              escrowBalance: { increment: Number(transaction.amount) },
-              totalReceived: { increment: Number(transaction.amount) },
-            },
-          });
-        }
-      });
-
-      const sellerProfile = await this.prisma.profile.findUnique({
-        where: { id: campaign.sellerId },
-        select: { email: true, firstName: true },
-      });
-
-      await this.auditService.log(
-        campaign.sellerId,
-        AuditCategory.CAMPAIGN,
-        'CAMPAIGN_ACTIVATED',
-        {
-          campaignId: campaign.id,
-          transactionId: transaction.id,
-          sessionId: session.id,
-          paymentIntentId,
-          amount: transaction.amount,
-        },
-      );
-
-      if (sellerProfile) {
-        this.notificationsService.tryQueueEmail({
-          to: sellerProfile.email,
-          template: NotificationTemplate.GENERIC_NOTIFICATION,
-          subject: 'Campaign Activated',
-          variables: {
-            campaignTitle: campaign.title,
-            message: `Your campaign "${campaign.title}" has been activated and is now live!`,
-          },
-          metadata: {
-            userId: campaign.sellerId,
-            campaignId: campaign.id,
-            type: NotificationType.SYSTEM_ALERT,
-          },
-        });
-      }
-
-      this.logger.log(`Campaign ${campaign.id} activated via Checkout Session ${session.id}`);
-    }
+    // Logique partagée et idempotente (webhook / endpoint reconcile / scheduler)
+    await this.paymentReconciliation.reconcileCheckoutSession(session.id, 'webhook');
   }
 
   // Autres handlers déplacés dans WebhookHandlersService pour meilleure organisation

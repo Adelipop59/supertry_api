@@ -111,6 +111,11 @@ export class CampaignsService {
       ...clean
     } = campaign;
 
+    // Le PRO propriétaire voit la fin de sa grace period (countdown "annulation gratuite")
+    if (isOwner) {
+      clean.activationGracePeriodEndsAt = activationGracePeriodEndsAt ?? null;
+    }
+
     // Pour les testeurs, masquer aussi escrowAmount
     if (!isOwner) {
       delete clean.escrowAmount;

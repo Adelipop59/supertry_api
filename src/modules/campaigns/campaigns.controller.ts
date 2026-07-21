@@ -28,6 +28,7 @@ import { UserRole } from '@prisma/client';
 import { PaginatedResponse } from '../../common/dto/pagination.dto';
 import { PaymentsService } from '../payments/payments.service';
 import { StripeService } from '../stripe/stripe.service';
+import { PaymentReconciliationService } from '../stripe/payment-reconciliation.service';
 import { PrismaService } from '../../database/prisma.service';
 
 @ApiTags('Campaigns')
@@ -37,6 +38,7 @@ export class CampaignsController {
     private readonly campaignsService: CampaignsService,
     private readonly paymentsService: PaymentsService,
     private readonly stripeService: StripeService,
+    private readonly paymentReconciliation: PaymentReconciliationService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -402,5 +404,67 @@ export class CampaignsController {
     @CurrentUser('id') userId: string,
   ): Promise<CampaignResponseDto> {
     return this.campaignsService.activate(id, userId);
+  }
+
+  /**
+   * Réconciliation au retour de Stripe Checkout.
+   * Fallback si le webhook `checkout.session.completed` n'est pas (encore) arrivé :
+   * interroge Stripe (source de vérité) et applique la même logique idempotente que
+   * le webhook. Sans effet si le webhook est déjà passé (outcome=already_processed).
+   */
+  @Post(':id/reconcile-payment')
+  @Roles(UserRole.PRO, UserRole.ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Réconcilier le paiement Checkout d\'une campagne (retour de Stripe)' })
+  @ApiResponse({ status: 200, description: 'État du paiement réconcilié' })
+  @ApiAuthResponses()
+  @ApiNotFoundErrorResponse()
+  async reconcilePayment(
+    @Param('id') campaignId: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id: campaignId },
+      select: { id: true, sellerId: true, status: true, activationGracePeriodEndsAt: true },
+    });
+
+    if (!campaign) {
+      throw new HttpException('Campaign not found', HttpStatus.NOT_FOUND);
+    }
+    if (campaign.sellerId !== userId) {
+      throw new HttpException('Not authorized', HttpStatus.FORBIDDEN);
+    }
+
+    // Transaction de paiement la plus récente portant une Checkout Session
+    const transaction = await this.prisma.transaction.findFirst({
+      where: {
+        campaignId,
+        type: 'CAMPAIGN_PAYMENT' as any,
+        stripeSessionId: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { stripeSessionId: true },
+    });
+
+    if (!transaction?.stripeSessionId) {
+      // Pas de session → rien à réconcilier, renvoyer l'état courant
+      return {
+        outcome: 'not_found',
+        campaignStatus: campaign.status,
+        activationGracePeriodEndsAt: campaign.activationGracePeriodEndsAt,
+      };
+    }
+
+    const result = await this.paymentReconciliation.reconcileCheckoutSession(
+      transaction.stripeSessionId,
+      'endpoint',
+    );
+
+    return {
+      outcome: result.outcome,
+      campaignStatus: result.campaignStatus ?? campaign.status,
+      activationGracePeriodEndsAt:
+        result.activationGracePeriodEndsAt ?? campaign.activationGracePeriodEndsAt,
+    };
   }
 }

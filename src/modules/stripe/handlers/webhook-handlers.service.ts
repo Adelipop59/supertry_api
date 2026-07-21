@@ -799,6 +799,8 @@ export class WebhookHandlersService {
           await this.prisma.campaign.update({
             where: { id: campaignId },
             data: {
+              // PENDING_ACTIVATION = grace period (payé, annulation gratuite, invisible testeurs)
+              status: CampaignStatus.PENDING_ACTIVATION,
               paymentAuthorizedAt: now,
               stripePaymentIntentId: paymentIntent.id,
               activationGracePeriodEndsAt: gracePeriodEnd,

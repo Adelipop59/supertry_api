@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CampaignsService } from './campaigns.service';
 import { CampaignsController } from './campaigns.controller';
-import { CampaignActivationScheduler } from './campaign-activation.scheduler';
 import { PaymentsModule } from '../payments/payments.module';
 import { StripeModule } from '../stripe/stripe.module';
 import { BusinessRulesModule } from '../business-rules/business-rules.module';
@@ -19,7 +18,10 @@ import { MediaModule } from '../media/media.module';
     MediaModule,
   ],
   controllers: [CampaignsController],
-  providers: [CampaignsService, CampaignActivationScheduler],
+  // CampaignActivationScheduler supprimé : il activait les campagnes PENDING_ACTIVATION
+  // SANS capturer le paiement (risque de campagne active jamais débitée). La capture +
+  // activation atomique est assurée par PaymentCaptureScheduler (payments module).
+  providers: [CampaignsService],
   exports: [CampaignsService],
 })
 export class CampaignsModule {}

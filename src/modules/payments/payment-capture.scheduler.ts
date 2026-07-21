@@ -6,6 +6,7 @@ import { BusinessRulesService } from '../business-rules/business-rules.service';
 import { AuditService } from '../audit/audit.service';
 import { AuditCategory, CampaignStatus } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
+import { PaymentReconciliationService } from '../stripe/payment-reconciliation.service';
 
 @Injectable()
 export class PaymentCaptureScheduler {
@@ -16,6 +17,7 @@ export class PaymentCaptureScheduler {
     private readonly stripeService: StripeService,
     private readonly businessRulesService: BusinessRulesService,
     private readonly auditService: AuditService,
+    private readonly paymentReconciliation: PaymentReconciliationService,
   ) {}
 
   /**
@@ -30,10 +32,15 @@ export class PaymentCaptureScheduler {
     },
   )
   async handleAutoCapture() {
-    const rules = await this.businessRulesService.findLatest();
-    const captureDelayMinutes = rules.captureDelayMinutes;
+    // B1 — fallback défensif : ne JAMAIS tuer le cron si business_rules est vide
+    // (findLatest() throw BUSINESS_RULES_NOT_FOUND → plus aucune capture/activation).
+    const rules = await this.prisma.businessRules.findFirst({ orderBy: { createdAt: 'desc' } });
+    const captureDelayMinutes = rules?.captureDelayMinutes ?? 60;
+    if (!rules) {
+      this.logger.warn('[AUTO-CAPTURE] business_rules vide — fallback captureDelayMinutes=60');
+    }
 
-    // Trouver les campagnes PENDING_ACTIVATION avec paymentAuthorizedAt > captureDelayMinutes
+    // Trouver les campagnes autorisées dont la grace period est écoulée
     const cutoffDate = new Date(Date.now() - captureDelayMinutes * 60 * 1000);
 
     const campaigns = await this.prisma.campaign.findMany({
@@ -56,57 +63,73 @@ export class PaymentCaptureScheduler {
       try {
         // Vérifier l'état RÉEL du PaymentIntent AVANT de capturer (robustesse + idempotence) :
         // - requires_capture → on capture
-        // - succeeded → déjà capturé (ex. webhook concurrent) → on réconcilie l'état sans recapturer
+        // - succeeded → déjà capturé (webhook ou pod concurrent) → réconciliation sans recapture
         // - autre (canceled / requires_payment_method / processing…) → non capturable → erreur gérée
         let pi = await this.stripeService.getPaymentIntent(campaign.stripePaymentIntentId!);
         if (pi.status === 'requires_capture') {
-          pi = await this.stripeService.capturePaymentIntent(campaign.stripePaymentIntentId!);
-          this.logger.log(`[AUTO-CAPTURE] Captured PI ${pi.id} for campaign ${campaign.id}`);
-        } else if (pi.status === 'succeeded') {
-          this.logger.warn(`[AUTO-CAPTURE] PI ${pi.id} déjà capturé (succeeded) — réconciliation de l'état pour la campagne ${campaign.id}`);
-        } else {
+          try {
+            pi = await this.stripeService.capturePaymentIntent(campaign.stripePaymentIntentId!);
+            this.logger.log(`[AUTO-CAPTURE] Captured PI ${pi.id} for campaign ${campaign.id}`);
+          } catch (captureErr) {
+            // B3 — course multi-pods : un autre replica a pu capturer entre le read et le capture.
+            // On re-vérifie l'état réel avant de considérer ça comme un échec.
+            pi = await this.stripeService.getPaymentIntent(campaign.stripePaymentIntentId!);
+            if (pi.status !== 'succeeded') throw captureErr;
+            this.logger.warn(`[AUTO-CAPTURE] PI ${pi.id} déjà capturé par un appel concurrent (campagne ${campaign.id})`);
+          }
+        } else if (pi.status !== 'succeeded') {
           throw new Error(`PaymentIntent ${pi.id} non capturable (status=${pi.status})`);
         }
 
-        // Trouver la transaction AVANT la $transaction atomique
+        // Activation + crédit escrow via la logique PARTAGÉE et IDEMPOTENTE
+        // (flip atomique transaction PENDING→COMPLETED = un seul crédit possible,
+        //  même avec webhook / endpoint / autre pod en concurrence).
         const transaction = await this.prisma.transaction.findFirst({
           where: {
             campaignId: campaign.id,
             stripePaymentIntentId: campaign.stripePaymentIntentId,
-            status: 'PENDING' as any,
           },
+          orderBy: { createdAt: 'desc' },
         });
 
-        // Mettre à jour campagne + transaction + wallet atomiquement
-        await this.prisma.$transaction(async (tx) => {
-          await tx.campaign.update({
-            where: { id: campaign.id },
-            data: {
-              status: CampaignStatus.ACTIVE,
-              paymentCapturedAt: new Date(),
-            },
-          });
-
-          if (transaction) {
-            await tx.transaction.update({
-              where: { id: transaction.id },
-              data: { status: 'COMPLETED' as any },
-            });
-          }
-
-          if (transaction) {
-            const platformWallet = await tx.platformWallet.findFirst();
-            if (platformWallet) {
-              await tx.platformWallet.update({
-                where: { id: platformWallet.id },
-                data: {
-                  escrowBalance: { increment: new Decimal(Number(transaction.amount)) },
-                  totalReceived: { increment: new Decimal(Number(transaction.amount)) },
-                },
+        if (transaction?.stripeSessionId) {
+          const result = await this.paymentReconciliation.reconcileCheckoutSession(
+            transaction.stripeSessionId,
+            'scheduler',
+          );
+          this.logger.log(
+            `[AUTO-CAPTURE] Campaign ${campaign.id} reconciled (${result.outcome}) after ${captureDelayMinutes}min grace period`,
+          );
+        } else {
+          // Fallback legacy (transaction sans Checkout Session) : activation directe idempotente
+          await this.prisma.$transaction(async (tx) => {
+            if (transaction) {
+              const flipped = await tx.transaction.updateMany({
+                where: { id: transaction.id, status: 'PENDING' as any },
+                data: { status: 'COMPLETED' as any },
               });
+              if (flipped.count === 1) {
+                const platformWallet = await tx.platformWallet.findFirst();
+                if (platformWallet) {
+                  await tx.platformWallet.update({
+                    where: { id: platformWallet.id },
+                    data: {
+                      escrowBalance: { increment: new Decimal(Number(transaction.amount)) },
+                      totalReceived: { increment: new Decimal(Number(transaction.amount)) },
+                    },
+                  });
+                }
+              }
             }
-          }
-        });
+            await tx.campaign.update({
+              where: { id: campaign.id },
+              data: {
+                status: CampaignStatus.ACTIVE,
+                paymentCapturedAt: new Date(),
+              },
+            });
+          });
+        }
 
         // Audit (hors transaction, non critique)
         await this.auditService.log(
@@ -197,6 +220,74 @@ export class PaymentCaptureScheduler {
             maxRetries: MAX_CAPTURE_RETRIES,
             revertedToDraft: retryCount >= MAX_CAPTURE_RETRIES,
           },
+        );
+      }
+    }
+  }
+
+  /**
+   * FILET DE SÉCURITÉ (webhook perdu) — toutes les 5 min en prod, 30 s en local.
+   * Campagnes restées PENDING_PAYMENT sans autorisation enregistrée alors que leur
+   * Checkout Session est payée chez Stripe (webhook jamais reçu / échoué / local sans
+   * `stripe listen`). On interroge Stripe (source de vérité) et on réconcilie via la
+   * logique partagée idempotente. Fenêtre 10 min → 48 h :
+   *  - < 10 min : on laisse le webhook / le retour Checkout faire leur travail
+   *  - > 48 h  : la session Checkout est expirée côté Stripe, plus rien à réconcilier
+   */
+  @Cron(
+    process.env.NODE_ENV === 'production' ? '*/5 * * * *' : '*/30 * * * * *',
+    {
+      name: 'payment-reconciliation-sweep',
+      timeZone: 'Europe/Paris',
+    },
+  )
+  async handleReconciliationSweep() {
+    const windowStart = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const windowEnd = new Date(Date.now() - 10 * 60 * 1000);
+
+    const staleCampaigns = await this.prisma.campaign.findMany({
+      where: {
+        status: CampaignStatus.PENDING_PAYMENT,
+        paymentAuthorizedAt: null,
+        paymentCapturedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (staleCampaigns.length === 0) return;
+
+    const transactions = await this.prisma.transaction.findMany({
+      where: {
+        campaignId: { in: staleCampaigns.map((c) => c.id) },
+        type: 'CAMPAIGN_PAYMENT' as any,
+        status: 'PENDING' as any,
+        stripeSessionId: { not: null },
+        createdAt: { gte: windowStart, lte: windowEnd },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (transactions.length === 0) return;
+
+    // Une seule tentative par campagne (la transaction la plus récente)
+    const seen = new Set<string>();
+    for (const t of transactions) {
+      if (!t.campaignId || seen.has(t.campaignId)) continue;
+      seen.add(t.campaignId);
+
+      try {
+        const result = await this.paymentReconciliation.reconcileCheckoutSession(
+          t.stripeSessionId!,
+          'scheduler',
+        );
+        if (result.outcome === 'authorized' || result.outcome === 'activated') {
+          this.logger.warn(
+            `[RECONCILE-SWEEP] Campaign ${t.campaignId} récupérée sans webhook (outcome=${result.outcome}) — vérifier la config webhook Stripe`,
+          );
+        }
+      } catch (error) {
+        this.logger.error(
+          `[RECONCILE-SWEEP] Failed to reconcile campaign ${t.campaignId} (session ${t.stripeSessionId}): ${error.message}`,
         );
       }
     }

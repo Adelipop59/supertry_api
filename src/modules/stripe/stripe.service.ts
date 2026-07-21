@@ -550,6 +550,18 @@ export class StripeService {
     }
   }
 
+  /**
+   * Récupère une Checkout Session (source de vérité pour la réconciliation paiement).
+   */
+  async getCheckoutSession(sessionId: string): Promise<Stripe.Checkout.Session> {
+    try {
+      return await this.stripe.checkout.sessions.retrieve(sessionId);
+    } catch (error) {
+      this.logger.error(`Failed to retrieve Checkout Session ${sessionId}: ${error.message}`);
+      throw new I18nHttpException('stripe.checkout_session_failed', 'STRIPE_CHECKOUT_SESSION_FAILED', HttpStatus.NOT_FOUND);
+    }
+  }
+
   async getPaymentIntent(paymentIntentId: string): Promise<Stripe.PaymentIntent> {
     try {
       return await this.stripe.paymentIntents.retrieve(paymentIntentId);
