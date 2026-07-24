@@ -174,7 +174,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const xLang = request?.headers?.['x-lang'];
     if (xLang && typeof xLang === 'string') {
       const lang = xLang.toLowerCase().substring(0, 2);
-      if (['fr', 'en', 'es', 'de', 'it', 'pt'].includes(lang)) return lang;
+      if (['fr', 'en', 'es', 'de', 'it', 'pt', 'zh'].includes(lang)) return lang;
     }
 
     // 2. User's profile preferred language
@@ -187,7 +187,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const acceptLang = request?.headers?.['accept-language'];
     if (acceptLang && typeof acceptLang === 'string') {
       const lang = acceptLang.toLowerCase().substring(0, 2);
-      if (['fr', 'en', 'es', 'de', 'it', 'pt'].includes(lang)) return lang;
+      if (['fr', 'en', 'es', 'de', 'it', 'pt', 'zh'].includes(lang)) return lang;
     }
 
     // 4. Fallback

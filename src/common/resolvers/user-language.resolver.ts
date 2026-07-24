@@ -20,7 +20,7 @@ export class UserLanguageResolver implements I18nResolver {
     const xLang = request.headers['x-lang'];
     if (xLang && typeof xLang === 'string') {
       const lang = xLang.toLowerCase().substring(0, 2);
-      if (['fr', 'en', 'es', 'de', 'it', 'pt'].includes(lang)) {
+      if (['fr', 'en', 'es', 'de', 'it', 'pt', 'zh'].includes(lang)) {
         return lang;
       }
     }
