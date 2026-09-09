@@ -26,13 +26,31 @@ export class AuditInterceptor implements NestInterceptor {
     const { method, url } = request;
 
     // Skip logging pour les endpoints d'audit (éviter boucle infinie)
-    if (url.startsWith('/audit') || url.startsWith('/api/v1/audit')) {
+    // et pour les sondes de santé : les probes k8s (liveness 15s, readiness 10s,
+    // sur 2 replicas) produisaient ~28k lignes/jour, soit 99,9% de la table.
+    if (
+      url.startsWith('/audit') ||
+      url.startsWith('/api/v1/audit') ||
+      url.includes('/health')
+    ) {
       return next.handle();
     }
 
     // Extraire userId du contexte (JWT, session, etc.)
     // TODO: Adapter selon votre système d'auth (Lucia, JWT, etc.)
     const userId = request.user?.id || request.session?.userId || null;
+
+    // Contexte client : sans lui un log se réduit à method/url/statusCode,
+    // ce qui ne permet ni de tracer une session ni d'enquêter sur un abus.
+    const clientInfo = {
+      ip:
+        (request.headers?.['x-forwarded-for'] as string)
+          ?.split(',')[0]
+          ?.trim() ||
+        request.socket?.remoteAddress ||
+        null,
+      userAgent: (request.headers?.['user-agent'] as string) ?? null,
+    };
 
     // Déterminer la catégorie depuis l'URL
     const category = this.determineCategoryFromUrl(url);
@@ -55,6 +73,7 @@ export class AuditInterceptor implements NestInterceptor {
               method,
               url,
               statusCode: context.switchToHttp().getResponse().statusCode,
+              ...clientInfo,
             })
             .catch((error) => {
               this.logger.error(`Failed to log audit: ${error.message}`);
@@ -68,6 +87,7 @@ export class AuditInterceptor implements NestInterceptor {
               method,
               url,
               error: error.message,
+              ...clientInfo,
             })
             .catch((err) => {
               this.logger.error(`Failed to log audit error: ${err.message}`);

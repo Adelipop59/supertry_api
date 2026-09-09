@@ -39,10 +39,12 @@ export class AdminSystemService implements OnModuleInit {
   }
 
   // ============================================================================
-  // Collecte automatique toutes les 30 secondes -> stocke en DB
+  // Collecte automatique toutes les 5 minutes -> stocke en DB
   // ============================================================================
 
-  @Cron(CronExpression.EVERY_30_SECONDS)
+  // 30s x 2 replicas remplissait system_snapshots a ~345k lignes / 2 mois (90 Mo).
+  // 5 min suffit largement pour les courbes de supervision.
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async collectSnapshot() {
     try {
       const cpuPercent = await this.getCpuUsagePercent();
@@ -91,23 +93,23 @@ export class AdminSystemService implements OnModuleInit {
     }
   }
 
-  // Cleanup des donnees > 2 mois, tourne une fois par jour a 3h du matin
+  // Cleanup des donnees > 14 jours, tourne une fois par jour a 3h du matin
   @Cron('0 3 * * *')
   async cleanupOldData() {
-    const twoMonthsAgo = new Date();
-    twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 14);
 
     try {
       const [snapshots, metrics] = await Promise.all([
         this.prisma.systemSnapshot.deleteMany({
-          where: { timestamp: { lt: twoMonthsAgo } },
+          where: { timestamp: { lt: cutoff } },
         }),
         this.prisma.apiMetric.deleteMany({
-          where: { timestamp: { lt: twoMonthsAgo } },
+          where: { timestamp: { lt: cutoff } },
         }),
       ]);
       this.logger.log(
-        `Cleanup: deleted ${snapshots.count} snapshots and ${metrics.count} api metrics older than 2 months`,
+        `Cleanup: deleted ${snapshots.count} snapshots and ${metrics.count} api metrics older than 14 days`,
       );
     } catch (error) {
       this.logger.error(`Cleanup failed: ${error.message}`);

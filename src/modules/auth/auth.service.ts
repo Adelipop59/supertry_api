@@ -12,6 +12,8 @@ import { WalletService } from '../wallet/wallet.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationTemplate } from '../notifications/enums/notification-template.enum';
 import { PostHogService } from '../posthog/posthog.service';
+import { AuditService } from '../audit/audit.service';
+import { AuditCategory } from '@prisma/client';
 import {
   SignupDto,
   LoginDto,
@@ -40,6 +42,7 @@ export class AuthService {
     private walletService: WalletService,
     private notificationsService: NotificationsService,
     private posthog: PostHogService,
+    private auditService: AuditService,
   ) {}
 
   /**
@@ -199,6 +202,14 @@ export class AuthService {
       method: 'email',
       role: profile.role,
     });
+    // Les routes d'auth sont @Public() : le guard n'attache pas request.user,
+    // donc l'AuditInterceptor ne peut pas renseigner user_id. On journalise ici,
+    // ou l'identifiant est disponible.
+    void this.auditService.log(profile.id, AuditCategory.AUTH, 'SIGNUP_SUCCESS', {
+      method: 'email',
+      role: profile.role,
+      email: profile.email,
+    });
 
     return {
       access_token: session.id,
@@ -263,6 +274,11 @@ export class AuthService {
     this.posthog.capture(profile.id, 'user_logged_in', {
       method: 'email',
       role: profile.role,
+    });
+    void this.auditService.log(profile.id, AuditCategory.AUTH, 'LOGIN_SUCCESS', {
+      method: 'email',
+      role: profile.role,
+      email: profile.email,
     });
 
     return {
@@ -631,6 +647,12 @@ export class AuthService {
       method: 'oauth',
       provider,
       role: profile.role,
+    });
+    void this.auditService.log(profile.id, AuditCategory.AUTH, 'LOGIN_SUCCESS', {
+      method: 'oauth',
+      provider,
+      role: profile.role,
+      email: profile.email,
     });
 
     return {
