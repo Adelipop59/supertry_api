@@ -93,11 +93,13 @@ export class AdminSystemService implements OnModuleInit {
     }
   }
 
-  // Cleanup des donnees > 14 jours, tourne une fois par jour a 3h du matin
+  // Cleanup des donnees > 2 mois, tourne une fois par jour a 3h du matin
+  // A 5 min d'intervalle sur 2 replicas, 2 mois representent ~35k lignes (~10 Mo) :
+  // la frequence suffit a contenir la table, inutile de rogner l'historique.
   @Cron('0 3 * * *')
   async cleanupOldData() {
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 14);
+    cutoff.setMonth(cutoff.getMonth() - 2);
 
     try {
       const [snapshots, metrics] = await Promise.all([
@@ -109,7 +111,7 @@ export class AdminSystemService implements OnModuleInit {
         }),
       ]);
       this.logger.log(
-        `Cleanup: deleted ${snapshots.count} snapshots and ${metrics.count} api metrics older than 14 days`,
+        `Cleanup: deleted ${snapshots.count} snapshots and ${metrics.count} api metrics older than 2 months`,
       );
     } catch (error) {
       this.logger.error(`Cleanup failed: ${error.message}`);
