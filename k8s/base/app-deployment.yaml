@@ -49,9 +49,17 @@ spec:
               value: "3000"
             - name: FRONTEND_URL
               value: "__FRONTEND_URL__"
-            # Mode maintenance : "true" = API réservée aux comptes ADMIN (overlay k8s)
+            # Mode maintenance : "true" = API fermée sans le pass du code d'accès
+            # (overlay k8s). Le code vient du secret supertry-api-maintenance,
+            # créé par la CI depuis le secret GitHub MAINTENANCE_CODE.
             - name: MAINTENANCE_MODE
               value: "__MAINTENANCE_MODE__"
+            - name: MAINTENANCE_CODE
+              valueFrom:
+                secretKeyRef:
+                  name: supertry-api-maintenance
+                  key: code
+                  optional: true
             - name: REDIS_HOST
               value: "redis.__NAMESPACE__.svc.cluster.local"
             - name: REDIS_PORT

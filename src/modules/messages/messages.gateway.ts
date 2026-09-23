@@ -76,6 +76,13 @@ export class MessagesGateway
       // ticket bascule sur le repli → aucune coupure du chat.
       let userId = this.wsTicketService.verify(token);
 
+      // Mode maintenance : seuls les tickets WS sont acceptés — ils ne sont
+      // délivrés que par /auth/ws-ticket, donc à qui a le pass de maintenance.
+      if (!userId && isMaintenanceMode()) {
+        client.disconnect();
+        return;
+      }
+
       if (!userId) {
         const result = await this.luciaService.validateSession(token);
         if (!result.session || !result.user) {
@@ -101,11 +108,6 @@ export class MessagesGateway
         return;
       }
 
-      // Mode maintenance : chat réservé aux admins
-      if (isMaintenanceMode() && profile.role !== 'ADMIN') {
-        client.disconnect();
-        return;
-      }
 
       (client as any).userId = profile.id;
       (client as any).userRole = profile.role;

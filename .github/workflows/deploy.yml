@@ -164,8 +164,17 @@ jobs:
           done
 
       - name: Apply Kubernetes manifests
+        env:
+          MAINTENANCE_CODE: ${{ secrets.MAINTENANCE_CODE }}
         run: |
           kubectl apply -f k8s/base/namespace.yaml
+          # Code d'accès du mode maintenance (secret GitHub MAINTENANCE_CODE)
+          if [ -n "$MAINTENANCE_CODE" ]; then
+            kubectl create secret generic supertry-api-maintenance \
+              -n "${{ steps.config.outputs.namespace }}" \
+              --from-literal=code="$MAINTENANCE_CODE" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          fi
           kubectl apply -f k8s/base/redis.yaml
           kubectl apply -f k8s/base/https-redirect-middleware.yaml
           kubectl apply -f k8s/base/cluster-issuer.yaml
