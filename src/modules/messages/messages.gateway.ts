@@ -16,6 +16,7 @@ import { LuciaService } from '../lucia/lucia.service';
 import { PrismaService } from '../../database/prisma.service';
 import { MessagesService } from './messages.service';
 import { WsTicketService } from '../../common/services/ws-ticket.service';
+import { isMaintenanceMode } from '../../common/maintenance/maintenance';
 
 @WebSocketGateway({
   cors: { origin: '*' },
@@ -96,6 +97,12 @@ export class MessagesGateway
       });
 
       if (!profile || !profile.isActive) {
+        client.disconnect();
+        return;
+      }
+
+      // Mode maintenance : chat réservé aux admins
+      if (isMaintenanceMode() && profile.role !== 'ADMIN') {
         client.disconnect();
         return;
       }

@@ -49,6 +49,9 @@ spec:
               value: "3000"
             - name: FRONTEND_URL
               value: "__FRONTEND_URL__"
+            # Mode maintenance : "true" = API réservée aux comptes ADMIN (overlay k8s)
+            - name: MAINTENANCE_MODE
+              value: "__MAINTENANCE_MODE__"
             - name: REDIS_HOST
               value: "redis.__NAMESPACE__.svc.cluster.local"
             - name: REDIS_PORT

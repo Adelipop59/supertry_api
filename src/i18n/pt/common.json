@@ -9,5 +9,6 @@
   "file_deleted": "Arquivo exclu\u00eddo com sucesso.",
   "not_authenticated": "Voc\u00ea precisa estar conectado para realizar esta a\u00e7\u00e3o.",
   "category_not_found": "Esta categoria n\u00e3o foi encontrada.",
-  "business_rules_not_found": "As regras de neg\u00f3cio n\u00e3o foram encontradas."
+  "business_rules_not_found": "As regras de neg\u00f3cio n\u00e3o foram encontradas.",
+  "maintenance": "O SuperTry está em atualização. O site voltará muito em breve."
 }

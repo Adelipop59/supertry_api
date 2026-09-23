@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { HttpStatus, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Lucia, Session, User } from 'lucia';
 import { PrismaAdapter } from '@lucia-auth/adapter-prisma';
@@ -15,6 +15,8 @@ import {
   decodeIdToken,
 } from 'arctic';
 import * as argon2 from '@node-rs/argon2';
+import { I18nHttpException } from '../../common/exceptions/i18n.exception';
+import { isMaintenanceMode } from '../../common/maintenance/maintenance';
 
 export interface DatabaseUserAttributes {
   id: string;
@@ -181,6 +183,16 @@ export class LuciaService implements OnModuleInit {
   }
 
   async createSession(userId: string): Promise<Session> {
+    // Mode maintenance : seul un ADMIN peut ouvrir une session (login, OAuth, signup)
+    if (isMaintenanceMode()) {
+      const profile = await this.prismaService.profile.findUnique({
+        where: { id: userId },
+        select: { role: true },
+      });
+      if (profile?.role !== 'ADMIN') {
+        throw new I18nHttpException('common.maintenance', 'MAINTENANCE', HttpStatus.SERVICE_UNAVAILABLE);
+      }
+    }
     return this.lucia.createSession(userId, {});
   }
 

@@ -140,6 +140,7 @@ jobs:
           echo "replicas=${REPLICAS}" >> $GITHUB_OUTPUT
           echo "frontend_url=${FRONTEND_URL}" >> $GITHUB_OUTPUT
           echo "env_name=${DEPLOY_ENV}" >> $GITHUB_OUTPUT
+          echo "maintenance_mode=${MAINTENANCE_MODE:-false}" >> $GITHUB_OUTPUT
 
       - name: Replace placeholders in manifests
         run: |
@@ -149,6 +150,7 @@ jobs:
           REPLICAS="${{ steps.config.outputs.replicas }}"
           FRONTEND_URL="${{ steps.config.outputs.frontend_url }}"
           ENV_NAME="${{ steps.config.outputs.env_name }}"
+          MAINTENANCE_MODE="${{ steps.config.outputs.maintenance_mode }}"
 
           # Replace placeholders in all base manifests
           for file in k8s/base/*.yaml; do
@@ -158,6 +160,7 @@ jobs:
             sed -i "s|__REPLICAS__|${REPLICAS}|g" "$file"
             sed -i "s|__FRONTEND_URL__|${FRONTEND_URL}|g" "$file"
             sed -i "s|__ENV__|${ENV_NAME}|g" "$file"
+            sed -i "s|__MAINTENANCE_MODE__|${MAINTENANCE_MODE}|g" "$file"
           done
 
       - name: Apply Kubernetes manifests

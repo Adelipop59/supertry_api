@@ -9,5 +9,6 @@
   "file_deleted": "Datei erfolgreich gel\u00f6scht.",
   "not_authenticated": "Sie m\u00fcssen angemeldet sein, um diese Aktion durchzuf\u00fchren.",
   "category_not_found": "Diese Kategorie wurde nicht gefunden.",
-  "business_rules_not_found": "Die Gesch\u00e4ftsregeln wurden nicht gefunden."
+  "business_rules_not_found": "Die Gesch\u00e4ftsregeln wurden nicht gefunden.",
+  "maintenance": "SuperTry wird gerade überarbeitet. Die Seite ist bald wieder verfügbar."
 }

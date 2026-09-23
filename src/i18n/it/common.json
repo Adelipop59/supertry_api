@@ -9,5 +9,6 @@
   "file_deleted": "File eliminato con successo.",
   "not_authenticated": "Devi effettuare l'accesso per eseguire questa azione.",
   "category_not_found": "Questa categoria non è stata trovata.",
-  "business_rules_not_found": "Le regole operative non sono state trovate."
+  "business_rules_not_found": "Le regole operative non sono state trovate.",
+  "maintenance": "SuperTry è in fase di aggiornamento. Il sito tornerà molto presto."
 }

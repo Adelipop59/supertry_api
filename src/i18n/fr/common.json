@@ -9,5 +9,6 @@
   "file_deleted": "Fichier supprimé avec succès.",
   "not_authenticated": "Vous devez être connecté pour effectuer cette action.",
   "category_not_found": "Cette catégorie est introuvable.",
-  "business_rules_not_found": "Les règles métier sont introuvables."
+  "business_rules_not_found": "Les règles métier sont introuvables.",
+  "maintenance": "SuperTry est en cours de modification. Le site sera de retour très bientôt."
 }

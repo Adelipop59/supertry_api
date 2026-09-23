@@ -9,5 +9,6 @@
   "file_deleted": "File deleted successfully.",
   "not_authenticated": "You must be logged in to perform this action.",
   "category_not_found": "This category could not be found.",
-  "business_rules_not_found": "Business rules could not be found."
+  "business_rules_not_found": "Business rules could not be found.",
+  "maintenance": "SuperTry is being updated. The site will be back very soon."
 }

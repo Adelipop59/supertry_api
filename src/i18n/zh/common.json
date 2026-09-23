@@ -9,5 +9,6 @@
   "file_deleted": "文件删除成功。",
   "not_authenticated": "请先登录后再进行此操作。",
   "category_not_found": "未找到该分类。",
-  "business_rules_not_found": "未找到业务规则。"
+  "business_rules_not_found": "未找到业务规则。",
+  "maintenance": "SuperTry 正在更新中，网站很快就会恢复。"
 }

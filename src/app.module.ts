@@ -1,4 +1,9 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bull';
@@ -44,6 +49,7 @@ import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { MetricsInterceptor } from './common/interceptors/metrics.interceptor';
 import { MetricsModule } from './common/services/metrics.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
+import { MaintenanceMiddleware } from './common/maintenance/maintenance.middleware';
 
 @Module({
   imports: [
@@ -130,4 +136,11 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Mode maintenance : doit passer avant tout le reste (guards, contrôleurs)
+    consumer
+      .apply(MaintenanceMiddleware)
+      .forRoutes({ path: '*path', method: RequestMethod.ALL });
+  }
+}
